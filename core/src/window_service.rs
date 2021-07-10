@@ -180,8 +180,8 @@ fn run_insert<F>(
 where
     F: Fn(Shred),
 {
-    let timer = Duration::from_millis(200);
-    let (mut shreds, mut repair_infos) = shred_receiver.recv_timeout(timer)?;
+    let timer = Duration::from_millis(200); //jbiseda_magicval
+    let (mut shreds, mut repair_infos) = shred_receiver.recv_timeout(timer)?; //jbiseda_mark
     while let Ok((more_shreds, more_repair_infos)) = shred_receiver.try_recv() {
         shreds.extend(more_shreds);
         repair_infos.extend(more_repair_infos);
@@ -203,7 +203,7 @@ where
     )?;
     for index in inserted_indices {
         if repair_infos[index].is_some() {
-            metrics.num_repair += 1;
+            metrics.num_repair += 1; //jbiseda_mark
         }
     }
 
@@ -320,7 +320,7 @@ where
 }
 
 struct RepairMeta {
-    _from_addr: SocketAddr,
+    _from_addr: SocketAddr,  //jbiseda_mark could be useful to track
     nonce: Nonce,
 }
 

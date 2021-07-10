@@ -21,7 +21,7 @@ pub struct ContactInfo {
     /// address to forward shreds to
     pub tvu_forwards: SocketAddr,
     /// address to send repair responses to
-    pub repair: SocketAddr,
+    pub repair: SocketAddr, //jbiseda_mark
     /// transactions address
     pub tpu: SocketAddr,
     /// address to forward unprocessed transactions to

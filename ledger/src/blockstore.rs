@@ -683,6 +683,7 @@ impl Blockstore {
             set_index as usize,
             slot,
         ) {
+            // jbiseda was this completed using only broadcast shreds?
             Self::submit_metrics(
                 slot,
                 set_index,
@@ -830,7 +831,7 @@ impl Blockstore {
                 if shred.is_data() {
                     let shred_slot = shred.slot();
                     let shred_source = if is_repaired {
-                        ShredSource::Repaired
+                        ShredSource::Repaired //jbiseda_mark
                     } else {
                         ShredSource::Turbine
                     };
@@ -1253,7 +1254,7 @@ impl Blockstore {
                 // replayed entries past the newly detected "last" shred, then mark the slot as dead
                 // and wait for replay to dump and repair the correct version.
                 warn!("Received *last* shred index {} less than previous shred index {}, and slot {} is not full, marking slot dead", shred_index, slot_meta.received, slot);
-                write_batch.put::<cf::DeadSlots>(slot, &true).unwrap();
+                write_batch.put::<cf::DeadSlots>(slot, &true).unwrap(); //jbiseda_mark track slots marked dead
             }
 
             if !self.should_insert_data_shred(
@@ -1540,7 +1541,7 @@ impl Blockstore {
             let mut slots_stats = self.slots_stats.lock().unwrap();
             let mut e = slots_stats.stats.entry(slot_meta.slot).or_default();
             if shred_source == ShredSource::Repaired {
-                e.num_repaired += 1;
+                e.num_repaired += 1; //jbiseda_mark
             }
             if shred_source == ShredSource::Recovered {
                 e.num_recovered += 1;
@@ -1569,7 +1570,7 @@ impl Blockstore {
                 ),
                 ("slot", slot_meta.slot, i64),
                 ("last_index", slot_meta.last_index, i64),
-                ("num_repaired", num_repaired, i64),
+                ("num_repaired", num_repaired, i64), //jbiseda_mark
                 ("num_recovered", num_recovered, i64),
             );
         }

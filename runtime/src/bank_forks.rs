@@ -138,7 +138,7 @@ impl BankForks {
         bank
     }
 
-    pub fn remove(&mut self, slot: Slot) -> Option<Arc<Bank>> {
+    pub fn remove(&mut self, slot: Slot) -> Option<Arc<Bank>> { //jbiseda_mark check slot for repair
         let bank = self.banks.remove(&slot)?;
         for parent in bank.proper_ancestors() {
             let mut entry = match self.descendants.entry(parent) {
@@ -326,7 +326,7 @@ impl BankForks {
             })
             .collect();
         for slot in prune_slots {
-            self.remove(slot);
+            self.remove(slot); // jbiseda_mark see if this slot was created using repair
         }
         datapoint_debug!(
             "bank_forks_purge_non_root",
