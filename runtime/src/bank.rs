@@ -71,6 +71,7 @@ use solana_sdk::{
         create_account_shared_data_with_fields as create_account, from_account, Account,
         AccountSharedData, InheritableAccountFields, ReadableAccount, WritableAccount,
     },
+    account_utils::StateMut,
     clock::{
         BankId, Epoch, Slot, SlotCount, SlotIndex, UnixTimestamp, DEFAULT_TICKS_PER_SECOND,
         INITIAL_RENT_EPOCH, MAX_PROCESSING_AGE, MAX_RECENT_BLOCKHASHES,
@@ -80,7 +81,7 @@ use solana_sdk::{
     epoch_schedule::EpochSchedule,
     feature,
     feature_set::{self, FeatureSet},
-    fee_calculator::{FeeCalculator, FeeConfig, FeeRateGovernor},
+    fee_calculator::{FeeCalculator, FeeRateGovernor},
     genesis_config::{ClusterType, GenesisConfig},
     hard_forks::HardForks,
     hash::{extend_and_hash, hashv, Hash},
@@ -107,7 +108,10 @@ use solana_sdk::{
     transaction::{self, Result, Transaction, TransactionError},
 };
 use solana_stake_program::stake_state::{self, InflationPointCalculationEvent, PointValue};
-use solana_vote_program::vote_instruction::VoteInstruction;
+use solana_vote_program::{
+    vote_instruction::VoteInstruction,
+    vote_state::{VoteState, VoteStateVersions},
+};
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -142,6 +146,7 @@ impl RentDebits {
                     reward_type: RewardType::Rent,
                     lamports: rent_debit,
                     post_balance,
+                    commission: None, // Not applicable
                 };
                 self.0.push((*account, reward_info));
             } else {
@@ -632,7 +637,7 @@ impl NonceRollbackFull {
         } = partial;
         let fee_payer = (0..message.account_keys.len()).find_map(|i| {
             if let Some((k, a)) = &accounts.get(i) {
-                if message.is_non_loader_key(k, i) {
+                if message.is_non_loader_key(i) {
                     return Some((k, a));
                 }
             }
@@ -830,8 +835,9 @@ pub trait DropCallback: fmt::Debug {
 #[derive(Debug, PartialEq, Serialize, Deserialize, AbiExample, Clone, Copy)]
 pub struct RewardInfo {
     pub reward_type: RewardType,
-    pub lamports: i64,     // Reward amount
-    pub post_balance: u64, // Account balance in lamports after `lamports` was applied
+    pub lamports: i64,          // Reward amount
+    pub post_balance: u64,      // Account balance in lamports after `lamports` was applied
+    pub commission: Option<u8>, // Vote account commission when the reward was credited, only present for voting and staking rewards
 }
 
 #[derive(Debug, Default)]
@@ -1517,8 +1523,33 @@ impl Bank {
     where
         F: Fn(&Option<AccountSharedData>) -> AccountSharedData,
     {
-        let old_account = self.get_sysvar_account_with_fixed_root(pubkey);
-        let new_account = updater(&old_account);
+        let old_account = if !self.rent_for_sysvars() {
+            // This old behavior is being retired for simpler reasoning for the benefits of all.
+            // Specifically, get_sysvar_account_with_fixed_root() doesn't work nicely with eager
+            // rent collection, which becomes significant for sysvars after rent_for_sysvars
+            // activation. That's because get_sysvar_account_with_fixed_root() invocations by both
+            // update_slot_history() and update_recent_blockhashes() ignores any updates
+            // by eager rent collection in this slot.
+            // Also, it turned out that get_sysvar_account_with_fixed_root()'s special
+            // behavior (idempotent) isn't needed to begin with, because we're fairly certain that
+            // we don't call new_from_parent() with same child slot multiple times in the
+            // production code (except after proper handling of duplicate slot dumping)...
+            self.get_sysvar_account_with_fixed_root(pubkey)
+        } else {
+            self.get_account_with_fixed_root(pubkey)
+        };
+        let mut new_account = updater(&old_account);
+
+        if self.rent_for_sysvars() {
+            // When new sysvar comes into existence (with RENT_UNADJUSTED_INITIAL_BALANCE lamports),
+            // this code ensures that the sysvar's balance is adjusted to be rent-exempt.
+            // Note that all of existing sysvar balances must be adjusted immediately (i.e. reset) upon
+            // the `rent_for_sysvars` feature activation (ref: reset_all_sysvar_balances).
+            //
+            // More generally, this code always re-calculates for possible sysvar data size change,
+            // although there is no such sysvars currently.
+            self.adjust_sysvar_balance_for_rent(&mut new_account);
+        }
 
         self.store_account_and_update_capitalization(pubkey, &new_account);
     }
@@ -1527,9 +1558,23 @@ impl Bank {
         &self,
         old_account: &Option<AccountSharedData>,
     ) -> InheritableAccountFields {
+        const RENT_UNADJUSTED_INITIAL_BALANCE: u64 = 1;
+
         (
-            old_account.as_ref().map(|a| a.lamports()).unwrap_or(1),
-            INITIAL_RENT_EPOCH,
+            old_account
+                .as_ref()
+                .map(|a| a.lamports())
+                .unwrap_or(RENT_UNADJUSTED_INITIAL_BALANCE),
+            if !self.rent_for_sysvars() {
+                INITIAL_RENT_EPOCH
+            } else {
+                // start to inherit rent_epoch updated by rent collection to be consistent with
+                // other normal accounts
+                old_account
+                    .as_ref()
+                    .map(|a| a.rent_epoch())
+                    .unwrap_or(INITIAL_RENT_EPOCH)
+            },
         )
     }
 
@@ -2005,6 +2050,17 @@ impl Bank {
         for (vote_pubkey, (stake_group, vote_account)) in stake_delegation_accounts.iter_mut() {
             let mut vote_account_changed = false;
             let voters_account_pre_balance = vote_account.lamports();
+            let vote_state: VoteState = match StateMut::<VoteStateVersions>::state(vote_account) {
+                Ok(vote_state) => vote_state.convert_to_current(),
+                Err(err) => {
+                    debug!(
+                        "failed to deserialize vote account {}: {}",
+                        vote_pubkey, err
+                    );
+                    continue;
+                }
+            };
+            let commission = Some(vote_state.commission);
 
             for (stake_pubkey, stake_account) in stake_group.iter_mut() {
                 // curry closure to add the contextual stake_pubkey
@@ -2019,6 +2075,7 @@ impl Bank {
                     rewarded_epoch,
                     stake_account,
                     vote_account,
+                    &vote_state,
                     &point_value,
                     Some(&stake_history),
                     &mut reward_calc_tracer.as_mut(),
@@ -2035,6 +2092,7 @@ impl Bank {
                                 reward_type: RewardType::Staking,
                                 lamports: stakers_reward as i64,
                                 post_balance: stake_account.lamports(),
+                                commission,
                             },
                         ));
                     }
@@ -2056,6 +2114,7 @@ impl Bank {
                             reward_type: RewardType::Voting,
                             lamports,
                             post_balance,
+                            commission,
                         },
                     ));
                 }
@@ -2167,6 +2226,7 @@ impl Bank {
                                 reward_type: RewardType::Fee,
                                 lamports: deposit as i64,
                                 post_balance,
+                                commission: None,
                             },
                         ));
                     }
@@ -3314,10 +3374,6 @@ impl Bank {
         let hash_queue = self.blockhash_queue.read().unwrap();
         let mut fees = 0;
 
-        let fee_config = FeeConfig {
-            secp256k1_program_enabled: self.secp256k1_program_enabled(),
-        };
-
         let results = txs
             .zip(executed)
             .map(|(tx, (res, nonce_rollback))| {
@@ -3335,7 +3391,7 @@ impl Bank {
                     });
                 let fee_calculator = fee_calculator.ok_or(TransactionError::BlockhashNotFound)?;
 
-                let fee = fee_calculator.calculate_fee_with_config(tx.message(), &fee_config);
+                let fee = fee_calculator.calculate_fee(tx.message());
 
                 let message = tx.message();
                 match *res {
@@ -3411,6 +3467,7 @@ impl Bank {
             &self.rent_collector,
             &self.last_blockhash_with_fee_calculator(),
             self.fix_recent_blockhashes_sysvar_delay(),
+            self.rent_for_sysvars(),
         );
         let rent_debits = self.collect_rent(executed, loaded_txs);
 
@@ -3553,6 +3610,7 @@ impl Bank {
                                 reward_type: RewardType::Rent,
                                 lamports: rent_to_be_paid as i64,
                                 post_balance: account.lamports(),
+                                commission: None,
                             },
                         ));
                     }
@@ -3682,12 +3740,15 @@ impl Bank {
         let account_count = accounts.len();
 
         // parallelize?
+        let rent_for_sysvars = self.rent_for_sysvars();
         let mut total_rent = 0;
         let mut rent_debits = RentDebits::default();
         for (pubkey, mut account) in accounts {
-            let rent = self
-                .rent_collector
-                .collect_from_existing_account(&pubkey, &mut account);
+            let rent = self.rent_collector.collect_from_existing_account(
+                &pubkey,
+                &mut account,
+                rent_for_sysvars,
+            );
             total_rent += rent;
             // Store all of them unconditionally to purge old AppendVec,
             // even if collected rent is 0 (= not updated).
@@ -4186,16 +4247,31 @@ impl Bank {
         if let Some(old_account) = self.get_account_with_fixed_root(pubkey) {
             match new_account.lamports().cmp(&old_account.lamports()) {
                 std::cmp::Ordering::Greater => {
-                    self.capitalization
-                        .fetch_add(new_account.lamports() - old_account.lamports(), Relaxed);
+                    let increased = new_account.lamports() - old_account.lamports();
+                    trace!(
+                        "store_account_and_update_capitalization: increased: {} {}",
+                        pubkey,
+                        increased
+                    );
+                    self.capitalization.fetch_add(increased, Relaxed);
                 }
                 std::cmp::Ordering::Less => {
-                    self.capitalization
-                        .fetch_sub(old_account.lamports() - new_account.lamports(), Relaxed);
+                    let decreased = old_account.lamports() - new_account.lamports();
+                    trace!(
+                        "store_account_and_update_capitalization: decreased: {} {}",
+                        pubkey,
+                        decreased
+                    );
+                    self.capitalization.fetch_sub(decreased, Relaxed);
                 }
                 std::cmp::Ordering::Equal => {}
             }
         } else {
+            trace!(
+                "store_account_and_update_capitalization: created: {} {}",
+                pubkey,
+                new_account.lamports()
+            );
             self.capitalization
                 .fetch_add(new_account.lamports(), Relaxed);
         }
@@ -4339,6 +4415,8 @@ impl Bank {
     // multiple times with the same parent_slot in the case of forking.
     //
     // Generally, all of sysvar update granularity should be slot boundaries.
+    //
+    // This behavior is deprecated... See comment in update_sysvar_account() for details
     fn get_sysvar_account_with_fixed_root(&self, pubkey: &Pubkey) -> Option<AccountSharedData> {
         let mut ancestors = self.ancestors.clone();
         ancestors.remove(&self.slot());
@@ -5013,11 +5091,6 @@ impl Bank {
         self.rc.accounts.accounts_db.shrink_candidate_slots()
     }
 
-    pub fn secp256k1_program_enabled(&self) -> bool {
-        self.feature_set
-            .is_active(&feature_set::secp256k1_program_enabled::id())
-    }
-
     pub fn no_overflow_rent_distribution_enabled(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::no_overflow_rent_distribution::id())
@@ -5097,12 +5170,55 @@ impl Bank {
 
             self.rewrite_stakes();
         }
+        if new_feature_activations.contains(&feature_set::rent_for_sysvars::id()) {
+            // when this feature is activated, immediately all of existing sysvars are susceptible
+            // to rent collection and account data removal due to insufficient balance due to only
+            // having 1 lamport.
+            // so before any is accessed, reset the balance to be rent-exempt here at the same
+            // timing when perpetual balance adjustment is started in update_sysvar_account().
+            self.reset_all_sysvar_balances();
+        }
 
         if !debug_do_not_add_builtins {
             self.ensure_feature_builtins(init_finish_or_warp, &new_feature_activations);
             self.reconfigure_token2_native_mint();
         }
         self.ensure_no_storage_rewards_pool();
+    }
+
+    fn reset_all_sysvar_balances(&self) {
+        for sysvar_id in &[
+            sysvar::clock::id(),
+            sysvar::epoch_schedule::id(),
+            sysvar::fees::id(),
+            sysvar::recent_blockhashes::id(),
+            sysvar::rent::id(),
+            sysvar::rewards::id(),
+            sysvar::slot_hashes::id(),
+            sysvar::slot_history::id(),
+            sysvar::stake_history::id(),
+        ] {
+            if let Some(mut account) = self.get_account(sysvar_id) {
+                let (old_data_len, old_lamports) = (account.data().len(), account.lamports());
+                self.adjust_sysvar_balance_for_rent(&mut account);
+                info!(
+                    "reset_all_sysvar_balances (slot: {}): {} ({} bytes) is reset from {} to {}",
+                    self.slot(),
+                    sysvar_id,
+                    old_data_len,
+                    old_lamports,
+                    account.lamports()
+                );
+                self.store_account_and_update_capitalization(sysvar_id, &account);
+            }
+        }
+    }
+
+    fn adjust_sysvar_balance_for_rent(&self, account: &mut AccountSharedData) {
+        account.set_lamports(
+            self.get_minimum_balance_for_rent_exemption(account.data().len())
+                .max(account.lamports()),
+        );
     }
 
     // Compute the active feature set based on the current bank state, and return the set of newly activated features
@@ -5284,6 +5400,11 @@ impl Bank {
                 .is_active(&feature_set::consistent_recent_blockhashes_sysvar::id()),
         }
     }
+
+    fn rent_for_sysvars(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::rent_for_sysvars::id())
+    }
 }
 
 impl Drop for Bank {
@@ -5353,7 +5474,6 @@ pub(crate) mod tests {
     use crossbeam_channel::{bounded, unbounded};
     use solana_sdk::{
         account::Account,
-        account_utils::StateMut,
         clock::{DEFAULT_SLOTS_PER_EPOCH, DEFAULT_TICKS_PER_SLOT},
         epoch_schedule::MINIMUM_SLOTS_PER_EPOCH,
         feature::Feature,
@@ -5593,7 +5713,7 @@ pub(crate) mod tests {
             cluster_type: ClusterType::MainnetBeta,
             ..GenesisConfig::default()
         }));
-        let sysvar_and_native_proram_delta0 = 10;
+        let sysvar_and_native_proram_delta0 = 11;
         assert_eq!(
             bank0.capitalization(),
             42 * 42 + sysvar_and_native_proram_delta0
@@ -5896,6 +6016,19 @@ pub(crate) mod tests {
         assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
     }
 
+    fn assert_capitalization_diff_with_new_bank(
+        bank: &Bank,
+        updater: impl Fn() -> Bank,
+        asserter: impl Fn(u64, u64),
+    ) -> Bank {
+        let old = bank.capitalization();
+        let bank = updater();
+        let new = bank.capitalization();
+        asserter(old, new);
+        assert_eq!(bank.capitalization(), bank.calculate_capitalization(true));
+        bank
+    }
+
     #[test]
     fn test_store_account_and_update_capitalization_missing() {
         let (genesis_config, _mint_keypair) = create_genesis_config(0);
@@ -6183,7 +6316,9 @@ pub(crate) mod tests {
 
         let current_capitalization = bank.capitalization.load(Relaxed);
 
-        let sysvar_and_native_proram_delta = 1;
+        // only slot history is newly created
+        let sysvar_and_native_proram_delta =
+            min_rent_excempt_balance_for_sysvars(&bank, &[sysvar::slot_history::id()]);
         assert_eq!(
             previous_capitalization - (current_capitalization - sysvar_and_native_proram_delta),
             burned_portion
@@ -7095,6 +7230,11 @@ pub(crate) mod tests {
                 .map(|(slot, _)| *slot)
                 .collect::<Vec<Slot>>()
         }
+
+        fn first_slot_in_next_epoch(&self) -> Slot {
+            self.epoch_schedule()
+                .get_first_slot_in_epoch(self.epoch() + 1)
+        }
     }
 
     #[test]
@@ -7275,10 +7415,10 @@ pub(crate) mod tests {
         // not being eagerly-collected for exact rewards calculation
         bank0.restore_old_behavior_for_fragile_tests();
 
-        let sysvar_and_native_proram_delta0 = 10;
+        let sysvar_and_native_program_delta0 = 11;
         assert_eq!(
             bank0.capitalization(),
-            42 * 1_000_000_000 + sysvar_and_native_proram_delta0
+            42 * 1_000_000_000 + sysvar_and_native_program_delta0
         );
         assert!(bank0.rewards.read().unwrap().is_empty());
 
@@ -7360,6 +7500,7 @@ pub(crate) mod tests {
                     reward_type: RewardType::Staking,
                     lamports: (rewards.validator_point_value * validator_points as f64) as i64,
                     post_balance: bank1.get_balance(&stake_id),
+                    commission: Some(0),
                 }
             )]
         );
@@ -7397,7 +7538,7 @@ pub(crate) mod tests {
         // not being eagerly-collected for exact rewards calculation
         bank.restore_old_behavior_for_fragile_tests();
 
-        let sysvar_and_native_proram_delta = 10;
+        let sysvar_and_native_proram_delta = 11;
         assert_eq!(
             bank.capitalization(),
             42 * 1_000_000_000 + sysvar_and_native_proram_delta
@@ -7861,6 +8002,7 @@ pub(crate) mod tests {
                     reward_type: RewardType::Fee,
                     lamports: expected_fee_collected as i64,
                     post_balance: initial_balance + expected_fee_collected,
+                    commission: None,
                 }
             )]
         );
@@ -7896,6 +8038,7 @@ pub(crate) mod tests {
                     reward_type: RewardType::Fee,
                     lamports: expected_fee_collected as i64,
                     post_balance: initial_balance + 2 * expected_fee_collected,
+                    commission: None,
                 }
             )]
         );
@@ -8666,7 +8809,7 @@ pub(crate) mod tests {
         let (mut genesis_config, _mint_keypair) = create_genesis_config(500);
 
         let expected_previous_slot = 3;
-        let expected_next_slot = expected_previous_slot + 1;
+        let mut expected_next_slot = expected_previous_slot + 1;
 
         // First, initialize the clock sysvar
         activate_all_features(&mut genesis_config);
@@ -8697,7 +8840,10 @@ pub(crate) mod tests {
                 assert_eq!(dummy_rent_epoch, current_account.rent_epoch());
             },
             |old, new| {
-                assert_eq!(old + 1, new);
+                assert_eq!(
+                    old + min_rent_excempt_balance_for_sysvars(&bank1, &[sysvar::clock::id()]),
+                    new
+                );
             },
         );
 
@@ -8705,7 +8851,7 @@ pub(crate) mod tests {
             &bank1,
             || {
                 bank1.update_sysvar_account(&dummy_clock_id, |optional_account| {
-                    assert!(optional_account.is_none());
+                    assert!(optional_account.is_some());
 
                     create_account(
                         &Clock {
@@ -8746,7 +8892,9 @@ pub(crate) mod tests {
                     expected_next_slot,
                     from_account::<Clock, _>(&current_account).unwrap().slot
                 );
-                assert_eq!(INITIAL_RENT_EPOCH, current_account.rent_epoch());
+                // inherit_specially_retained_account_fields() now starts to inherit rent_epoch too
+                // with rent_for_sysvars
+                assert_eq!(dummy_rent_epoch, current_account.rent_epoch());
             },
             |old, new| {
                 // if existing, capitalization shouldn't change
@@ -8754,8 +8902,9 @@ pub(crate) mod tests {
             },
         );
 
-        // Updating again should give bank1's sysvar to the closure not bank2's.
-        // Thus, assert with same expected_next_slot as previously
+        // Updating again should give bank2's sysvar to the closure not bank1's.
+        // Thus, increment expected_next_slot accordingly
+        expected_next_slot += 1;
         assert_capitalization_diff(
             &bank2,
             || {
@@ -10625,25 +10774,25 @@ pub(crate) mod tests {
             if bank.slot == 0 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "Cn7Wmi7w1n9NbK7RGnTQ4LpbJ2LtoJoc1sufiTwb57Ya"
+                    "BfvaoHkrQwrkQo7T1mW6jmJXveRy11rut8bva2H1Rt5H"
                 );
             }
             if bank.slot == 32 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "BXupB8XsZukMTnDbKshJ8qPCydWnc8BKtSj7YTJ6gAH"
+                    "JBGPApnSMPKZaYiR16v46XSSGcKxy8kCbVtN1CG1XDxW"
                 );
             }
             if bank.slot == 64 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "EDkKefgSMSV1NhxnGnJP7R5AGZ2JZD6oxnoZtGuEGBCU"
+                    "BDCt9cGPfxpgJXzp8Tq1nX1zSqpbs8xrkAFyRhmXKiuX"
                 );
             }
             if bank.slot == 128 {
                 assert_eq!(
                     bank.hash().to_string(),
-                    "AtWu4tubU9zGFChfHtQghQx3RVWtMQu6Rj49rQymFc4z"
+                    "4zUpK4VUhKLaPUgeMMSeDR2w827goriRL5NndJxGDVmz"
                 );
                 break;
             }
@@ -10793,7 +10942,7 @@ pub(crate) mod tests {
         // No more slots should be shrunk
         assert_eq!(bank2.shrink_candidate_slots(), 0);
         // alive_counts represents the count of alive accounts in the three slots 0,1,2
-        assert_eq!(alive_counts, vec![9, 1, 7]);
+        assert_eq!(alive_counts, vec![10, 1, 7]);
     }
 
     #[test]
@@ -10841,7 +10990,7 @@ pub(crate) mod tests {
             .map(|_| bank.process_stale_slot_with_budget(0, force_to_return_alive_account))
             .sum();
         // consumed_budgets represents the count of alive accounts in the three slots 0,1,2
-        assert_eq!(consumed_budgets, 10);
+        assert_eq!(consumed_budgets, 11);
     }
 
     #[test]
@@ -11606,6 +11755,265 @@ pub(crate) mod tests {
         let versioned = VoteStateVersions::new_current(vote_state);
         VoteState::to(&versioned, &mut vote_account).unwrap();
         bank.store_account(vote_pubkey, &vote_account);
+    }
+
+    fn min_rent_excempt_balance_for_sysvars(bank: &Bank, sysvar_ids: &[Pubkey]) -> u64 {
+        sysvar_ids
+            .iter()
+            .map(|sysvar_id| {
+                trace!("min_rent_excempt_balance_for_sysvars: {}", sysvar_id);
+                bank.get_minimum_balance_for_rent_exemption(
+                    bank.get_account(sysvar_id).unwrap().data().len(),
+                )
+            })
+            .sum()
+    }
+
+    fn expected_cap_delta_after_sysvar_reset(bank: &Bank, sysvar_ids: &[Pubkey]) -> u64 {
+        min_rent_excempt_balance_for_sysvars(bank, sysvar_ids) - sysvar_ids.len() as u64
+    }
+
+    #[test]
+    fn test_adjust_sysvar_balance_for_rent() {
+        let (genesis_config, _mint_keypair) = create_genesis_config(0);
+        let bank = Bank::new(&genesis_config);
+        let mut smaller_sample_sysvar = bank.get_account(&sysvar::clock::id()).unwrap();
+        assert_eq!(smaller_sample_sysvar.lamports(), 1);
+        bank.adjust_sysvar_balance_for_rent(&mut smaller_sample_sysvar);
+        assert_eq!(
+            smaller_sample_sysvar.lamports(),
+            bank.get_minimum_balance_for_rent_exemption(smaller_sample_sysvar.data().len()),
+        );
+
+        let mut bigger_sample_sysvar = AccountSharedData::new(
+            1,
+            smaller_sample_sysvar.data().len() + 1,
+            &Pubkey::default(),
+        );
+        bank.adjust_sysvar_balance_for_rent(&mut bigger_sample_sysvar);
+        assert!(smaller_sample_sysvar.lamports() < bigger_sample_sysvar.lamports());
+
+        // excess lamports shouldn't be reduced by adjust_sysvar_balance_for_rent()
+        let excess_lamports = smaller_sample_sysvar.lamports() + 999;
+        smaller_sample_sysvar.set_lamports(excess_lamports);
+        bank.adjust_sysvar_balance_for_rent(&mut smaller_sample_sysvar);
+        assert_eq!(smaller_sample_sysvar.lamports(), excess_lamports);
+    }
+
+    // this test can be removed after rent_for_sysvars activation on mainnet-beta
+    #[test]
+    fn test_no_deletion_due_to_rent_upon_rent_for_sysvar_activation() {
+        solana_logger::setup();
+
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(0);
+        let feature_balance =
+            std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+
+        // activate all features but rent_for_sysvars
+        activate_all_features(&mut genesis_config);
+        genesis_config
+            .accounts
+            .remove(&feature_set::rent_for_sysvars::id());
+        let bank0 = Bank::new(&genesis_config);
+        let bank1 = Arc::new(new_from_parent(&Arc::new(bank0)));
+
+        // schedule activation of simple capitalization
+        bank1.store_account_and_update_capitalization(
+            &feature_set::rent_for_sysvars::id(),
+            &feature::create_account(&Feature { activated_at: None }, feature_balance),
+        );
+
+        let bank2 =
+            Bank::new_from_parent(&bank1, &Pubkey::default(), bank1.first_slot_in_next_epoch());
+        assert_eq!(bank2.get_program_accounts(&sysvar::id()).unwrap().len(), 8);
+
+        // force rent collection for sysvars
+        bank2.collect_rent_in_partition((0, 0, 1)); // all range
+
+        // no sysvar should be deleted due to rent
+        assert_eq!(bank2.get_program_accounts(&sysvar::id()).unwrap().len(), 8);
+    }
+
+    // this test can be removed after rent_for_sysvars activation on mainnet-beta
+    #[test]
+    fn test_rent_for_sysvars_adjustment_minimum_genesis_set() {
+        solana_logger::setup();
+
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(0);
+        let feature_balance =
+            std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+
+        // inhibit deprecated rewards sysvar creation altogether
+        genesis_config.accounts.insert(
+            feature_set::deprecate_rewards_sysvar::id(),
+            Account::from(feature::create_account(
+                &Feature {
+                    activated_at: Some(0),
+                },
+                feature_balance,
+            )),
+        );
+
+        let bank0 = Bank::new(&genesis_config);
+        let bank1 = Arc::new(new_from_parent(&Arc::new(bank0)));
+
+        // schedule activation of rent_for_sysvars
+        bank1.store_account_and_update_capitalization(
+            &feature_set::rent_for_sysvars::id(),
+            &feature::create_account(&Feature { activated_at: None }, feature_balance),
+        );
+
+        {
+            let sysvars = bank1.get_program_accounts(&sysvar::id()).unwrap();
+            assert_eq!(sysvars.len(), 8);
+            assert!(sysvars
+                .iter()
+                .map(|(_pubkey, account)| account.lamports())
+                .all(|lamports| lamports == 1));
+        }
+
+        // 8 sysvars should be reset by reset_all_sysvar_balances()
+        let bank2 = assert_capitalization_diff_with_new_bank(
+            &bank1,
+            || Bank::new_from_parent(&bank1, &Pubkey::default(), bank1.first_slot_in_next_epoch()),
+            |old, new| {
+                assert_eq!(
+                    old + expected_cap_delta_after_sysvar_reset(
+                        &bank1,
+                        &[
+                            sysvar::clock::id(),
+                            sysvar::epoch_schedule::id(),
+                            sysvar::fees::id(),
+                            sysvar::recent_blockhashes::id(),
+                            sysvar::rent::id(),
+                            sysvar::slot_hashes::id(),
+                            sysvar::slot_history::id(),
+                            sysvar::stake_history::id(),
+                        ]
+                    ),
+                    new
+                )
+            },
+        );
+
+        {
+            let sysvars = bank2.get_program_accounts(&sysvar::id()).unwrap();
+            assert_eq!(sysvars.len(), 8);
+            assert!(sysvars
+                .iter()
+                .map(|(_pubkey, account)| account.lamports())
+                .all(|lamports| lamports > 1));
+        }
+    }
+
+    // this test can be removed after rent_for_sysvars activation on mainnet-beta
+    #[test]
+    fn test_rent_for_sysvars_adjustment_full_set() {
+        solana_logger::setup();
+
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(0);
+        let feature_balance =
+            std::cmp::max(genesis_config.rent.minimum_balance(Feature::size_of()), 1);
+
+        // activate all features but rent_for_sysvars
+        activate_all_features(&mut genesis_config);
+        genesis_config
+            .accounts
+            .remove(&feature_set::rent_for_sysvars::id());
+        // intentionally create deprecated rewards sysvar creation
+        genesis_config
+            .accounts
+            .remove(&feature_set::deprecate_rewards_sysvar::id());
+
+        // intentionally create bogus native programs
+        #[allow(clippy::unnecessary_wraps)]
+        fn mock_process_instruction(
+            _program_id: &Pubkey,
+            _data: &[u8],
+            _invoke_context: &mut dyn InvokeContext,
+        ) -> std::result::Result<(), solana_sdk::instruction::InstructionError> {
+            Ok(())
+        }
+        let builtins = Builtins {
+            genesis_builtins: vec![
+                Builtin::new(
+                    "mock bpf",
+                    solana_sdk::bpf_loader::id(),
+                    mock_process_instruction,
+                ),
+                Builtin::new(
+                    "mock bpf",
+                    solana_sdk::bpf_loader_deprecated::id(),
+                    mock_process_instruction,
+                ),
+            ],
+            feature_builtins: (vec![]),
+        };
+
+        let bank0 = Arc::new(Bank::new_with_paths(
+            &genesis_config,
+            Vec::new(),
+            &[],
+            None,
+            Some(&builtins),
+            AccountSecondaryIndexes::default(),
+            false,
+            AccountShrinkThreshold::default(),
+            false,
+        ));
+        // move to next epoch to create now deprecated rewards sysvar intentionally
+        let bank1 = Arc::new(Bank::new_from_parent(
+            &bank0,
+            &Pubkey::default(),
+            bank0.first_slot_in_next_epoch(),
+        ));
+
+        // schedule activation of simple capitalization
+        bank1.store_account_and_update_capitalization(
+            &feature_set::rent_for_sysvars::id(),
+            &feature::create_account(&Feature { activated_at: None }, feature_balance),
+        );
+        {
+            let sysvars = bank1.get_program_accounts(&sysvar::id()).unwrap();
+            assert_eq!(sysvars.len(), 9);
+            assert!(sysvars
+                .iter()
+                .map(|(_pubkey, account)| account.lamports())
+                .all(|lamports| lamports == 1));
+        }
+
+        // 9 sysvars should be reset by reset_all_sysvar_balances()
+        let bank2 = assert_capitalization_diff_with_new_bank(
+            &bank1,
+            || Bank::new_from_parent(&bank1, &Pubkey::default(), bank1.first_slot_in_next_epoch()),
+            |old, new| {
+                assert_eq!(
+                    old + expected_cap_delta_after_sysvar_reset(
+                        &bank1,
+                        &[
+                            sysvar::clock::id(),
+                            sysvar::epoch_schedule::id(),
+                            sysvar::fees::id(),
+                            sysvar::recent_blockhashes::id(),
+                            sysvar::rent::id(),
+                            sysvar::rewards::id(),
+                            sysvar::slot_hashes::id(),
+                            sysvar::slot_history::id(),
+                            sysvar::stake_history::id(),
+                        ]
+                    ),
+                    new
+                )
+            },
+        );
+        {
+            let sysvars = bank2.get_program_accounts(&sysvar::id()).unwrap();
+            assert_eq!(sysvars.len(), 9);
+            assert!(sysvars
+                .iter()
+                .map(|(_pubkey, account)| account.lamports())
+                .all(|lamports| lamports > 1));
+        }
     }
 
     #[test]
