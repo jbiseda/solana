@@ -150,12 +150,13 @@ pub struct Blockstore {
     pub completed_slots_senders: Vec<CompletedSlotsSender>,
     pub lowest_cleanup_slot: Arc<RwLock<Slot>>,
     no_compaction: bool,
-    slots_stats: Arc<Mutex<SlotsStats>>,
+    pub slots_stats: Arc<Mutex<SlotsStats>>,
 }
 
-struct SlotsStats {
+pub struct SlotsStats {
     last_cleanup_ts: Instant,
     stats: BTreeMap<Slot, SlotStats>,
+    turbine_slots: HashSet<Slot>,
 }
 
 impl Default for SlotsStats {
@@ -163,6 +164,7 @@ impl Default for SlotsStats {
         SlotsStats {
             last_cleanup_ts: Instant::now(),
             stats: BTreeMap::new(),
+            turbine_slots: HashSet::new(),
         }
     }
 }
@@ -1551,7 +1553,13 @@ impl Blockstore {
             let (num_repaired, num_recovered) = {
                 let mut slots_stats = self.slots_stats.lock().unwrap();
                 if let Some(e) = slots_stats.stats.remove(&slot_meta.slot) {
-                    if slots_stats.last_cleanup_ts.elapsed().as_secs() > 30 {
+
+                    //jbiseda_mark
+                    if e.num_repaired == 0 {
+                        slots_stats.turbine_slots.insert(slot_meta.slot);
+                    }
+
+                    if slots_stats.last_cleanup_ts.elapsed().as_secs() > 30 { //jbiseda magicnumber
                         let root = self.last_root();
                         slots_stats.stats = slots_stats.stats.split_off(&root);
                         slots_stats.last_cleanup_ts = Instant::now();
