@@ -4,10 +4,10 @@ use crate::{
         self, BlockstoreProcessorError, BlockstoreProcessorResult, CacheBlockMetaSender,
         ProcessOptions, TransactionStatusSender,
     },
-    entry::VerifyRecyclers,
     leader_schedule_cache::LeaderScheduleCache,
 };
 use log::*;
+use solana_entry::entry::VerifyRecyclers;
 use solana_runtime::{
     bank_forks::BankForks,
     snapshot_config::SnapshotConfig,
@@ -140,6 +140,7 @@ fn load_from_snapshot(
         process_options.limit_load_slot_count_from_snapshot,
         process_options.shrink_ratio,
         process_options.accounts_db_test_hash_calculation,
+        process_options.verify_index,
     )
     .expect("Load from snapshot failed");
     if let Some(shrink_paths) = shrink_paths {

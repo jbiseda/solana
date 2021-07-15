@@ -23,12 +23,12 @@ use crate::{
     window_service::DuplicateSlotReceiver,
 };
 use solana_client::rpc_response::SlotUpdate;
+use solana_entry::entry::VerifyRecyclers;
 use solana_gossip::cluster_info::ClusterInfo;
 use solana_ledger::{
     block_error::BlockError,
     blockstore::Blockstore,
     blockstore_processor::{self, BlockstoreProcessorError, TransactionStatusSender},
-    entry::VerifyRecyclers,
     leader_schedule_cache::LeaderScheduleCache,
 };
 use solana_measure::measure::Measure;
@@ -635,6 +635,7 @@ impl ReplayStage {
                                 identity_keypair = cluster_info.keypair().clone();
                                 let my_old_pubkey = my_pubkey;
                                 my_pubkey = identity_keypair.pubkey();
+                                tower.set_identity(my_pubkey);
                                 warn!("Identity changed from {} to {}", my_old_pubkey, my_pubkey);
                             }
 
@@ -1586,6 +1587,16 @@ impl ReplayStage {
             }
             Ok(vote_state) => vote_state,
         };
+
+        if vote_state.node_pubkey != node_keypair.pubkey() {
+            info!(
+                "Vote account node_pubkey mismatch: {} (expected: {}).  Unable to vote",
+                vote_state.node_pubkey,
+                node_keypair.pubkey()
+            );
+            return None;
+        }
+
         let authorized_voter_pubkey =
             if let Some(authorized_voter_pubkey) = vote_state.get_authorized_voter(bank.epoch()) {
                 authorized_voter_pubkey
@@ -2684,12 +2695,12 @@ mod tests {
         vote_simulator::{self, VoteSimulator},
     };
     use crossbeam_channel::unbounded;
+    use solana_entry::entry::{self, Entry};
     use solana_gossip::{cluster_info::Node, crds::Cursor};
     use solana_ledger::{
         blockstore::make_slot_entries,
         blockstore::{entries_to_test_shreds, BlockstoreError},
         create_new_tmp_ledger,
-        entry::{self, Entry},
         genesis_utils::{create_genesis_config, create_genesis_config_with_leader},
         get_tmp_ledger_path,
         shred::{
@@ -3690,8 +3701,7 @@ mod tests {
     fn test_same_weight_select_lower_slot() {
         // Init state
         let mut vote_simulator = VoteSimulator::new(1);
-        let my_node_pubkey = vote_simulator.node_pubkeys[0];
-        let tower = Tower::new_with_key(&my_node_pubkey);
+        let tower = Tower::default();
 
         // Create the tree of banks in a BankForks object
         let forks = tr(0) / (tr(1)) / (tr(2));
@@ -3763,7 +3773,7 @@ mod tests {
         // Init state
         let mut vote_simulator = VoteSimulator::new(1);
         let my_node_pubkey = vote_simulator.node_pubkeys[0];
-        let mut tower = Tower::new_with_key(&my_node_pubkey);
+        let mut tower = Tower::default();
 
         // Create the tree of banks in a BankForks object
         let forks = tr(0) / (tr(1) / (tr(2) / (tr(3))));

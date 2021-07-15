@@ -8,7 +8,6 @@ use crate::{
         IteratorMode, LedgerColumn, Result, WriteBatch,
     },
     blockstore_meta::*,
-    entry::{create_ticks, Entry},
     erasure::ErasureConfig,
     leader_schedule_cache::LeaderScheduleCache,
     next_slots_iterator::NextSlotsIterator,
@@ -22,6 +21,7 @@ use rayon::{
     ThreadPool,
 };
 use rocksdb::DBRawIterator;
+use solana_entry::entry::{create_ticks, Entry};
 use solana_measure::measure::Measure;
 use solana_metrics::{datapoint_debug, datapoint_error};
 use solana_rayon_threadlimit::get_thread_count;
@@ -144,6 +144,7 @@ pub struct Blockstore {
     perf_samples_cf: LedgerColumn<cf::PerfSamples>,
     block_height_cf: LedgerColumn<cf::BlockHeight>,
     program_costs_cf: LedgerColumn<cf::ProgramCosts>,
+    bank_hash_cf: LedgerColumn<cf::BankHash>,
     last_root: Arc<RwLock<Slot>>,
     insert_shreds_lock: Arc<Mutex<()>>,
     pub new_shreds_signals: Vec<SyncSender<bool>>,
@@ -346,6 +347,7 @@ impl Blockstore {
         let perf_samples_cf = db.column();
         let block_height_cf = db.column();
         let program_costs_cf = db.column();
+        let bank_hash_cf = db.column();
 
         let db = Arc::new(db);
 
@@ -395,6 +397,7 @@ impl Blockstore {
             perf_samples_cf,
             block_height_cf,
             program_costs_cf,
+            bank_hash_cf,
             new_shreds_signals: vec![],
             completed_slots_senders: vec![],
             insert_shreds_lock: Arc::new(Mutex::new(())),
@@ -2959,6 +2962,54 @@ impl Blockstore {
         }
     }
 
+    pub fn insert_bank_hash(&self, slot: Slot, frozen_hash: Hash, is_duplicate_confirmed: bool) {
+        if let Some(prev_value) = self.bank_hash_cf.get(slot).unwrap() {
+            if prev_value.frozen_hash() == frozen_hash && prev_value.is_duplicate_confirmed() {
+                // Don't overwrite is_duplicate_confirmed == true with is_duplicate_confirmed == false,
+                // which may happen on startup when procesing from blockstore processor because the
+                // blocks may not reflect earlier observed gossip votes from before the restart.
+                return;
+            }
+        }
+        let data = FrozenHashVersioned::Current(FrozenHashStatus {
+            frozen_hash,
+            is_duplicate_confirmed,
+        });
+        self.bank_hash_cf.put(slot, &data).unwrap()
+    }
+
+    pub fn get_bank_hash(&self, slot: Slot) -> Option<Hash> {
+        self.bank_hash_cf
+            .get(slot)
+            .unwrap()
+            .map(|versioned| versioned.frozen_hash())
+    }
+
+    pub fn is_duplicate_confirmed(&self, slot: Slot) -> bool {
+        self.bank_hash_cf
+            .get(slot)
+            .unwrap()
+            .map(|versioned| versioned.is_duplicate_confirmed())
+            .unwrap_or(false)
+    }
+
+    pub fn set_duplicate_confirmed_slots_and_hashes(
+        &self,
+        duplicate_confirmed_slot_hashes: impl Iterator<Item = (Slot, Hash)>,
+    ) -> Result<()> {
+        let mut write_batch = self.db.batch()?;
+        for (slot, frozen_hash) in duplicate_confirmed_slot_hashes {
+            let data = FrozenHashVersioned::Current(FrozenHashStatus {
+                frozen_hash,
+                is_duplicate_confirmed: true,
+            });
+            write_batch.put::<cf::BankHash>(slot, &data)?;
+        }
+
+        self.db.write(write_batch)?;
+        Ok(())
+    }
+
     pub fn set_roots<'a>(&self, rooted_slots: impl Iterator<Item = &'a Slot>) -> Result<()> {
         let mut write_batch = self.db.batch()?;
         let mut max_new_rooted_slot = 0;
@@ -3940,7 +3991,6 @@ fn adjust_ulimit_nofile(enforce_ulimit_nofile: bool) -> Result<()> {
 pub mod tests {
     use super::*;
     use crate::{
-        entry::{next_entry, next_entry_mut},
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
         leader_schedule::{FixedSchedule, LeaderSchedule},
         shred::{max_ticks_per_n_shreds, DataShredHeader},
@@ -3950,6 +4000,7 @@ pub mod tests {
     use itertools::Itertools;
     use rand::{seq::SliceRandom, thread_rng};
     use solana_account_decoder::parse_token::UiTokenAmount;
+    use solana_entry::entry::{next_entry, next_entry_mut};
     use solana_runtime::bank::{Bank, RewardType};
     use solana_sdk::{
         hash::{self, hash, Hash},

@@ -16,7 +16,7 @@ use solana_clap_utils::{
 };
 use solana_core::cost_model::CostModel;
 use solana_core::cost_tracker::CostTracker;
-use solana_ledger::entry::Entry;
+use solana_entry::entry::Entry;
 use solana_ledger::{
     ancestor_iterator::AncestorIterator,
     bank_forks_utils,
@@ -751,7 +751,16 @@ fn compute_slot_cost(blockstore: &Blockstore, slot: Slot) -> Result<(), String> 
         let mut cost_model = cost_model.write().unwrap();
         for transaction in &entry.transactions {
             programs += transaction.message().instructions.len();
-            let tx_cost = cost_model.calculate_cost(transaction);
+            let tx_cost = match cost_model.calculate_cost(transaction) {
+                Err(err) => {
+                    warn!(
+                        "failed to calculate transaction cost, err {:?}, tx {:?}",
+                        err, transaction
+                    );
+                    continue;
+                }
+                Ok(cost) => cost,
+            };
             if cost_tracker.try_add(tx_cost).is_err() {
                 println!(
                     "Slot: {}, CostModel rejected transaction {:?}, stats {:?}!",
@@ -845,6 +854,10 @@ fn main() {
         .validator(is_slot)
         .takes_value(true)
         .help("Halt processing at the given slot");
+    let verify_index_arg = Arg::with_name("verify_accounts_index")
+        .long("verify-accounts-index")
+        .takes_value(false)
+        .help("For debugging and tests on accounts index.");
     let limit_load_slot_count_from_snapshot_arg = Arg::with_name("limit_load_slot_count_from_snapshot")
         .long("limit-load-slot-count-from-snapshot")
         .value_name("SLOT")
@@ -1121,6 +1134,7 @@ fn main() {
             .arg(&account_paths_arg)
             .arg(&halt_at_slot_arg)
             .arg(&limit_load_slot_count_from_snapshot_arg)
+            .arg(&verify_index_arg)
             .arg(&hard_forks_arg)
             .arg(&no_accounts_db_caching_arg)
             .arg(&accounts_db_test_hash_calculation_arg)
@@ -1845,6 +1859,7 @@ fn main() {
                     usize
                 )
                 .ok(),
+                verify_index: arg_matches.is_present("verify_accounts_index"),
                 allow_dead_slots: arg_matches.is_present("allow_dead_slots"),
                 accounts_db_test_hash_calculation: arg_matches
                     .is_present("accounts_db_test_hash_calculation"),

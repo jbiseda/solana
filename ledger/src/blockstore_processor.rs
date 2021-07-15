@@ -1,10 +1,6 @@
 use crate::{
-    block_error::BlockError,
-    blockstore::Blockstore,
-    blockstore_db::BlockstoreError,
-    blockstore_meta::SlotMeta,
-    entry::{create_ticks, Entry, EntrySlice, EntryType, EntryVerificationStatus, VerifyRecyclers},
-    leader_schedule_cache::LeaderScheduleCache,
+    block_error::BlockError, blockstore::Blockstore, blockstore_db::BlockstoreError,
+    blockstore_meta::SlotMeta, leader_schedule_cache::LeaderScheduleCache,
 };
 use chrono_humanize::{Accuracy, HumanTime, Tense};
 use crossbeam_channel::Sender;
@@ -12,6 +8,9 @@ use itertools::Itertools;
 use log::*;
 use rand::{seq::SliceRandom, thread_rng};
 use rayon::{prelude::*, ThreadPool};
+use solana_entry::entry::{
+    create_ticks, Entry, EntrySlice, EntryType, EntryVerificationStatus, VerifyRecyclers,
+};
 use solana_measure::measure::Measure;
 use solana_metrics::{datapoint_error, inc_new_counter_debug};
 use solana_rayon_threadlimit::get_thread_count;
@@ -377,6 +376,7 @@ pub struct ProcessOptions {
     pub limit_load_slot_count_from_snapshot: Option<usize>,
     pub allow_dead_slots: bool,
     pub accounts_db_test_hash_calculation: bool,
+    pub verify_index: bool,
     pub shrink_ratio: AccountShrinkThreshold,
 }
 
@@ -862,6 +862,7 @@ fn process_bank_0(
     )
     .expect("processing for bank 0 must succeed");
     bank0.freeze();
+    blockstore.insert_bank_hash(bank0.slot(), bank0.hash(), false);
     cache_block_meta(bank0, cache_block_meta_sender);
 }
 
@@ -1034,6 +1035,7 @@ fn load_frozen_forks(
                             }
                             inc_new_counter_info!("load_frozen_forks-cluster-confirmed-root", rooted_slots.len());
                             blockstore.set_roots(rooted_slots.iter().map(|(slot, _hash)| slot)).expect("Blockstore::set_roots should succeed");
+                            blockstore.set_duplicate_confirmed_slots_and_hashes(rooted_slots.into_iter()).expect("Blockstore::set_duplicate_confirmed should succeed");
                             Some(cluster_root_bank)
                         } else {
                             None
@@ -1179,6 +1181,7 @@ fn process_single_slot(
     })?;
 
     bank.freeze(); // all banks handled by this routine are created from complete slots
+    blockstore.insert_bank_hash(bank.slot(), bank.hash(), false);
     cache_block_meta(bank, cache_block_meta_sender);
 
     Ok(())
@@ -1301,15 +1304,13 @@ pub fn fill_blockstore_slot_with_ticks(
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{
-        entry::{create_ticks, next_entry, next_entry_mut},
-        genesis_utils::{
-            create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
-        },
+    use crate::genesis_utils::{
+        create_genesis_config, create_genesis_config_with_leader, GenesisConfigInfo,
     };
     use crossbeam_channel::unbounded;
     use matches::assert_matches;
     use rand::{thread_rng, Rng};
+    use solana_entry::entry::{create_ticks, next_entry, next_entry_mut};
     use solana_runtime::genesis_utils::{
         self, create_genesis_config_with_vote_accounts, ValidatorVoteKeypairs,
     };

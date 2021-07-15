@@ -137,6 +137,10 @@ impl Blockstore {
             .is_ok()
             & self
                 .db
+                .delete_range_cf::<cf::BankHash>(&mut write_batch, from_slot, to_slot)
+                .is_ok()
+            & self
+                .db
                 .delete_range_cf::<cf::Root>(&mut write_batch, from_slot, to_slot)
                 .is_ok()
             & self
@@ -265,6 +269,10 @@ impl Blockstore {
                 .compact_range(from_slot, to_slot)
                 .unwrap_or(false)
             && self
+                .bank_hash_cf
+                .compact_range(from_slot, to_slot)
+                .unwrap_or(false)
+            && self
                 .index_cf
                 .compact_range(from_slot, to_slot)
                 .unwrap_or(false)
@@ -384,11 +392,9 @@ impl Blockstore {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{
-        blockstore::tests::make_slot_entries_with_transactions, entry::next_entry_mut,
-        get_tmp_ledger_path,
-    };
+    use crate::{blockstore::tests::make_slot_entries_with_transactions, get_tmp_ledger_path};
     use bincode::serialize;
+    use solana_entry::entry::next_entry_mut;
     use solana_sdk::{
         hash::{hash, Hash},
         message::Message,
