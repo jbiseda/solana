@@ -143,7 +143,7 @@ impl BankForks {
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<Arc<Bank>> {
-        //jbiseda_mark check slot for repair
+        //herehere_mark check slot for repair
 
         // check blockstore.slots_stats.turbine_slots
 
@@ -334,7 +334,7 @@ impl BankForks {
             })
             .collect();
         for slot in prune_slots {
-            self.remove(slot); // jbiseda_mark see if this slot was created using repair
+            self.remove(slot); // herehere_mark see if this slot was created using repair
         }
         datapoint_debug!(
             "bank_forks_purge_non_root",

@@ -688,7 +688,7 @@ impl Blockstore {
             set_index as usize,
             slot,
         ) {
-            // jbiseda was this completed using only broadcast shreds?
+            // herehere was this completed using only broadcast shreds?
             Self::submit_metrics(
                 slot,
                 set_index,
@@ -836,7 +836,7 @@ impl Blockstore {
                 if shred.is_data() {
                     let shred_slot = shred.slot();
                     let shred_source = if is_repaired {
-                        ShredSource::Repaired //jbiseda_mark
+                        ShredSource::Repaired //herehere_mark
                     } else {
                         ShredSource::Turbine
                     };
@@ -1259,7 +1259,7 @@ impl Blockstore {
                 // replayed entries past the newly detected "last" shred, then mark the slot as dead
                 // and wait for replay to dump and repair the correct version.
                 warn!("Received *last* shred index {} less than previous shred index {}, and slot {} is not full, marking slot dead", shred_index, slot_meta.received, slot);
-                write_batch.put::<cf::DeadSlots>(slot, &true).unwrap(); //jbiseda_mark track slots marked dead
+                write_batch.put::<cf::DeadSlots>(slot, &true).unwrap(); //herehere_mark track slots marked dead
             }
 
             if !self.should_insert_data_shred(
@@ -1546,7 +1546,7 @@ impl Blockstore {
             let mut slots_stats = self.slots_stats.lock().unwrap();
             let mut e = slots_stats.stats.entry(slot_meta.slot).or_default();
             if shred_source == ShredSource::Repaired {
-                e.num_repaired += 1; //jbiseda_mark
+                e.num_repaired += 1; //herehere_mark
             }
             if shred_source == ShredSource::Recovered {
                 e.num_recovered += 1;
@@ -1556,14 +1556,14 @@ impl Blockstore {
             let (num_repaired, num_recovered) = {
                 let mut slots_stats = self.slots_stats.lock().unwrap();
                 if let Some(e) = slots_stats.stats.remove(&slot_meta.slot) {
-                    //jbiseda_mark
+                    //herehere_mark
                     if e.num_repaired == 0 {
                         error!("adding turbine only slot {}", slot_meta.slot);
                         slots_stats.turbine_slots.insert(slot_meta.slot);
                     }
 
                     if slots_stats.last_cleanup_ts.elapsed().as_secs() > 30 {
-                        //jbiseda magicnumber
+                        //herehere magicnumber
                         let root = self.last_root();
                         slots_stats.stats = slots_stats.stats.split_off(&root);
                         slots_stats.last_cleanup_ts = Instant::now();
@@ -1582,7 +1582,7 @@ impl Blockstore {
                 ),
                 ("slot", slot_meta.slot, i64),
                 ("last_index", slot_meta.last_index, i64),
-                ("num_repaired", num_repaired, i64), //jbiseda_mark
+                ("num_repaired", num_repaired, i64), //herehere_mark
                 ("num_recovered", num_recovered, i64),
             );
         }
