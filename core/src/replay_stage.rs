@@ -962,6 +962,16 @@ impl ReplayStage {
                     let bank = w_bank_forks
                         .remove(*slot)
                         .expect("BankForks should not have been purged yet");
+
+                    // jbiseda_mark check blockstore for slot
+                    {
+                        let mut slots_stats = blockstore.slots_stats.lock().unwrap();
+
+                        if slots_stats.turbine_slots.remove(slot) {
+                            error!("removing turbine only slot {:?}", *slot);
+                        }
+                    }
+
                     ((*slot, bank.bank_id()), bank)
                 })
                 .unzip()

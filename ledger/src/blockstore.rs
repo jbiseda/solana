@@ -156,7 +156,7 @@ pub struct Blockstore {
 pub struct SlotsStats {
     last_cleanup_ts: Instant,
     stats: BTreeMap<Slot, SlotStats>,
-    turbine_slots: HashSet<Slot>,
+    pub turbine_slots: HashSet<Slot>,
 }
 
 impl Default for SlotsStats {
@@ -1553,13 +1553,14 @@ impl Blockstore {
             let (num_repaired, num_recovered) = {
                 let mut slots_stats = self.slots_stats.lock().unwrap();
                 if let Some(e) = slots_stats.stats.remove(&slot_meta.slot) {
-
                     //jbiseda_mark
                     if e.num_repaired == 0 {
+                        error!("adding turbine only slot {}", slot_meta.slot);
                         slots_stats.turbine_slots.insert(slot_meta.slot);
                     }
 
-                    if slots_stats.last_cleanup_ts.elapsed().as_secs() > 30 { //jbiseda magicnumber
+                    if slots_stats.last_cleanup_ts.elapsed().as_secs() > 30 {
+                        //jbiseda magicnumber
                         let root = self.last_root();
                         slots_stats.stats = slots_stats.stats.split_off(&root);
                         slots_stats.last_cleanup_ts = Instant::now();

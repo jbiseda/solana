@@ -142,7 +142,11 @@ impl BankForks {
         bank
     }
 
-    pub fn remove(&mut self, slot: Slot) -> Option<Arc<Bank>> { //jbiseda_mark check slot for repair
+    pub fn remove(&mut self, slot: Slot) -> Option<Arc<Bank>> {
+        //jbiseda_mark check slot for repair
+
+        // check blockstore.slots_stats.turbine_slots
+
         let bank = self.banks.remove(&slot)?;
         for parent in bank.proper_ancestors() {
             let mut entry = match self.descendants.entry(parent) {
