@@ -1,3 +1,23 @@
+//! Collection of all runtime features.
+//!
+//! Steps to add a new feature are outlined below. Note that these steps only cover
+//! the process of getting a feature into the core Solana code.
+//! - For features that are unambiguously good (ie bug fixes), these steps are sufficient.
+//! - For features that should go up for community vote (ie fee structure changes), more
+//!   information on the additional steps to follow can be found at:
+//!   https://spl.solana.com/feature-proposal#feature-proposal-life-cycle
+//!
+//! 1. Generate a new keypair with `solana-keygen new --outfile feature.json --no-passphrase`
+//!    - Keypairs should be held by core contributors only. If you're a non-core contirbutor going
+//!      through these steps, the PR process will facilitate a keypair holder being picked. That
+//!      person will generate the keypair, provide pubkey for PR, and ultimately enable the feature.
+//! 2. Add a public module for the feature, specifying keypair pubkey as the id with
+//!    `solana_sdk::declare_id!()` within the module.
+//!    Additionally, add an entry to `FEATURE_NAMES` map.
+//! 3. Add desired logic to check for and switch on feature availability.
+//!
+//! For more information on how features are picked up, see comments for `Feature`.
+
 use lazy_static::lazy_static;
 use solana_sdk::{
     clock::Slot,
@@ -171,6 +191,10 @@ pub mod libsecp256k1_0_5_upgrade_enabled {
     solana_sdk::declare_id!("DhsYfRjxfnh2g7HKJYSzT79r74Afa1wbHkAgHndrA1oy");
 }
 
+pub mod tx_wide_compute_cap {
+    solana_sdk::declare_id!("5ekBxc8itEnPv4NzGJtr8BVVQLNMQuLMNQQj7pHoLNZ9");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -213,6 +237,7 @@ lazy_static! {
         (neon_evm_compute_budget::id(), "bump neon_evm's compute budget"),
         (rent_for_sysvars::id(), "collect rent from accounts owned by sysvars"),
         (libsecp256k1_0_5_upgrade_enabled::id(), "upgrade libsecp256k1 to v0.5.0"),
+        (tx_wide_compute_cap::id(), "Transaction wide compute cap"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

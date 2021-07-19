@@ -63,7 +63,8 @@ use {
     },
     solana_streamer::{
         packet,
-        sendmmsg::multicast,
+        sendmmsg::{multi_target_send, SendPktsError},
+        socket::is_global,
         streamer::{PacketReceiver, PacketSender},
     },
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
@@ -1178,7 +1179,7 @@ impl ClusterInfo {
             .filter(|node| {
                 node.id != self_pubkey
                     && node.shred_version == self_shred_version
-                    && ContactInfo::is_valid_address(&node.tvu)
+                    && ContactInfo::is_valid_tvu_address(&node.tvu)
             })
             .cloned()
             .collect()
@@ -1186,26 +1187,24 @@ impl ClusterInfo {
 
     /// all tvu peers with valid gossip addrs that likely have the slot being requested
     pub fn repair_peers(&self, slot: Slot) -> Vec<ContactInfo> {
-        let mut time = Measure::start("repair_peers");
-        // self.tvu_peers() already filters on:
-        //   node.id != self.id() &&
-        //     node.shred_verion == self.my_shred_version()
-        let nodes = self.tvu_peers();
-        let nodes = {
-            let gossip_crds = self.gossip.crds.read().unwrap();
-            nodes
-                .into_iter()
-                .filter(|node| {
-                    ContactInfo::is_valid_address(&node.serve_repair)
-                        && match gossip_crds.get_lowest_slot(node.id) {
-                            None => true, // fallback to legacy behavior
-                            Some(lowest_slot) => lowest_slot.lowest <= slot,
-                        }
-                })
-                .collect()
-        };
-        self.stats.repair_peers.add_measure(&mut time);
-        nodes
+        let _st = ScopedTimer::from(&self.stats.repair_peers);
+        let self_pubkey = self.id();
+        let self_shred_version = self.my_shred_version();
+        let gossip_crds = self.gossip.crds.read().unwrap();
+        gossip_crds
+            .get_nodes_contact_info()
+            .filter(|node| {
+                node.id != self_pubkey
+                    && node.shred_version == self_shred_version
+                    && ContactInfo::is_valid_tvu_address(&node.tvu)
+                    && ContactInfo::is_valid_address(&node.serve_repair)
+                    && match gossip_crds.get_lowest_slot(node.id) {
+                        None => true, // fallback to legacy behavior
+                        Some(lowest_slot) => lowest_slot.lowest <= slot,
+                    }
+            })
+            .cloned()
+            .collect()
     }
 
     fn is_spy_node(contact_info: &ContactInfo) -> bool {
@@ -1235,31 +1234,26 @@ impl ClusterInfo {
                 .iter()
                 .map(|peer| &peer.tvu_forwards)
                 .filter(|addr| ContactInfo::is_valid_address(addr))
+                .filter(|addr| is_global(addr))
                 .collect()
         } else {
-            peers.iter().map(|peer| &peer.tvu).collect()
+            peers
+                .iter()
+                .map(|peer| &peer.tvu)
+                .filter(|addr| is_global(addr))
+                .collect()
         };
-        let mut dests = &dests[..];
         let data = &packet.data[..packet.meta.size];
-        while !dests.is_empty() {
-            match multicast(s, data, dests) {
-                Ok(n) => dests = &dests[n..],
-                Err(err) => {
-                    inc_new_counter_error!("cluster_info-retransmit-send_to_error", dests.len(), 1);
-                    error!("retransmit multicast: {:?}", err);
-                    break;
-                }
-            }
-        }
-        let mut errs = 0;
-        for dest in dests {
-            if let Err(err) = s.send_to(data, dest) {
-                error!("retransmit send: {}, {:?}", dest, err);
-                errs += 1;
-            }
-        }
-        if errs != 0 {
-            inc_new_counter_error!("cluster_info-retransmit-error", errs, 1);
+
+        if let Err(SendPktsError::IoError(ioerr, num_failed)) = multi_target_send(s, data, &dests) {
+            inc_new_counter_info!("cluster_info-retransmit-packets", dests.len(), 1);
+            inc_new_counter_error!("cluster_info-retransmit-error", num_failed, 1);
+            error!(
+                "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
+                ioerr,
+                num_failed,
+                dests.len(),
+            );
         }
     }
 

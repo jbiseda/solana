@@ -1375,10 +1375,11 @@ dependencies = [
 
 [[package]]
 name = "fd-lock"
-version = "2.0.0"
+version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0010f02effd88c702318c5dde0463206be67495d0b4d906ba7c0a8f166cc7f06"
+checksum = "b8806dd91a06a7a403a8e596f9bfbfb34e469efbc363fc9c9713e79e26472e36"
 dependencies = [
+ "cfg-if 1.0.0",
  "libc",
  "winapi 0.3.8",
 ]
@@ -4545,6 +4546,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-compute-budget-program"
+version = "1.8.0"
+dependencies = [
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-config-program"
 version = "1.8.0"
 dependencies = [
@@ -4626,6 +4634,7 @@ dependencies = [
  "solana-transaction-status",
  "solana-version",
  "solana-vote-program",
+ "static_assertions",
  "symlink",
  "systemstat",
  "tempfile",
@@ -5449,6 +5458,7 @@ dependencies = [
  "rustc_version 0.4.0",
  "serde",
  "serde_derive",
+ "solana-compute-budget-program",
  "solana-config-program",
  "solana-frozen-abi 1.8.0",
  "solana-frozen-abi-macro 1.8.0",
@@ -5482,6 +5492,8 @@ version = "1.8.0"
 dependencies = [
  "assert_matches",
  "bincode",
+ "borsh 0.9.1",
+ "borsh-derive 0.9.1",
  "bs58 0.4.0",
  "bv",
  "byteorder",
