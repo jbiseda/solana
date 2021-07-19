@@ -974,7 +974,7 @@ impl ReplayStage {
                         let mut slots_stats = blockstore.slots_stats.lock().unwrap();
 
                         if slots_stats.turbine_slots.remove(slot) {
-                            error!("removing turbine only slot {:?}", *slot);
+                            error!("track_turbine_slot removing turbine only slot {:?}", *slot);
                         }
                     }
 
