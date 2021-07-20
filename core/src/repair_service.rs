@@ -402,6 +402,11 @@ impl RepairService {
         if max_repairs == 0 || slot_meta.is_full() {
             vec![]
         } else if slot_meta.consumed == slot_meta.received {
+            error!("track_turbine_slot requesting ::HighestShred slot {:?} index {:?}",
+                slot,
+                slot_meta.received
+            );
+
             vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
         } else {
             let reqs = blockstore.find_missing_data_indexes(
@@ -411,6 +416,12 @@ impl RepairService {
                 slot_meta.received,
                 max_repairs,
             );
+
+            error!("track_turbine_slot requesting ::Shred {} repairs for slot {:?}",
+                reqs.len(),
+                slot
+            );
+
             reqs.into_iter()
                 .map(|i| ShredRepairType::Shred(slot, i))
                 .collect()

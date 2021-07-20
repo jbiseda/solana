@@ -975,6 +975,8 @@ impl ReplayStage {
 
                         if slots_stats.turbine_slots.remove(slot) {
                             error!("track_turbine_slot removing turbine only slot {:?}", *slot);
+                        } else {
+                            error!("track_turbine_slot removing _NON_turbine slot {:?}", *slot);
                         }
                     }
 
