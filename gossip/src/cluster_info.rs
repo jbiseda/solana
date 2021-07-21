@@ -1245,15 +1245,19 @@ impl ClusterInfo {
         };
         let data = &packet.data[..packet.meta.size];
 
-        if let Err(SendPktsError::IoError(ioerr, num_failed)) = multi_target_send(s, data, &dests) {
-            inc_new_counter_info!("cluster_info-retransmit-packets", dests.len(), 1);
-            inc_new_counter_error!("cluster_info-retransmit-error", num_failed, 1);
-            error!(
-                "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
-                ioerr,
-                num_failed,
-                dests.len(),
-            );
+        if dests.len() == 0 {
+            error!("track_turbine_slot retransmit_to NO DESTS");
+        } else {
+            if let Err(SendPktsError::IoError(ioerr, num_failed)) = multi_target_send(s, data, &dests) {
+                inc_new_counter_info!("cluster_info-retransmit-packets", dests.len(), 1);
+                inc_new_counter_error!("cluster_info-retransmit-error", num_failed, 1);
+                error!(
+                    "retransmit_to multi_target_send error: {:?}, {}/{} packets failed",
+                    ioerr,
+                    num_failed,
+                    dests.len(),
+                );
+            }
         }
     }
 
