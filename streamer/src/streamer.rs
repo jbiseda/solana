@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::thread::{Builder, JoinHandle};
 use std::time::{Duration, Instant};
 use thiserror::Error;
+use solana_measure::measure::Measure;
 
 pub type PacketReceiver = Receiver<Packets>;
 pub type PacketSender = Sender<Packets>;
@@ -48,7 +49,10 @@ fn recv_loop(
         } else {
             Packets::with_capacity(PACKETS_PER_BATCH)
         };
+        let mut batch_time_elapsed = Measure::start("batch_time_elapsed");
+        let mut loops = 0;
         loop {
+            loops += 1;
             // Check for exit signal, even if socket is busy
             // (for instance the leader transaction socket)
             if exit.load(Ordering::Relaxed) {
@@ -61,6 +65,16 @@ fn recv_loop(
                 recv_count += len;
                 call_count += 1;
                 if len > 0 {
+                    batch_time_elapsed.stop();
+                    let num_pkts = msgs.packets.len() as u64;
+                    error!(
+                        "track_turbine_slot recv_loop {} loops, batched {}/{} in us:{} per_pkt_us:{}",
+                        loops,
+                        num_pkts,
+                        PACKETS_PER_BATCH,
+                        batch_time_elapsed.as_us(),
+                        if num_pkts == 0 { 0 } else { batch_time_elapsed.as_us() / num_pkts },
+                    );
                     channel.send(msgs)?;
                 }
                 break;
