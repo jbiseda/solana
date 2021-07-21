@@ -43,6 +43,8 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
     use std::mem;
     use std::os::unix::io::AsRawFd;
 
+    let mut recv_setup_time  = Measure::start("recv_setup_time");
+
     let mut hdrs: [mmsghdr; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
     let mut iovs: [iovec; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
     let mut addr: [sockaddr_in; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
@@ -66,6 +68,10 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
         tv_nsec: 0,
     };
 
+    recv_setup_time.stop();
+
+    let mut recv_time = Measure::start("recv_time");
+
     let mut total_size = 0;
     let npkts =
         match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, MSG_WAITFORONE, &mut ts) } {
@@ -81,6 +87,16 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
                 n as usize
             }
         };
+
+    recv_time.stop();
+
+    error!(
+        "track_turbine_slot recvmmsg pkts {}/{} setup_us:{} recv_us:{}",
+        npkts,
+        count,
+        recv_setup_time.as_us(),
+        recv_time.as_us()
+    );
 
     Ok((total_size, npkts))
 }
