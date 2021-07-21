@@ -14,6 +14,9 @@ use std::{io::Result, net::UdpSocket, time::Instant};
 
 pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Result<usize> {
     let mut i = 0;
+
+    let mut loops = 0;
+
     //DOCUMENTED SIDE-EFFECT
     //Performance out of the IO without poll
     //  * block on the socket until it's readable
@@ -24,6 +27,7 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     trace!("receiving on {}", socket.local_addr().unwrap());
     let start = Instant::now();
     loop {
+        loops += 1;
         obj.packets.resize(
             std::cmp::min(i + NUM_RCVMMSGS, PACKETS_PER_BATCH),
             Packet::default(),
@@ -54,6 +58,9 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     }
     obj.packets.truncate(i);
     inc_new_counter_debug!("packets-recv_count", i);
+
+    error!("track_turbine_slot recv_from loops:{} pkts:{}", loops, i);
+
     Ok(i)
 }
 
