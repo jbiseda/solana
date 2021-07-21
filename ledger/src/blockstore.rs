@@ -3302,7 +3302,7 @@ fn update_slot_meta(
     if maybe_first_insert && slot_meta.received > 0 {
         // predict the timestamp of what would have been the first shred in this slot
         let slot_time_elapsed = u64::from(reference_tick) * 1000 / DEFAULT_TICKS_PER_SECOND;
-        slot_meta.first_shred_timestamp = timestamp() - slot_time_elapsed;
+        slot_meta.first_shred_timestamp = timestamp() - slot_time_elapsed; // herehere tracking
     }
     slot_meta.consumed = new_consumed;
     slot_meta.last_index = {

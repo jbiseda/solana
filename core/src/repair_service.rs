@@ -275,6 +275,7 @@ impl RepairService {
 
             let mut send_repairs_elapsed = Measure::start("send_repairs_elapsed");
             let mut outstanding_requests = outstanding_requests.write().unwrap();
+            error!("repair_service run() loop sending {} repair requests", repairs.len());
             repairs.into_iter().for_each(|repair_request| {
                 if let Ok((to, req)) = serve_repair.repair_request(
                     cluster_slots,
@@ -284,7 +285,8 @@ impl RepairService {
                     &repair_info.repair_validators,
                     &mut outstanding_requests,
                 ) {
-                    repair_socket.send_to(&req, to).unwrap_or_else(|e| {
+                    error!("sending repair request to {:?}", to);
+                    repair_socket.send_to(&req, to).unwrap_or_else(|e| { // herehere change to batch_send ?
                         info!("{} repair req send_to({}) error {:?}", id, to, e);
                         0
                     });
@@ -356,7 +358,7 @@ impl RepairService {
                 repair_timing = RepairTiming::default();
                 last_stats = Instant::now();
             }
-            sleep(Duration::from_millis(REPAIR_MS));
+            sleep(Duration::from_millis(REPAIR_MS)); //herehere magic value
         }
     }
 
