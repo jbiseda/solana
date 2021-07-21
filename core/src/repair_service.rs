@@ -278,6 +278,7 @@ impl RepairService {
             let mut outstanding_requests = outstanding_requests.write().unwrap();
             error!("track_turbine_slot repair_service run() loop sending {} repair requests", repairs.len());
 
+            let repairs_len = repairs.len() as u64;
 
             repairs.into_iter().for_each(|repair_request| {
                 if let Ok((to, req)) = serve_repair.repair_request(
@@ -321,7 +322,11 @@ impl RepairService {
             */
 
             send_repairs_elapsed.stop();
-            error!("track_turbine_slot SEND_REPAIR_TIME us {}", send_repairs_elapsed.as_us());
+            error!("track_turbine_slot SEND_REPAIR_TIME cnt:{} us:{} avg_us:{}",
+                repairs_len,
+                send_repairs_elapsed.as_us(),
+                send_repairs_elapsed.as_us() / repairs_len,
+                );
 
             repair_timing.update(
                 set_root_elapsed.as_us(),
