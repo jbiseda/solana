@@ -210,6 +210,9 @@ impl SlotMeta {
             is_connected: slot == 0,
             last_index: std::u64::MAX,
             completed_data_indexes: vec![],
+
+            num_broadcast_shreds: 0,
+            num_repair_shreds: 0,
         }
     }
 
