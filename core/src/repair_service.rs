@@ -276,9 +276,10 @@ impl RepairService {
 
             let mut send_repairs_elapsed = Measure::start("send_repairs_elapsed");
             let mut outstanding_requests = outstanding_requests.write().unwrap();
-            error!("track_turbine_slot repair_service run() loop sending {} repair requests", repairs.len());
 
             let repairs_len = repairs.len() as u64;
+
+            error!("track_turbine_slot repair_service run() loop sending {} repair requests", repairs_len);
 
             repairs.into_iter().for_each(|repair_request| {
                 if let Ok((to, req)) = serve_repair.repair_request(
@@ -296,7 +297,6 @@ impl RepairService {
                     });
                 }
             });
-
 
             /*
             let batch: Vec<(Vec<u8>, SocketAddr)> = repairs.iter().filter_map(|repair_request| {
@@ -325,7 +325,7 @@ impl RepairService {
             error!("track_turbine_slot SEND_REPAIR_TIME cnt:{} us:{} avg_us:{}",
                 repairs_len,
                 send_repairs_elapsed.as_us(),
-                send_repairs_elapsed.as_us() / repairs_len,
+                if repairs_len > 0 { send_repairs_elapsed.as_us() / repairs_len } else { 0 },
                 );
 
             repair_timing.update(
