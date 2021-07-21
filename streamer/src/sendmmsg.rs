@@ -100,8 +100,11 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut Vec<mmsghdr>) -> Result<(), SendP
     let mut total_sent = 0;
     let mut erropt = None;
 
+    let mut iters = 0;
+
     let mut pkts = &mut hdrs[..];
     while !pkts.is_empty() {
+        iters += 1;
         let npkts = match unsafe { sendmmsg(sock_fd, &mut pkts[0], pkts.len() as u32, 0) } {
             -1 => {
                 if erropt.is_none() {
@@ -119,6 +122,8 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut Vec<mmsghdr>) -> Result<(), SendP
         };
         pkts = &mut pkts[npkts..];
     }
+
+    error!("track_turbine_slot sendmmsg pkts:{} iters:{}", hdrs.len(), iters);
 
     if let Some(err) = erropt {
         Err(SendPktsError::IoError(err, hdrs.len() - total_sent))
