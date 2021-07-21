@@ -290,7 +290,7 @@ impl RepairService {
                     &repair_info.repair_validators,
                     &mut outstanding_requests,
                 ) {
-                    error!("track_turbine_slot sending repair request to {:?}: {:?}", to, repair_request);
+//                    error!("track_turbine_slot sending repair request to {:?}: {:?}", to, repair_request);
                     repair_socket.send_to(&req, to).unwrap_or_else(|e| { // herehere change to batch_send ?
                         info!("{} repair req send_to({}) error {:?}", id, to, e);
                         0
