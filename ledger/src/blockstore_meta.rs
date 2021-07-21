@@ -31,8 +31,8 @@ pub struct SlotMeta {
     // List of start indexes for completed data slots
     pub completed_data_indexes: Vec<u32>,
 
-    pub num_broadcast_shreds: u16,
-    pub num_repair_shreds: u16,
+//    pub num_broadcast_shreds: u16,
+//    pub num_repair_shreds: u16,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -210,9 +210,6 @@ impl SlotMeta {
             is_connected: slot == 0,
             last_index: std::u64::MAX,
             completed_data_indexes: vec![],
-
-            num_broadcast_shreds: 0,
-            num_repair_shreds: 0,
         }
     }
 
