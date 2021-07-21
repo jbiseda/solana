@@ -34,8 +34,8 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
             Packet::default(),
         );
         match recv_mmsg(socket, &mut obj.packets[i..]) {
-            Err(_) if i > 0 => {
-                error!("track_turbine_slot recv_from err with i>0");
+            Err(_e) if i > 0 => {
+                error!("track_turbine_slot recv_from err with i>0 {:?}", _e);
                 if start.elapsed().as_millis() as u64 > max_wait_ms {
                     reached_max_wait = true;
                     break;
