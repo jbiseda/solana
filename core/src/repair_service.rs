@@ -281,6 +281,7 @@ impl RepairService {
 
             error!("track_turbine_slot repair_service run() loop sending {} repair requests", repairs_len);
 
+            /*
             repairs.into_iter().for_each(|repair_request| {
                 if let Ok((to, req)) = serve_repair.repair_request(
                     cluster_slots,
@@ -297,8 +298,9 @@ impl RepairService {
                     });
                 }
             });
+            */
 
-            /*
+
             let batch: Vec<(Vec<u8>, SocketAddr)> = repairs.iter().filter_map(|repair_request| {
                 if let Ok((to, req)) = serve_repair.repair_request(
                     cluster_slots,
@@ -319,7 +321,7 @@ impl RepairService {
             if let Err(SendPktsError::IoError(err, num_failed)) = batch_send(repair_socket, &batch2) {
                 error!{"track_turbine_slot batch_send failed to send {}/{} packets first error {:?}", num_failed, batch.len(), err};
             }
-            */
+
 
             send_repairs_elapsed.stop();
             error!("track_turbine_slot SEND_REPAIR_TIME cnt:{} us:{} avg_us:{}",
