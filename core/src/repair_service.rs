@@ -201,6 +201,8 @@ impl RepairService {
                 break;
             }
 
+            error!("track_turbine_slot repair_service run() start main loop");
+
             let mut set_root_elapsed;
             let mut get_votes_elapsed;
             let mut add_votes_elapsed;
@@ -327,8 +329,12 @@ impl RepairService {
 
             let mut batch_send_elapsed = Measure::start("batch_send_elapsed");
 
-            if let Err(SendPktsError::IoError(err, num_failed)) = batch_send(repair_socket, &batch2) {
-                error!{"track_turbine_slot batch_send failed to send {}/{} packets first error {:?}", num_failed, batch.len(), err};
+            if batch2_len == 0 {
+                error!("track_turbine_slot NO PACKETS TO SEND");
+            } else {
+                if let Err(SendPktsError::IoError(err, num_failed)) = batch_send(repair_socket, &batch2) {
+                    error!{"track_turbine_slot batch_send failed to send {}/{} packets first error {:?}", num_failed, batch.len(), err};
+                }
             }
 
             batch_send_elapsed.stop();
