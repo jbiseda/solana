@@ -24,6 +24,7 @@ use solana_sdk::{
     pubkey::Pubkey,
     timing::timestamp,
 };
+use solana_streamer::sendmmsg::{batch_send, SendPktsError};
 use std::{
     collections::{HashMap, HashSet},
     iter::Iterator,
@@ -275,7 +276,9 @@ impl RepairService {
 
             let mut send_repairs_elapsed = Measure::start("send_repairs_elapsed");
             let mut outstanding_requests = outstanding_requests.write().unwrap();
-            error!("repair_service run() loop sending {} repair requests", repairs.len());
+            error!("track_turbine_slot repair_service run() loop sending {} repair requests", repairs.len());
+
+
             repairs.into_iter().for_each(|repair_request| {
                 if let Ok((to, req)) = serve_repair.repair_request(
                     cluster_slots,
@@ -285,14 +288,41 @@ impl RepairService {
                     &repair_info.repair_validators,
                     &mut outstanding_requests,
                 ) {
-                    error!("sending repair request to {:?}", to);
+                    error!("track_turbine_slot sending repair request to {:?}: {:?}", to, repair_request);
                     repair_socket.send_to(&req, to).unwrap_or_else(|e| { // herehere change to batch_send ?
                         info!("{} repair req send_to({}) error {:?}", id, to, e);
                         0
                     });
                 }
             });
+
+
+            /*
+            let batch: Vec<(Vec<u8>, SocketAddr)> = repairs.iter().filter_map(|repair_request| {
+                if let Ok((to, req)) = serve_repair.repair_request(
+                    cluster_slots,
+                    *repair_request,
+                    &mut peers_cache,
+                    &mut repair_stats,
+                    &repair_info.repair_validators,
+                    &mut outstanding_requests,
+                ) {
+                    //error!("track_turbine_slot sending repair request to {:?}: {:?}", to, repair_request);
+                    Some((req, to))
+                }
+                else {
+                    None
+                }
+            }).collect();
+            let batch2: Vec<(&[u8], &SocketAddr)> = batch.iter().map(|(x,y)| (&x[..],y)).collect();
+            if let Err(SendPktsError::IoError(err, num_failed)) = batch_send(repair_socket, &batch2) {
+                error!{"track_turbine_slot batch_send failed to send {}/{} packets first error {:?}", num_failed, batch.len(), err};
+            }
+            */
+
             send_repairs_elapsed.stop();
+            error!("track_turbine_slot SEND_REPAIR_TIME us {}", send_repairs_elapsed.as_us());
+
             repair_timing.update(
                 set_root_elapsed.as_us(),
                 get_votes_elapsed.as_us(),

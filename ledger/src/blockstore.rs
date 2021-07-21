@@ -1558,7 +1558,7 @@ impl Blockstore {
                 if let Some(e) = slots_stats.stats.remove(&slot_meta.slot) {
                     //herehere_mark
                     if e.num_repaired == 0 {
-                        error!("track_turbine_slot adding turbine only slot {}", slot_meta.slot);
+                        error!("track_turbine_slot adding turbine only slot had stats {}", slot_meta.slot);
                         slots_stats.turbine_slots.insert(slot_meta.slot);
                     }
 
@@ -1570,6 +1570,8 @@ impl Blockstore {
                     }
                     (e.num_repaired, e.num_recovered)
                 } else {
+                    error!("track_turbine_slot adding turbine only slot no stats {}", slot_meta.slot);
+                    slots_stats.turbine_slots.insert(slot_meta.slot);
                     (0, 0)
                 }
             };
