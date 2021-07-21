@@ -281,6 +281,8 @@ impl RepairService {
             let mut send_repairs_elapsed = Measure::start("send_repairs_elapsed");
             let mut outstanding_requests = outstanding_requests.write().unwrap();
 
+            let mut build_repairs_elapsed = Measure::start("build_repairs_elapsed");
+
             /*
             repairs.into_iter().for_each(|repair_request| {
                 if let Ok((to, req)) = serve_repair.repair_request(
@@ -317,16 +319,40 @@ impl RepairService {
                 }
             }).collect();
             let batch2: Vec<(&[u8], &SocketAddr)> = batch.iter().map(|(x,y)| (&x[..],y)).collect();
+            let batch2_len = batch2.len() as u64;
+
+            build_repairs_elapsed.stop();
+
+            error!("track_turbine_slot repair_service run() filtered sending {} repair requests", batch2.len());
+
+            let mut batch_send_elapsed = Measure::start("batch_send_elapsed");
+
             if let Err(SendPktsError::IoError(err, num_failed)) = batch_send(repair_socket, &batch2) {
                 error!{"track_turbine_slot batch_send failed to send {}/{} packets first error {:?}", num_failed, batch.len(), err};
             }
 
+            batch_send_elapsed.stop();
+
             send_repairs_elapsed.stop();
+
+
+            error!("track_turbine_slot BUILD_REPAIR_TIME cnt:{} us:{} avg_us:{}",
+                batch2_len,
+                build_repairs_elapsed.as_us(),
+                if batch2_len > 0 { build_repairs_elapsed.as_us() / batch2_len } else { 0 },
+                );
+            error!("track_turbine_slot BATCH_SEND_TIME cnt:{} us:{} avg_us:{}",
+                batch2_len,
+                batch_send_elapsed.as_us(),
+                if batch2_len > 0 { batch_send_elapsed.as_us() / batch2_len } else { 0 },
+                );
+
             error!("track_turbine_slot SEND_REPAIR_TIME cnt:{} us:{} avg_us:{}",
                 repairs_len,
                 send_repairs_elapsed.as_us(),
                 if repairs_len > 0 { send_repairs_elapsed.as_us() / repairs_len } else { 0 },
                 );
+            
 
             repair_timing.update(
                 set_root_elapsed.as_us(),
