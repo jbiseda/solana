@@ -15,6 +15,7 @@ use std::{io::Result, net::UdpSocket, time::Instant};
 pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Result<usize> {
     let mut i = 0;
 
+    let mut reached_max_wait = false;
     let mut loops = 0;
 
     //DOCUMENTED SIDE-EFFECT
@@ -34,16 +35,22 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
         );
         match recv_mmsg(socket, &mut obj.packets[i..]) {
             Err(_) if i > 0 => {
+                error!("track_turbine_slot recv_from err with i>0");
                 if start.elapsed().as_millis() as u64 > max_wait_ms {
+                    reached_max_wait = true;
                     break;
                 }
             }
             Err(e) => {
+                error!("track_turbine_slot recv_from err:{:?}", e);
+
                 trace!("recv_from err {:?}", e);
                 return Err(e);
             }
             Ok((_, npkts)) => {
                 if i == 0 {
+                    error!("track_turbine_slot recv_from set non_blocking");
+
                     socket.set_nonblocking(true)?;
                 }
                 trace!("got {} packets", npkts);
@@ -51,6 +58,7 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
                 // Try to batch into big enough buffers
                 // will cause less re-shuffling later on.
                 if start.elapsed().as_millis() as u64 > max_wait_ms || i >= PACKETS_PER_BATCH {
+                    reached_max_wait = true;
                     break;
                 }
             }
@@ -59,7 +67,12 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     obj.packets.truncate(i);
     inc_new_counter_debug!("packets-recv_count", i);
 
-    error!("track_turbine_slot recv_from loops:{} pkts:{}", loops, i);
+    error!(
+        "track_turbine_slot recv_from loops:{} pkts:{}, reached_max_wait:{}",
+        loops,
+        i,
+        reached_max_wait
+    );
 
     Ok(i)
 }
