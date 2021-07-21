@@ -329,13 +329,13 @@ impl RepairService {
 
             let mut batch_send_elapsed = Measure::start("batch_send_elapsed");
 
-            if batch2_len == 0 {
-                error!("track_turbine_slot NO PACKETS TO SEND");
-            } else {
+//            if batch2_len == 0 {
+//                error!("track_turbine_slot NO PACKETS TO SEND");
+//            } else {
                 if let Err(SendPktsError::IoError(err, num_failed)) = batch_send(repair_socket, &batch2) {
                     error!{"track_turbine_slot batch_send failed to send {}/{} packets first error {:?}", num_failed, batch.len(), err};
                 }
-            }
+//            }
 
             batch_send_elapsed.stop();
 
