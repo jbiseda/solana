@@ -42,6 +42,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
     use nix::sys::socket::InetAddr;
     use std::mem;
     use std::os::unix::io::AsRawFd;
+    use solana_measure::measure::Measure;
 
     let mut recv_setup_time  = Measure::start("recv_setup_time");
 
