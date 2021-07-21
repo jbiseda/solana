@@ -100,6 +100,10 @@ fn sendmmsg_retry(sock: &UdpSocket, hdrs: &mut Vec<mmsghdr>) -> Result<(), SendP
     let mut total_sent = 0;
     let mut erropt = None;
 
+    if hdrs.len() == 0 {
+        panic!{"expected packets"};
+    }
+
     let mut iters = 0;
 
     let mut pkts = &mut hdrs[..];
