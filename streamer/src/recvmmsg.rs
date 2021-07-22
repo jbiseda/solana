@@ -65,8 +65,11 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
         hdrs[i].msg_hdr.msg_iovlen = 1;
     }
     let mut ts = timespec {
-        tv_sec: 1,
-        tv_nsec: 0,
+//        tv_sec: 1,
+//        tv_nsec: 0,
+
+        tv_sec: 0,
+        tv_nsec: 1_000_000,
     };
 
     recv_setup_time.stop();

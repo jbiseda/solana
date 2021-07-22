@@ -24,7 +24,10 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     //  * set the socket to non blocking
     //  * read until it fails
     //  * set it back to blocking before returning
-    socket.set_nonblocking(false)?;
+//    socket.set_nonblocking(false)?;
+
+    socket.set_nonblocking(true)?; //me
+
     trace!("receiving on {}", socket.local_addr().unwrap());
     let start = Instant::now();
     loop {
@@ -35,6 +38,8 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
         );
         match recv_mmsg(socket, &mut obj.packets[i..]) {
             Err(_e) if i > 0 => {
+                // error is:
+                // Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
                 error!("track_turbine_slot recv_from err with i>0 {:?}", _e);
                 if start.elapsed().as_millis() as u64 > max_wait_ms {
                     reached_max_wait = true;
@@ -49,9 +54,10 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
             }
             Ok((_, npkts)) => {
                 if i == 0 {
-                    error!("track_turbine_slot recv_from set non_blocking");
+//                    error!("track_turbine_slot recv_from set non_blocking");
 
-                    socket.set_nonblocking(true)?;
+                    //me
+                    //socket.set_nonblocking(true)?;
                 }
                 trace!("got {} packets", npkts);
                 i += npkts;
@@ -68,10 +74,11 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     inc_new_counter_debug!("packets-recv_count", i);
 
     error!(
-        "track_turbine_slot recv_from loops:{} pkts:{}, reached_max_wait:{}",
+        "track_turbine_slot recv_from loops:{} pkts:{}, reached_max_wait:{} us:{}",
         loops,
         i,
-        reached_max_wait
+        reached_max_wait,
+        start.elapsed().as_micros(),
     );
 
     Ok(i)
