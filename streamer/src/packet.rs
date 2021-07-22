@@ -26,7 +26,7 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     //  * set it back to blocking before returning
 //    socket.set_nonblocking(false)?;
 
-    socket.set_nonblocking(true)?; //me
+    socket.set_nonblocking(false)?; //me
 
     trace!("receiving on {}", socket.local_addr().unwrap());
     let start = Instant::now();
