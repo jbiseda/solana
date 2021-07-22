@@ -77,9 +77,29 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
     let mut recv_time = Measure::start("recv_time");
 
     let mut total_size = 0;
-    let npkts =
-//    match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, MSG_WAITFORONE, &mut ts) } {
-     match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, 0, &mut ts) } {
+
+    // set non blocking and try to get some packets
+    // consume packets without blocking
+    sock.set_nonblocking(true);
+    let mut npkts = match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, 0, &mut ts) } {
+        -1 => return Err(io::Error::last_os_error()),
+        n => {
+            for i in 0..n as usize {
+                let mut p = &mut packets[i];
+                p.meta.size = hdrs[i].msg_len as usize;
+                total_size += p.meta.size;
+                let inet_addr = InetAddr::V4(addr[i]);
+                p.meta.set_addr(&inet_addr.to_std());
+            }
+            n as usize
+        }
+    };
+
+    if npkts == 0 {
+        error!("track_turbine_slot no packets yet, try blocking for 1ms");
+        // wait for 1ms for packets
+        sock.set_nonblocking(false);
+        npkts = match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, 0, &mut ts) } {
             -1 => return Err(io::Error::last_os_error()),
             n => {
                 for i in 0..n as usize {
@@ -92,6 +112,24 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
                 n as usize
             }
         };
+    }
+
+/*
+//   let npkts = match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, MSG_WAITFORONE, &mut ts) } {
+     let npkts = match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, 0, &mut ts) } {
+            -1 => return Err(io::Error::last_os_error()),
+            n => {
+                for i in 0..n as usize {
+                    let mut p = &mut packets[i];
+                    p.meta.size = hdrs[i].msg_len as usize;
+                    total_size += p.meta.size;
+                    let inet_addr = InetAddr::V4(addr[i]);
+                    p.meta.set_addr(&inet_addr.to_std());
+                }
+                n as usize
+            }
+        };
+*/
 
     recv_time.stop();
 
