@@ -93,6 +93,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
             }
         },
         n => {
+            error!("track_turbine_slot recvmmsg DIDNT BLOCK npkts:{}", n);
             for i in 0..n as usize {
                 let mut p = &mut packets[i];
                 p.meta.size = hdrs[i].msg_len as usize;
