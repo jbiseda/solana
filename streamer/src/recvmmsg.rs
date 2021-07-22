@@ -82,7 +82,16 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
     // consume packets without blocking
     sock.set_nonblocking(true);
     let mut npkts = match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, 0, &mut ts) } {
-        -1 => return Err(io::Error::last_os_error()),
+        -1 => {
+            //Os { code: 11, kind: WouldBlock, message: "Resource temporarily unavailable" }
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::WouldBlock {
+                error!("track_turbine_slot recvmmsg WOULD BLOCK");
+                0
+            } else {
+                return Err(err);
+            }
+        },
         n => {
             for i in 0..n as usize {
                 let mut p = &mut packets[i];
