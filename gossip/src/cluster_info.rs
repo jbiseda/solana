@@ -30,7 +30,7 @@ use {
         epoch_slots::EpochSlots,
         gossip_error::GossipError,
         ping_pong::{self, PingCache, Pong},
-        socketaddr, socketaddr_any,
+        socketaddr, socketaddr6_any,
         weighted_shuffle::WeightedShuffle,
     },
     bincode::{serialize, serialized_size},
@@ -75,7 +75,7 @@ use {
         fs::{self, File},
         io::BufReader,
         iter::repeat,
-        net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, UdpSocket},
+        net::{IpAddr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket},
         ops::{Deref, Div},
         path::{Path, PathBuf},
         result::Result,
@@ -2609,7 +2609,7 @@ impl ClusterInfo {
         gossip_addr: &SocketAddr,
         shred_version: u16,
     ) -> (ContactInfo, UdpSocket, Option<TcpListener>) {
-        let bind_ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let bind_ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let (port, (gossip_socket, ip_echo)) =
             Node::get_gossip_port(gossip_addr, VALIDATOR_PORT_RANGE, bind_ip_addr);
         let contact_info =
@@ -2623,9 +2623,9 @@ impl ClusterInfo {
         id: Pubkey,
         shred_version: u16,
     ) -> (ContactInfo, UdpSocket, Option<TcpListener>) {
-        let bind_ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let bind_ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let (_, gossip_socket) = bind_in_range(bind_ip_addr, VALIDATOR_PORT_RANGE).unwrap();
-        let contact_info = Self::gossip_contact_info(id, socketaddr_any!(), shred_version);
+        let contact_info = Self::gossip_contact_info(id, socketaddr6_any!(), shred_version);
 
         (contact_info, gossip_socket, None)
     }
@@ -2708,7 +2708,7 @@ impl Node {
         Self::new_localhost_with_pubkey(&pubkey)
     }
     pub fn new_localhost_with_pubkey(pubkey: &Pubkey) -> Self {
-        let bind_ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+        let bind_ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let tpu = UdpSocket::bind("::1:0").unwrap();
         let (gossip_port, (gossip, ip_echo)) =
             bind_common_in_range(bind_ip_addr, (1024, 65535)).unwrap();
@@ -2806,7 +2806,7 @@ impl Node {
             repair: SocketAddr::new(gossip_addr.ip(), repair_port),
             tpu: SocketAddr::new(gossip_addr.ip(), tpu_port),
             tpu_forwards: SocketAddr::new(gossip_addr.ip(), tpu_forwards_port),
-            unused: socketaddr_any!(),
+            unused: socketaddr6_any!(),
             rpc: SocketAddr::new(gossip_addr.ip(), rpc_port),
             rpc_pubsub: SocketAddr::new(gossip_addr.ip(), rpc_pubsub_port),
             serve_repair: SocketAddr::new(gossip_addr.ip(), serve_repair_port),
@@ -2870,9 +2870,9 @@ impl Node {
             repair: SocketAddr::new(gossip_addr.ip(), repair_port),
             tpu: SocketAddr::new(gossip_addr.ip(), tpu_port),
             tpu_forwards: SocketAddr::new(gossip_addr.ip(), tpu_forwards_port),
-            unused: socketaddr_any!(),
-            rpc: socketaddr_any!(),
-            rpc_pubsub: socketaddr_any!(),
+            unused: socketaddr6_any!(),
+            rpc: socketaddr6_any!(),
+            rpc_pubsub: socketaddr6_any!(),
             serve_repair: SocketAddr::new(gossip_addr.ip(), serve_repair_port),
             wallclock: 0,
             shred_version: 0,

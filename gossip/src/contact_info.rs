@@ -8,7 +8,7 @@ use {
         timing::timestamp,
     },
     solana_streamer::socket::SocketAddrSpace,
-    std::net::{IpAddr, SocketAddr},
+    std::net::{IpAddr, SocketAddr, Ipv6Addr},
 };
 
 /// Structure representing a node on the network
@@ -77,7 +77,7 @@ macro_rules! socketaddr4_any {
 #[macro_export]
 macro_rules! socketaddr6_any {
     () => {
-        socketaddr6!(0, 0)
+        socketaddr6!(Ipv6Addr::UNSPECIFIED, 0)
     };
 }
 
