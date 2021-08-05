@@ -51,18 +51,33 @@ impl Sanitize for ContactInfo {
 }
 
 #[macro_export]
-macro_rules! socketaddr {
+macro_rules! socketaddr4 {
     ($ip:expr, $port:expr) => {
         std::net::SocketAddr::from((std::net::Ipv4Addr::from($ip), $port))
     };
+}
+#[macro_export]
+macro_rules! socketaddr6 {
+    ($ip:expr, $port:expr) => {
+        std::net::SocketAddr::from((std::net::Ipv6Addr::from($ip), $port))
+    };
+}
+#[macro_export]
+macro_rules! socketaddr {
     ($str:expr) => {{
         $str.parse::<std::net::SocketAddr>().unwrap()
     }};
 }
 #[macro_export]
-macro_rules! socketaddr_any {
+macro_rules! socketaddr4_any {
     () => {
-        socketaddr!(0, 0)
+        socketaddr4!(0, 0)
+    };
+}
+#[macro_export]
+macro_rules! socketaddr6_any {
+    () => {
+        socketaddr6!(0, 0)
     };
 }
 
@@ -70,16 +85,16 @@ impl Default for ContactInfo {
     fn default() -> Self {
         ContactInfo {
             id: Pubkey::default(),
-            gossip: socketaddr_any!(),
-            tvu: socketaddr_any!(),
-            tvu_forwards: socketaddr_any!(),
-            repair: socketaddr_any!(),
-            tpu: socketaddr_any!(),
-            tpu_forwards: socketaddr_any!(),
-            unused: socketaddr_any!(),
-            rpc: socketaddr_any!(),
-            rpc_pubsub: socketaddr_any!(),
-            serve_repair: socketaddr_any!(),
+            gossip: socketaddr6_any!(),
+            tvu: socketaddr6_any!(),
+            tvu_forwards: socketaddr6_any!(),
+            repair: socketaddr6_any!(),
+            tpu: socketaddr6_any!(),
+            tpu_forwards: socketaddr6_any!(),
+            unused: socketaddr6_any!(),
+            rpc: socketaddr6_any!(),
+            rpc_pubsub: socketaddr6_any!(),
+            serve_repair: socketaddr6_any!(),
             wallclock: 0,
             shred_version: 0,
         }
@@ -90,16 +105,16 @@ impl ContactInfo {
     pub fn new_localhost(id: &Pubkey, now: u64) -> Self {
         Self {
             id: *id,
-            gossip: socketaddr!("127.0.0.1:1234"),
-            tvu: socketaddr!("127.0.0.1:1235"),
-            tvu_forwards: socketaddr!("127.0.0.1:1236"),
-            repair: socketaddr!("127.0.0.1:1237"),
-            tpu: socketaddr!("127.0.0.1:1238"),
-            tpu_forwards: socketaddr!("127.0.0.1:1239"),
-            unused: socketaddr!("127.0.0.1:1240"),
-            rpc: socketaddr!("127.0.0.1:1241"),
-            rpc_pubsub: socketaddr!("127.0.0.1:1242"),
-            serve_repair: socketaddr!("127.0.0.1:1243"),
+            gossip: socketaddr!("::1:1234"),
+            tvu: socketaddr!("::1:1235"),
+            tvu_forwards: socketaddr!("::1:1236"),
+            repair: socketaddr!("::1:1237"),
+            tpu: socketaddr!("::1:1238"),
+            tpu_forwards: socketaddr!("::1:1239"),
+            unused: socketaddr!("::1:1240"),
+            rpc: socketaddr!("::1:1241"),
+            rpc_pubsub: socketaddr!("::1:1242"),
+            serve_repair: socketaddr!("::1:1243"),
             wallclock: now,
             shred_version: 0,
         }

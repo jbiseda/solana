@@ -403,7 +403,7 @@ impl ClusterInfo {
                 GOSSIP_PING_CACHE_CAPACITY,
             )),
             stats: GossipStats::default(),
-            socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
+            socket: UdpSocket::bind(":::0").unwrap(),
             local_message_pending_push_queue: Mutex::default(),
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             instance: RwLock::new(NodeInstance::new(&mut thread_rng(), id, timestamp())),
@@ -428,7 +428,7 @@ impl ClusterInfo {
             my_contact_info: RwLock::new(my_contact_info),
             ping_cache: Mutex::new(self.ping_cache.lock().unwrap().mock_clone()),
             stats: GossipStats::default(),
-            socket: UdpSocket::bind("0.0.0.0:0").unwrap(),
+            socket: UdpSocket::bind(":::0").unwrap(),
             local_message_pending_push_queue: Mutex::new(
                 self.local_message_pending_push_queue
                     .lock()
@@ -2708,25 +2708,24 @@ impl Node {
         Self::new_localhost_with_pubkey(&pubkey)
     }
     pub fn new_localhost_with_pubkey(pubkey: &Pubkey) -> Self {
-        let bind_ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-        let tpu = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let bind_ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED));
+        let tpu = UdpSocket::bind("::1:0").unwrap();
         let (gossip_port, (gossip, ip_echo)) =
             bind_common_in_range(bind_ip_addr, (1024, 65535)).unwrap();
-        let gossip_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), gossip_port);
-        let tvu = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let tvu_forwards = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let tpu_forwards = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let repair = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let gossip_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), gossip_port);
+        let tvu = UdpSocket::bind("::1:0").unwrap();
+        let tvu_forwards = UdpSocket::bind("::1:0").unwrap();
+        let tpu_forwards = UdpSocket::bind("::1:0").unwrap();
+        let repair = UdpSocket::bind("::1:0").unwrap();
         let rpc_port = find_available_port_in_range(bind_ip_addr, (1024, 65535)).unwrap();
-        let rpc_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), rpc_port);
+        let rpc_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), rpc_port);
         let rpc_pubsub_port = find_available_port_in_range(bind_ip_addr, (1024, 65535)).unwrap();
         let rpc_pubsub_addr =
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), rpc_pubsub_port);
-
-        let broadcast = vec![UdpSocket::bind("0.0.0.0:0").unwrap()];
-        let retransmit_socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-        let serve_repair = UdpSocket::bind("127.0.0.1:0").unwrap();
-        let unused = UdpSocket::bind("0.0.0.0:0").unwrap();
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), rpc_pubsub_port);
+        let broadcast = vec![UdpSocket::bind(":::0").unwrap()];
+        let retransmit_socket = UdpSocket::bind(":::0").unwrap();
+        let serve_repair = UdpSocket::bind("::1:0").unwrap();
+        let unused = UdpSocket::bind(":::0").unwrap();
         let info = ContactInfo {
             id: *pubkey,
             gossip: gossip_addr,
@@ -2908,7 +2907,7 @@ pub fn push_messages_to_peer(
         .map(move |payload| (peer_gossip, Protocol::PushMessage(self_id, payload)))
         .collect();
     let packets = to_packets_with_destination(PacketsRecycler::default(), &reqs);
-    let sock = UdpSocket::bind("0.0.0.0:0").unwrap();
+    let sock = UdpSocket::bind(":::0").unwrap();
     packet::send_to(&packets, &sock, socket_addr_space)?;
     Ok(())
 }
@@ -3924,7 +3923,7 @@ mod tests {
         // no tvu
         let id3 = Pubkey::new(&[3u8; 32]);
         let mut contact_info = ContactInfo::new_localhost(&id3, timestamp());
-        contact_info.tvu = "0.0.0.0:0".parse().unwrap();
+        contact_info.tvu = ":::0".parse().unwrap();
         cluster_info.insert_info(contact_info);
         stakes.insert(id3, 10);
 
