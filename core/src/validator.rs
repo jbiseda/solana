@@ -5,7 +5,7 @@ use crate::{
     cache_block_meta_service::{CacheBlockMetaSender, CacheBlockMetaService},
     cluster_info_vote_listener::VoteTracker,
     completed_data_sets_service::CompletedDataSetsService,
-    consensus::{reconcile_blockstore_roots_with_tower, Tower},
+    consensus::{reconcile_blockstore_roots_with_tower, FileTowerStorage, Tower, TowerStorage},
     cost_model::CostModel,
     rewards_recorder_service::{RewardsRecorderSender, RewardsRecorderService},
     sample_performance_service::SamplePerformanceService,
@@ -61,6 +61,7 @@ use solana_runtime::{
     commitment::BlockCommitmentCache,
     hardened_unpack::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
     snapshot_config::SnapshotConfig,
+    snapshot_utils::{self, SnapshotArchiveInfoGetter},
 };
 use solana_sdk::{
     clock::Slot,
@@ -90,7 +91,6 @@ use std::{
 const MAX_COMPLETED_DATA_SETS_IN_CHANNEL: usize = 100_000;
 const WAIT_FOR_SUPERMAJORITY_THRESHOLD_PERCENT: u64 = 90;
 
-#[derive(Debug)]
 pub struct ValidatorConfig {
     pub dev_halt_at_slot: Option<Slot>,
     pub expected_genesis_hash: Option<Hash>,
@@ -124,7 +124,7 @@ pub struct ValidatorConfig {
     pub wal_recovery_mode: Option<BlockstoreRecoveryMode>,
     pub poh_verify: bool, // Perform PoH verification during blockstore processing at boo
     pub require_tower: bool,
-    pub tower_path: Option<PathBuf>,
+    pub tower_storage: Arc<dyn TowerStorage>,
     pub debug_keys: Option<Arc<HashSet<Pubkey>>>,
     pub contact_debug_interval: u64,
     pub contact_save_interval: u64,
@@ -181,7 +181,7 @@ impl Default for ValidatorConfig {
             wal_recovery_mode: None,
             poh_verify: true,
             require_tower: false,
-            tower_path: None,
+            tower_storage: Arc::new(FileTowerStorage::new(PathBuf::default())),
             debug_keys: None,
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
@@ -715,6 +715,7 @@ impl Validator {
             &rpc_subscriptions,
             &poh_recorder,
             tower,
+            config.tower_storage.clone(),
             &leader_schedule_cache,
             &exit,
             block_commitment_cache,
@@ -949,7 +950,6 @@ fn post_process_restored_tower(
     validator_identity: &Pubkey,
     vote_account: &Pubkey,
     config: &ValidatorConfig,
-    tower_path: &Path,
     bank_forks: &BankForks,
 ) -> Tower {
     let mut should_require_tower = config.require_tower;
@@ -1028,7 +1028,6 @@ fn post_process_restored_tower(
 
             Tower::new_from_bankforks(
                 bank_forks,
-                tower_path,
                 validator_identity,
                 vote_account,
             )
@@ -1096,9 +1095,7 @@ fn new_banks_from_ledger(
     .expect("Failed to open ledger database");
     blockstore.set_no_compaction(config.no_rocksdb_compaction);
 
-    let tower_path = config.tower_path.as_deref().unwrap_or(ledger_path);
-
-    let restored_tower = Tower::restore(tower_path, validator_identity);
+    let restored_tower = Tower::restore(config.tower_storage.as_ref(), validator_identity);
     if let Ok(tower) = &restored_tower {
         reconcile_blockstore_roots_with_tower(tower, &blockstore).unwrap_or_else(|err| {
             error!("Failed to reconcile blockstore with tower: {:?}", err);
@@ -1198,7 +1195,7 @@ fn new_banks_from_ledger(
         );
         leader_schedule_cache.set_root(&bank_forks.root_bank());
 
-        let archive_file = solana_runtime::snapshot_utils::bank_to_full_snapshot_archive(
+        let full_snapshot_archive_info = snapshot_utils::bank_to_full_snapshot_archive(
             ledger_path,
             &bank_forks.root_bank(),
             None,
@@ -1211,7 +1208,10 @@ fn new_banks_from_ledger(
             error!("Unable to create snapshot: {}", err);
             abort();
         });
-        info!("created snapshot: {}", archive_file.display());
+        info!(
+            "created snapshot: {}",
+            full_snapshot_archive_info.path().display()
+        );
     }
 
     let tower = post_process_restored_tower(
@@ -1219,7 +1219,6 @@ fn new_banks_from_ledger(
         validator_identity,
         vote_account,
         config,
-        tower_path,
         &bank_forks,
     );
 
@@ -1759,7 +1758,7 @@ mod tests {
         );
 
         let (genesis_config, _mint_keypair) = create_genesis_config(1);
-        let bank = Arc::new(Bank::new(&genesis_config));
+        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
         let mut config = ValidatorConfig::default();
         let rpc_override_health_check = Arc::new(AtomicBool::new(false));
         let start_progress = Arc::new(RwLock::new(ValidatorStartProgress::default()));

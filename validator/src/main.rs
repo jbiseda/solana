@@ -20,6 +20,7 @@ use {
         rpc_request::MAX_MULTIPLE_ACCOUNTS,
     },
     solana_core::{
+        consensus::FileTowerStorage,
         ledger_cleanup_service::{DEFAULT_MAX_LEDGER_SHREDS, DEFAULT_MIN_MAX_LEDGER_SHREDS},
         tpu::DEFAULT_TPU_COALESCE_MS,
         validator::{
@@ -48,7 +49,8 @@ use {
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         snapshot_config::SnapshotConfig,
         snapshot_utils::{
-            self, ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            self, ArchiveFormat, SnapshotArchiveInfoGetter, SnapshotVersion,
+            DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         },
     },
     solana_sdk::{
@@ -481,7 +483,7 @@ fn get_rpc_node(
         let mut highest_snapshot_hash: Option<(Slot, Hash)> =
             snapshot_utils::get_highest_full_snapshot_archive_info(snapshot_output_dir).map(
                 |snapshot_archive_info| {
-                    (*snapshot_archive_info.slot(), *snapshot_archive_info.hash())
+                    (snapshot_archive_info.slot(), *snapshot_archive_info.hash())
                 },
             );
         let eligible_rpc_peers = if snapshot_not_required {
@@ -2286,11 +2288,13 @@ pub fn main() {
         .ok()
         .or_else(|| get_cluster_shred_version(&entrypoint_addrs));
 
+    let tower_path = value_t!(matches, "tower", PathBuf)
+        .ok()
+        .unwrap_or_else(|| ledger_path.clone());
+
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
-        tower_path: value_t!(matches, "tower", PathBuf)
-            .ok()
-            .or_else(|| Some(ledger_path.clone())),
+        tower_storage: Arc::new(FileTowerStorage::new(tower_path)),
         dev_halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
         expected_genesis_hash: matches
             .value_of("expected_genesis_hash")
@@ -2577,7 +2581,7 @@ pub fn main() {
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             cluster_info: admin_service_cluster_info.clone(),
-            tower_path: validator_config.tower_path.clone().unwrap(),
+            tower_storage: validator_config.tower_storage.clone(),
         },
     );
 

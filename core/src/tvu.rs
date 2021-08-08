@@ -11,7 +11,7 @@ use crate::{
     },
     cluster_slots::ClusterSlots,
     completed_data_sets_service::CompletedDataSetsSender,
-    consensus::Tower,
+    consensus::{Tower, TowerStorage},
     cost_model::CostModel,
     cost_update_service::CostUpdateService,
     ledger_cleanup_service::LedgerCleanupService,
@@ -114,6 +114,7 @@ impl Tvu {
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
         tower: Tower,
+        tower_storage: Arc<dyn TowerStorage>,
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         exit: &Arc<AtomicBool>,
         block_commitment_cache: Arc<RwLock<BlockCommitmentCache>>,
@@ -277,6 +278,7 @@ impl Tvu {
             bank_notification_sender,
             wait_for_vote_to_start_leader: tvu_config.wait_for_vote_to_start_leader,
             ancestor_hashes_replay_update_sender,
+            tower_storage,
         };
 
         let (voting_sender, voting_receiver) = channel();
@@ -393,7 +395,7 @@ pub mod tests {
         let starting_balance = 10_000;
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(starting_balance);
 
-        let bank_forks = BankForks::new(Bank::new(&genesis_config));
+        let bank_forks = BankForks::new(Bank::new_for_tests(&genesis_config));
 
         //start cluster_info1
         let cluster_info1 = ClusterInfo::new(
@@ -449,6 +451,7 @@ pub mod tests {
             )),
             &poh_recorder,
             tower,
+            Arc::new(crate::consensus::FileTowerStorage::default()),
             &leader_schedule_cache,
             &exit,
             block_commitment_cache,
