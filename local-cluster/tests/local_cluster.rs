@@ -16,9 +16,10 @@ use {
         broadcast_stage::{
             broadcast_duplicates_run::BroadcastDuplicatesConfig, BroadcastStageType,
         },
-        consensus::{FileTowerStorage, Tower, SWITCH_FORK_THRESHOLD, VOTE_THRESHOLD_DEPTH},
+        consensus::{Tower, SWITCH_FORK_THRESHOLD, VOTE_THRESHOLD_DEPTH},
         optimistic_confirmation_verifier::OptimisticConfirmationVerifier,
         replay_stage::DUPLICATE_THRESHOLD,
+        tower_storage::FileTowerStorage,
         validator::ValidatorConfig,
     },
     solana_download_utils::download_snapshot,
@@ -41,8 +42,9 @@ use {
         validator_configs::*,
     },
     solana_runtime::{
+        snapshot_archive_info::SnapshotArchiveInfoGetter,
         snapshot_config::SnapshotConfig,
-        snapshot_utils::{self, ArchiveFormat, SnapshotArchiveInfoGetter},
+        snapshot_utils::{self, ArchiveFormat},
     },
     solana_sdk::{
         account::AccountSharedData,
@@ -1424,6 +1426,7 @@ fn test_mainnet_beta_cluster_type() {
         &solana_vote_program::id(),
         &solana_sdk::bpf_loader_deprecated::id(),
         &solana_sdk::bpf_loader::id(),
+        &solana_sdk::bpf_loader_upgradeable::id(),
     ]
     .iter()
     {
@@ -1439,7 +1442,7 @@ fn test_mainnet_beta_cluster_type() {
     }
 
     // Programs that are not available at epoch 0
-    for program_id in [&solana_sdk::bpf_loader_upgradeable::id()].iter() {
+    for program_id in [].iter() {
         assert_eq!(
             (
                 program_id,
@@ -2888,7 +2891,7 @@ fn do_test_future_tower(cluster_mode: ClusterMode) {
     let slots_per_epoch = 2048;
     let node_stakes = match cluster_mode {
         ClusterMode::MasterOnly => vec![100],
-        ClusterMode::MasterSlave => vec![100, 0],
+        ClusterMode::MasterSlave => vec![100, 1],
     };
 
     let validator_keys = vec![

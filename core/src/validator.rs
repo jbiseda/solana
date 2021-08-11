@@ -5,7 +5,7 @@ use crate::{
     cache_block_meta_service::{CacheBlockMetaSender, CacheBlockMetaService},
     cluster_info_vote_listener::VoteTracker,
     completed_data_sets_service::CompletedDataSetsService,
-    consensus::{reconcile_blockstore_roots_with_tower, FileTowerStorage, Tower, TowerStorage},
+    consensus::{reconcile_blockstore_roots_with_tower, Tower},
     cost_model::CostModel,
     rewards_recorder_service::{RewardsRecorderSender, RewardsRecorderService},
     sample_performance_service::SamplePerformanceService,
@@ -13,6 +13,7 @@ use crate::{
     serve_repair_service::ServeRepairService,
     sigverify,
     snapshot_packager_service::{PendingSnapshotPackage, SnapshotPackagerService},
+    tower_storage::TowerStorage,
     tpu::{Tpu, DEFAULT_TPU_COALESCE_MS},
     tvu::{Sockets, Tvu, TvuConfig},
 };
@@ -60,8 +61,9 @@ use solana_runtime::{
     bank_forks::BankForks,
     commitment::BlockCommitmentCache,
     hardened_unpack::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
+    snapshot_archive_info::SnapshotArchiveInfoGetter,
     snapshot_config::SnapshotConfig,
-    snapshot_utils::{self, SnapshotArchiveInfoGetter},
+    snapshot_utils,
 };
 use solana_sdk::{
     clock::Slot,
@@ -136,6 +138,7 @@ pub struct ValidatorConfig {
     pub poh_hashes_per_batch: u64,
     pub account_indexes: AccountSecondaryIndexes,
     pub accounts_db_caching_enabled: bool,
+    pub accounts_index_bins: Option<usize>,
     pub warp_slot: Option<Slot>,
     pub accounts_db_test_hash_calculation: bool,
     pub accounts_db_skip_shrink: bool,
@@ -181,7 +184,7 @@ impl Default for ValidatorConfig {
             wal_recovery_mode: None,
             poh_verify: true,
             require_tower: false,
-            tower_storage: Arc::new(FileTowerStorage::new(PathBuf::default())),
+            tower_storage: Arc::new(crate::tower_storage::NullTowerStorage::default()),
             debug_keys: None,
             contact_debug_interval: DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
             contact_save_interval: DEFAULT_CONTACT_SAVE_INTERVAL_MILLIS,
@@ -201,6 +204,7 @@ impl Default for ValidatorConfig {
             validator_exit: Arc::new(RwLock::new(Exit::default())),
             no_wait_for_vote_to_start_leader: true,
             accounts_shrink_ratio: AccountShrinkThreshold::default(),
+            accounts_index_bins: None,
         }
     }
 }
@@ -1129,6 +1133,7 @@ fn new_banks_from_ledger(
         debug_keys: config.debug_keys.clone(),
         account_indexes: config.account_indexes.clone(),
         accounts_db_caching_enabled: config.accounts_db_caching_enabled,
+        accounts_index_bins: config.accounts_index_bins,
         shrink_ratio: config.accounts_shrink_ratio,
         accounts_db_test_hash_calculation: config.accounts_db_test_hash_calculation,
         accounts_db_skip_shrink: config.accounts_db_skip_shrink,
