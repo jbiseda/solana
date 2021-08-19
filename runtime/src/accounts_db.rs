@@ -23,9 +23,9 @@ use crate::{
     accounts_cache::{AccountsCache, CachedAccount, SlotCache},
     accounts_hash::{AccountsHash, CalculateHashIntermediate, HashStats, PreviousPass},
     accounts_index::{
-        AccountIndexGetResult, AccountSecondaryIndexes, AccountsIndex, AccountsIndexRootsStats,
-        IndexKey, IsCached, RefCount, ScanResult, SlotList, SlotSlice, ZeroLamport,
-        BINS_FOR_TESTING,
+        AccountIndexGetResult, AccountSecondaryIndexes, AccountsIndex, AccountsIndexConfig,
+        AccountsIndexRootsStats, IndexKey, IsCached, RefCount, ScanResult, SlotList, SlotSlice,
+        ZeroLamport, ACCOUNTS_INDEX_CONFIG_FOR_TESTING,
     },
     ancestors::Ancestors,
     append_vec::{AppendVec, StoredAccountMeta, StoredMeta, StoredMetaWriteVersion},
@@ -1426,7 +1426,7 @@ impl AccountsDb {
             AccountSecondaryIndexes::default(),
             false,
             AccountShrinkThreshold::default(),
-            Some(BINS_FOR_TESTING),
+            Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING),
         )
     }
 
@@ -1436,9 +1436,9 @@ impl AccountsDb {
         account_indexes: AccountSecondaryIndexes,
         caching_enabled: bool,
         shrink_ratio: AccountShrinkThreshold,
-        accounts_index_bins: Option<usize>,
+        accounts_index_config: Option<AccountsIndexConfig>,
     ) -> Self {
-        let accounts_index = AccountsIndex::new(accounts_index_bins);
+        let accounts_index = AccountsIndex::new(accounts_index_config);
         let mut new = if !paths.is_empty() {
             Self {
                 paths,
@@ -4969,11 +4969,8 @@ impl AccountsDb {
                     raw_lamports
                 };
 
-                let source_item = CalculateHashIntermediate::new_without_slot(
-                    loaded_account.loaded_hash(),
-                    balance,
-                    *pubkey,
-                );
+                let source_item =
+                    CalculateHashIntermediate::new(loaded_account.loaded_hash(), balance, *pubkey);
 
                 if check_hash {
                     let computed_hash = loaded_account.compute_hash(slot, pubkey);
@@ -6327,7 +6324,7 @@ impl AccountsDb {
             account_indexes,
             caching_enabled,
             shrink_ratio,
-            Some(BINS_FOR_TESTING),
+            Some(ACCOUNTS_INDEX_CONFIG_FOR_TESTING),
         )
     }
 
@@ -6601,10 +6598,10 @@ pub mod tests {
         let pubkey255 = Pubkey::new(&[0xffu8; 32]);
 
         let mut raw_expected = vec![
-            CalculateHashIntermediate::new_without_slot(Hash::default(), 1, pubkey0),
-            CalculateHashIntermediate::new_without_slot(Hash::default(), 128, pubkey127),
-            CalculateHashIntermediate::new_without_slot(Hash::default(), 129, pubkey128),
-            CalculateHashIntermediate::new_without_slot(Hash::default(), 256, pubkey255),
+            CalculateHashIntermediate::new(Hash::default(), 1, pubkey0),
+            CalculateHashIntermediate::new(Hash::default(), 128, pubkey127),
+            CalculateHashIntermediate::new(Hash::default(), 129, pubkey128),
+            CalculateHashIntermediate::new(Hash::default(), 256, pubkey255),
         ];
 
         let expected_hashes = vec![
