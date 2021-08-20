@@ -33,7 +33,6 @@ use solana_sdk::{
     account_utils::StateMut,
     clock::{Clock, UnixTimestamp, SECONDS_PER_DAY},
     epoch_schedule::EpochSchedule,
-    feature, feature_set,
     message::Message,
     pubkey::Pubkey,
     stake::{
@@ -1272,14 +1271,13 @@ pub fn process_create_stake_account(
         }
     };
 
-    let (recent_blockhash, fee_calculator) =
-        blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
     let (message, lamports) = resolve_spend_tx_and_check_account_balances(
         rpc_client,
         sign_only,
         amount,
-        &fee_calculator,
+        &recent_blockhash,
         &from.pubkey(),
         &fee_payer.pubkey(),
         build_message,
@@ -1387,8 +1385,7 @@ pub fn process_stake_authorize(
     }
     ixs = ixs.with_memo(memo);
 
-    let (recent_blockhash, fee_calculator) =
-        blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
     let nonce_authority = config.signers[nonce_authority];
     let fee_payer = config.signers[fee_payer];
@@ -1427,7 +1424,7 @@ pub fn process_stake_authorize(
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.account_keys[0],
-            &fee_calculator,
+            &recent_blockhash,
             &tx.message,
             config.commitment,
         )?;
@@ -1455,8 +1452,7 @@ pub fn process_deactivate_stake_account(
     seed: Option<&String>,
     fee_payer: SignerIndex,
 ) -> ProcessResult {
-    let (recent_blockhash, fee_calculator) =
-        blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
     let stake_authority = config.signers[stake_authority];
 
     let stake_account_address = if let Some(seed) = seed {
@@ -1507,7 +1503,7 @@ pub fn process_deactivate_stake_account(
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.account_keys[0],
-            &fee_calculator,
+            &recent_blockhash,
             &tx.message,
             config.commitment,
         )?;
@@ -1543,8 +1539,7 @@ pub fn process_withdraw_stake(
         *stake_account_pubkey
     };
 
-    let (recent_blockhash, fee_calculator) =
-        blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
     let fee_payer = config.signers[fee_payer];
     let nonce_authority = config.signers[nonce_authority];
@@ -1575,7 +1570,7 @@ pub fn process_withdraw_stake(
         rpc_client,
         sign_only,
         amount,
-        &fee_calculator,
+        &recent_blockhash,
         &stake_account_address,
         &fee_payer.pubkey(),
         build_message,
@@ -1606,7 +1601,7 @@ pub fn process_withdraw_stake(
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.account_keys[0],
-            &fee_calculator,
+            &recent_blockhash,
             &tx.message,
             config.commitment,
         )?;
@@ -1692,8 +1687,7 @@ pub fn process_split_stake(
         }
     }
 
-    let (recent_blockhash, fee_calculator) =
-        blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
     let ixs = if let Some(seed) = split_stake_account_seed {
         stake_instruction::split_with_seed(
@@ -1751,7 +1745,7 @@ pub fn process_split_stake(
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.account_keys[0],
-            &fee_calculator,
+            &recent_blockhash,
             &tx.message,
             config.commitment,
         )?;
@@ -1812,8 +1806,7 @@ pub fn process_merge_stake(
         }
     }
 
-    let (recent_blockhash, fee_calculator) =
-        blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
     let ixs = stake_instruction::merge(
         stake_account_pubkey,
@@ -1858,7 +1851,7 @@ pub fn process_merge_stake(
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.account_keys[0],
-            &fee_calculator,
+            &recent_blockhash,
             &tx.message,
             config.commitment,
         )?;
@@ -1887,8 +1880,7 @@ pub fn process_stake_set_lockup(
     memo: Option<&String>,
     fee_payer: SignerIndex,
 ) -> ProcessResult {
-    let (recent_blockhash, fee_calculator) =
-        blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
     let custodian = config.signers[custodian];
 
     let ixs = vec![if new_custodian_signer.is_some() {
@@ -1934,7 +1926,7 @@ pub fn process_stake_set_lockup(
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.account_keys[0],
-            &fee_calculator,
+            &recent_blockhash,
             &tx.message,
             config.commitment,
         )?;
@@ -1957,7 +1949,6 @@ pub fn build_stake_state(
     use_lamports_unit: bool,
     stake_history: &StakeHistory,
     clock: &Clock,
-    stake_program_v2_enabled: bool,
 ) -> CliStakeState {
     match stake_state {
         StakeState::Stake(
@@ -1969,12 +1960,9 @@ pub fn build_stake_state(
             stake,
         ) => {
             let current_epoch = clock.epoch;
-            let (active_stake, activating_stake, deactivating_stake) =
-                stake.delegation.stake_activating_and_deactivating(
-                    current_epoch,
-                    Some(stake_history),
-                    stake_program_v2_enabled,
-                );
+            let (active_stake, activating_stake, deactivating_stake) = stake
+                .delegation
+                .stake_activating_and_deactivating(current_epoch, Some(stake_history));
             let lockup = if lockup.is_in_force(clock, None) {
                 Some(lockup.into())
             } else {
@@ -2163,7 +2151,6 @@ pub fn process_show_stake_account(
                 use_lamports_unit,
                 &stake_history,
                 &clock,
-                is_stake_program_v2_enabled(rpc_client)?, // At v1.6, this check can be removed and simply passed as `true`
             );
 
             if state.stake_type == CliStakeType::Stake && state.activation_epoch.is_some() {
@@ -2291,8 +2278,7 @@ pub fn process_delegate_stake(
         }
     }
 
-    let (recent_blockhash, fee_calculator) =
-        blockhash_query.get_blockhash_and_fee_calculator(rpc_client, config.commitment)?;
+    let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
     let ixs = vec![stake_instruction::delegate_stake(
         stake_account_pubkey,
@@ -2337,22 +2323,13 @@ pub fn process_delegate_stake(
         check_account_for_fee_with_commitment(
             rpc_client,
             &tx.message.account_keys[0],
-            &fee_calculator,
+            &recent_blockhash,
             &tx.message,
             config.commitment,
         )?;
         let result = rpc_client.send_and_confirm_transaction_with_spinner(&tx);
         log_instruction_custom_error::<StakeError>(result, config)
     }
-}
-
-pub fn is_stake_program_v2_enabled(
-    rpc_client: &RpcClient,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let feature_account = rpc_client.get_account(&feature_set::stake_program_v2::id())?;
-    Ok(feature::from_account(&feature_account)
-        .and_then(|feature| feature.activated_at)
-        .is_some())
 }
 
 #[cfg(test)]

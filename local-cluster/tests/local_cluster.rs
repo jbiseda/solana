@@ -43,7 +43,7 @@ use {
     },
     solana_runtime::{
         snapshot_archive_info::SnapshotArchiveInfoGetter,
-        snapshot_config::SnapshotConfig,
+        snapshot_config::{LastFullSnapshotSlot, SnapshotConfig},
         snapshot_utils::{self, ArchiveFormat},
     },
     solana_sdk::{
@@ -191,8 +191,8 @@ fn test_local_cluster_signature_subscribe() {
         non_bootstrap_info.client_facing_addr(),
         VALIDATOR_PORT_RANGE,
     );
-    let (blockhash, _fee_calculator, _last_valid_slot) = tx_client
-        .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+    let (blockhash, _) = tx_client
+        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
         .unwrap();
 
     let mut transaction = system_transaction::transfer(
@@ -678,6 +678,7 @@ fn find_latest_replayed_slot_from_ledger(
                             latest_slot,
                             non_tick_entry.transactions.clone().into_iter(),
                         )
+                        .unwrap()
                         .is_empty()
                     {
                         return (
@@ -1475,8 +1476,8 @@ fn generate_frozen_account_panic(mut cluster: LocalCluster, frozen_account: Arc<
     let mut i = 0;
     while !solana_runtime::accounts_db::FROZEN_ACCOUNT_PANIC.load(Ordering::Relaxed) {
         // Transfer from frozen account
-        let (blockhash, _fee_calculator, _last_valid_slot) = client
-            .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+        let (blockhash, _) = client
+            .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
             .unwrap();
         client
             .async_transfer(
@@ -2008,8 +2009,13 @@ fn test_snapshots_restart_validity() {
 #[allow(unused_attributes)]
 #[ignore]
 fn test_fail_entry_verification_leader() {
-    let (cluster, _) =
-        test_faulty_node(BroadcastStageType::FailEntryVerification, vec![60, 50, 60]);
+    let leader_stake = (DUPLICATE_THRESHOLD * 100.0) as u64 + 1;
+    let validator_stake1 = (100 - leader_stake) / 2;
+    let validator_stake2 = 100 - leader_stake - validator_stake1;
+    let (cluster, _) = test_faulty_node(
+        BroadcastStageType::FailEntryVerification,
+        vec![leader_stake, validator_stake1, validator_stake2],
+    );
     cluster.check_for_new_roots(
         16,
         "test_fail_entry_verification_leader",
@@ -3246,8 +3252,8 @@ fn setup_transfer_scan_threads(
                 if exit_.load(Ordering::Relaxed) {
                     return;
                 }
-                let (blockhash, _fee_calculator, _last_valid_slot) = client
-                    .get_recent_blockhash_with_commitment(CommitmentConfig::processed())
+                let (blockhash, _) = client
+                    .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
                     .unwrap();
                 for i in 0..starting_keypairs_.len() {
                     client
@@ -3472,6 +3478,7 @@ fn setup_snapshot_validator_config(
         archive_format: ArchiveFormat::TarBzip2,
         snapshot_version: snapshot_utils::SnapshotVersion::default(),
         maximum_snapshots_to_retain: snapshot_utils::DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        last_full_snapshot_slot: LastFullSnapshotSlot::default(),
     };
 
     // Create the account paths

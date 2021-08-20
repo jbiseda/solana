@@ -205,11 +205,11 @@ health-check mechanism for use by load balancers or other network
 infrastructure. This request will always return a HTTP 200 OK response with a body of
 "ok", "behind" or "unknown" based on the following conditions:
 
-1. If one or more `--trusted-validator` arguments are provided to `solana-validator`, "ok" is returned
+1. If one or more `--known-validator` arguments are provided to `solana-validator`, "ok" is returned
    when the node has within `HEALTH_CHECK_SLOT_DISTANCE` slots of the highest
-   trusted validator, otherwise "behind". "unknown" is returned when no slot
-   information from trusted validators is not yet available.
-2. "ok" is always returned if no trusted validators are provided.
+   known validator, otherwise "behind". "unknown" is returned when no slot
+   information from known validators is not yet available.
+2. "ok" is always returned if no known validators are provided.
 
 ## JSON RPC API Reference
 
@@ -1195,10 +1195,10 @@ Result:
 
 Returns the current health of the node.
 
-If one or more `--trusted-validator` arguments are provided to
+If one or more `--known-validator` arguments are provided to
 `solana-validator`, "ok" is returned when the node has within
-`HEALTH_CHECK_SLOT_DISTANCE` slots of the highest trusted validator, otherwise
-an error is returned.  "ok" is always returned if no trusted validators are
+`HEALTH_CHECK_SLOT_DISTANCE` slots of the highest known validator, otherwise
+an error is returned.  "ok" is always returned if no known validators are
 provided.
 
 #### Parameters:
@@ -2413,7 +2413,9 @@ Returns information about the current supply.
 
 #### Parameters:
 
-- `<object>` - (optional) [Commitment](jsonrpc-api.md#configuring-state-commitment)
+- `<object>` - (optional) Configuration object containing the following optional fields:
+  - (optional) [Commitment](jsonrpc-api.md#configuring-state-commitment)
+  - (optional) `excludeNonCirculatingAccountsList: <bool>` - exclude non circulating accounts list from response
 
 #### Results:
 
@@ -2422,7 +2424,7 @@ The result will be an RpcResponse JSON object with `value` equal to a JSON objec
 - `total: <u64>` - Total supply in lamports
 - `circulating: <u64>` - Circulating supply in lamports
 - `nonCirculating: <u64>` - Non-circulating supply in lamports
-- `nonCirculatingAccounts: <array>` - an array of account addresses of non-circulating accounts, as strings
+- `nonCirculatingAccounts: <array>` - an array of account addresses of non-circulating accounts, as strings. If `excludeNonCirculatingAccountsList` is enabled, the returned array will be empty.
 
 #### Example:
 

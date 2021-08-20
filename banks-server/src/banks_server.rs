@@ -131,10 +131,14 @@ impl BanksServer {
 fn verify_transaction(
     transaction: &Transaction,
     libsecp256k1_0_5_upgrade_enabled: bool,
+    libsecp256k1_fail_on_bad_count: bool,
 ) -> transaction::Result<()> {
     if let Err(err) = transaction.verify() {
         Err(err)
-    } else if let Err(err) = transaction.verify_precompiles(libsecp256k1_0_5_upgrade_enabled) {
+    } else if let Err(err) = transaction.verify_precompiles(
+        libsecp256k1_0_5_upgrade_enabled,
+        libsecp256k1_fail_on_bad_count,
+    ) {
         Err(err)
     } else {
         Ok(())
@@ -167,6 +171,7 @@ impl Banks for BanksServer {
         commitment: CommitmentLevel,
     ) -> (FeeCalculator, Hash, u64) {
         let bank = self.bank(commitment);
+        #[allow(deprecated)]
         let (blockhash, fee_calculator) = bank.last_blockhash_with_fee_calculator();
         let last_valid_block_height = bank
             .get_blockhash_last_valid_block_height(&blockhash)
@@ -227,6 +232,7 @@ impl Banks for BanksServer {
         if let Err(err) = verify_transaction(
             &transaction,
             self.bank(commitment).libsecp256k1_0_5_upgrade_enabled(),
+            self.bank(commitment).libsecp256k1_fail_on_bad_count(),
         ) {
             return Some(Err(err));
         }

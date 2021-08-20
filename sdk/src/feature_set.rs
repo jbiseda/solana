@@ -30,6 +30,10 @@ pub mod instructions_sysvar_enabled {
     solana_sdk::declare_id!("EnvhHCLvg55P7PDtbvR1NwuTuAeodqpusV3MR5QEK8gs");
 }
 
+pub mod instructions_sysvar_owned_by_sysvar {
+    solana_sdk::declare_id!("H3kBSaKdeiUsyHmeHqjJYNc27jesXZ6zWj3zWkowQbkV");
+}
+
 pub mod deprecate_rewards_sysvar {
     solana_sdk::declare_id!("GaBtBJvmS4Arjj5W1NmFcyvPjsHN38UGYDq2MDwbs9Qu");
 }
@@ -61,14 +65,6 @@ pub mod spl_token_v2_multisig_fix {
 
 pub mod no_overflow_rent_distribution {
     solana_sdk::declare_id!("4kpdyrcj5jS47CZb2oJGfVxjYbsMm2Kx97gFyZrxxwXz");
-}
-
-pub mod stake_program_v2 {
-    solana_sdk::declare_id!("Gvd9gGJZDHGMNf1b3jkxrfBQSR5etrfTQSBNKCvLSFJN");
-}
-
-pub mod rewrite_stake {
-    solana_sdk::declare_id!("6ap2eGy7wx5JmsWUmQ5sHwEWrFSDUxSti2k5Hbfv5BZG");
 }
 
 pub mod filter_stake_delegation_accounts {
@@ -187,6 +183,22 @@ pub mod stake_merge_with_unmatched_credits_observed {
     solana_sdk::declare_id!("meRgp4ArRPhD3KtCY9c5yAf2med7mBLsjKTPeVUHqBL");
 }
 
+pub mod gate_large_block {
+    solana_sdk::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
+}
+
+pub mod mem_overlap_fix {
+    solana_sdk::declare_id!("vXDCFK7gphrEmyf5VnKgLmqbdJ4UxD2eZH1qbdouYKF");
+}
+
+pub mod versioned_tx_message_enabled {
+    solana_sdk::declare_id!("3KZZ6Ks1885aGBQ45fwRcPXVBCtzUvxhUTkwKMR41Tca");
+}
+
+pub mod libsecp256k1_fail_on_bad_count {
+    solana_sdk::declare_id!("8aXvSuopd1PUj7UhehfXJRg6619RHp8ZvwTyyJHdUYsj");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -196,8 +208,6 @@ lazy_static! {
         (full_inflation::devnet_and_testnet::id(), "full inflation on devnet and testnet"),
         (spl_token_v2_multisig_fix::id(), "spl-token multisig fix"),
         (no_overflow_rent_distribution::id(), "no overflow rent distribution"),
-        (stake_program_v2::id(), "solana_stake_program v2"),
-        (rewrite_stake::id(), "rewrite stake"),
         (filter_stake_delegation_accounts::id(), "filter stake_delegation_accounts #14062"),
         (stake_program_v3::id(), "solana_stake_program v3"),
         (require_custodian_for_locked_stake_authorize::id(), "require custodian to authorize withdrawer change for locked stake"),
@@ -218,16 +228,20 @@ lazy_static! {
         (dedupe_config_program_signers::id(), "dedupe config program signers"),
         (deterministic_shred_seed_enabled::id(), "deterministic shred seed"),
         (vote_stake_checked_instructions::id(), "vote/state program checked instructions #18345"),
-        (updated_verify_policy::id(), "Update verify policy"),
+        (updated_verify_policy::id(), "update verify policy"),
         (neon_evm_compute_budget::id(), "bump neon_evm's compute budget"),
         (rent_for_sysvars::id(), "collect rent from accounts owned by sysvars"),
         (libsecp256k1_0_5_upgrade_enabled::id(), "upgrade libsecp256k1 to v0.5.0"),
-        (tx_wide_compute_cap::id(), "Transaction wide compute cap"),
+        (tx_wide_compute_cap::id(), "transaction wide compute cap"),
         (spl_token_v2_set_authority_fix::id(), "spl-token set_authority fix"),
-        (stop_verify_mul64_imm_nonzero::id(), "Sets rbpf vm config verify_mul64_imm_nonzero to false"),
+        (stop_verify_mul64_imm_nonzero::id(), "sets rbpf vm config verify_mul64_imm_nonzero to false"),
         (merge_nonce_error_into_system_error::id(), "merge NonceError into SystemError"),
         (disable_fees_sysvar::id(), "disable fees sysvar"),
         (stake_merge_with_unmatched_credits_observed::id(), "allow merging active stakes with unmatched credits_observed #18985"),
+        (gate_large_block::id(), "validator checks block cost against max limit in realtime, reject if exceeds."),
+        (mem_overlap_fix::id(), "memory overlap fix"),
+        (versioned_tx_message_enabled::id(), "enable versioned transaction message processing"),
+        (libsecp256k1_fail_on_bad_count::id(), "Fail libsec256k1_verify if count appears wrong")
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

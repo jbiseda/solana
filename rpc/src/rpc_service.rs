@@ -5,8 +5,8 @@ use {
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         rpc::{
-            rpc_accounts::*, rpc_bank::*, rpc_deprecated_v1_7::*, rpc_full::*, rpc_minimal::*,
-            rpc_obsolete_v1_7::*, *,
+            rpc_accounts::*, rpc_bank::*, rpc_deprecated_v1_7::*, rpc_deprecated_v1_8::*,
+            rpc_full::*, rpc_minimal::*, rpc_obsolete_v1_7::*, *,
         },
         rpc_health::*,
         send_transaction_service::{LeaderInfo, SendTransactionService},
@@ -408,6 +408,7 @@ impl JsonRpcService {
                     io.extend_with(rpc_accounts::AccountsDataImpl.to_delegate());
                     io.extend_with(rpc_full::FullImpl.to_delegate());
                     io.extend_with(rpc_deprecated_v1_7::DeprecatedV1_7Impl.to_delegate());
+                    io.extend_with(rpc_deprecated_v1_8::DeprecatedV1_8Impl.to_delegate());
                 }
                 if obsolete_v1_7_api {
                     io.extend_with(rpc_obsolete_v1_7::ObsoleteV1_7Impl.to_delegate());
@@ -490,6 +491,7 @@ mod tests {
         },
         solana_runtime::{
             bank::Bank,
+            snapshot_config::LastFullSnapshotSlot,
             snapshot_utils::{
                 ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             },
@@ -607,6 +609,7 @@ mod tests {
                 archive_format: ArchiveFormat::TarBzip2,
                 snapshot_version: SnapshotVersion::default(),
                 maximum_snapshots_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+                last_full_snapshot_slot: LastFullSnapshotSlot::default(),
             }),
             bank_forks,
             RpcHealth::stub(),

@@ -46,6 +46,8 @@ EOF
   exit 1
 }
 
+maybeRequireTower=true
+
 positional_args=()
 while [[ -n $1 ]]; do
   if [[ ${1:0:1} = - ]]; then
@@ -141,10 +143,10 @@ while [[ -n $1 ]]; do
     elif [[ $1 = --log ]]; then
       args+=("$1" "$2")
       shift 2
-    elif [[ $1 = --trusted-validator ]]; then
+    elif [[ $1 = --known-validator ]]; then
       args+=("$1" "$2")
       shift 2
-    elif [[ $1 = --halt-on-trusted-validators-accounts-hash-mismatch ]]; then
+    elif [[ $1 = --halt-on-known-validators-accounts-hash-mismatch ]]; then
       args+=("$1")
       shift
     elif [[ $1 = --max-genesis-archive-unpacked-size ]]; then
@@ -159,6 +161,12 @@ while [[ -n $1 ]]; do
     elif [[ $1 == --allow-private-addr ]]; then
       args+=("$1")
       maybe_allow_private_addr=$1
+      shift
+    elif [[ $1 == --accounts-db-skip-shrink ]]; then
+      args+=("$1")
+      shift
+    elif [[ $1 == --skip-require-tower ]]; then
+      maybeRequireTower=false
       shift
     elif [[ $1 = -h ]]; then
       usage "$@"
@@ -232,7 +240,10 @@ default_arg --identity "$identity"
 default_arg --vote-account "$vote_account"
 default_arg --ledger "$ledger_dir"
 default_arg --log -
-default_arg --require-tower
+
+if [[ $maybeRequireTower = true ]]; then
+  default_arg --require-tower
+fi
 
 if [[ -n $SOLANA_CUDA ]]; then
   program=$solana_validator_cuda

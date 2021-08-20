@@ -307,7 +307,7 @@ startBootstrapLeader() {
          $nodeIndex \
          ${#clientIpList[@]} \"$benchTpsExtraArgs\" \
          \"$genesisOptions\" \
-         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAllowPrivateAddr\" \
+         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAllowPrivateAddr $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
          \"$gpuMode\" \
          \"$maybeWarpSlot\" \
          \"$waitForNodeInit\" \
@@ -378,7 +378,7 @@ startNode() {
          $nodeIndex \
          ${#clientIpList[@]} \"$benchTpsExtraArgs\" \
          \"$genesisOptions\" \
-         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAllowPrivateAddr\" \
+         \"$maybeNoSnapshot $maybeSkipLedgerVerify $maybeLimitLedgerSize $maybeWaitForSupermajority $maybeAllowPrivateAddr $maybeAccountsDbSkipShrink $maybeSkipRequireTower\" \
          \"$gpuMode\" \
          \"$maybeWarpSlot\" \
          \"$waitForNodeInit\" \
@@ -776,6 +776,8 @@ maybeSkipLedgerVerify=""
 maybeDisableAirdrops=""
 maybeWaitForSupermajority=""
 maybeAllowPrivateAddr=""
+maybeAccountsDbSkipShrink=""
+maybeSkipRequireTower=""
 debugBuild=false
 doBuild=true
 gpuMode=auto
@@ -904,6 +906,12 @@ while [[ -n $1 ]]; do
       # May also be added by loadConfigFile if 'gce.sh create' was invoked
       # without -P.
       maybeAllowPrivateAddr="$1"
+      shift 1
+    elif [[ $1 = --accounts-db-skip-shrink ]]; then
+      maybeAccountsDbSkipShrink="$1"
+      shift 1
+    elif [[ $1 = --skip-require-tower ]]; then
+      maybeSkipRequireTower="$1"
       shift 1
     else
       usage "Unknown long option: $1"
