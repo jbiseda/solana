@@ -5,6 +5,7 @@ use crate::{
     packet::{self, send_to, Packets, PacketsRecycler, PACKETS_PER_BATCH},
     recvmmsg::NUM_RCVMMSGS,
     socket::SocketAddrSpace,
+    streamer::packet::PacketTimeTracker,
 };
 use solana_sdk::timing::{duration_as_ms, timestamp};
 use std::net::UdpSocket;
@@ -15,8 +16,8 @@ use std::thread::{Builder, JoinHandle};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
-pub type PacketReceiver = Receiver<Packets>;
-pub type PacketSender = Sender<Packets>;
+pub type PacketReceiver = Receiver<(Packets, PacketTimeTracker)>;
+pub type PacketSender = Sender<(Packets, PacketTimeTracker)>;
 
 #[derive(Error, Debug)]
 pub enum StreamerError {
@@ -27,7 +28,7 @@ pub enum StreamerError {
     RecvTimeout(#[from] RecvTimeoutError),
 
     #[error("send packets error")]
-    Send(#[from] SendError<Packets>),
+    Send(#[from] SendError<(Packets, PacketTimeTracker)>),
 }
 
 pub type Result<T> = std::result::Result<T, StreamerError>;
@@ -57,14 +58,14 @@ fn recv_loop(
             if exit.load(Ordering::Relaxed) {
                 return Ok(());
             }
-            if let Ok(len) = packet::recv_from(&mut msgs, sock, coalesce_ms) {
+            if let Ok((len, time_tracker)) = packet::recv_from(&mut msgs, sock, coalesce_ms) {
                 if len == NUM_RCVMMSGS {
                     num_max_received += 1;
                 }
                 recv_count += len;
                 call_count += 1;
                 if len > 0 {
-                    channel.send(msgs)?;
+                    channel.send((msgs, time_tracker))?;
                 }
                 break;
             }
@@ -121,28 +122,28 @@ fn recv_send(
     socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
     let timer = Duration::new(1, 0);
-    let msgs = r.recv_timeout(timer)?;
+    let (msgs, recv_start_time) = r.recv_timeout(timer)?;
     send_to(&msgs, sock, socket_addr_space)?;
     Ok(())
 }
 
-pub fn recv_batch(recvr: &PacketReceiver, max_batch: usize) -> Result<(Vec<Packets>, usize, u64)> {
+pub fn recv_batch(recvr: &PacketReceiver, max_batch: usize) -> Result<(Vec<(Packets, PacketTimeTracker)>, usize, u64)> {
     let timer = Duration::new(1, 0);
-    let msgs = recvr.recv_timeout(timer)?;
+    let batch = recvr.recv_timeout(timer)?;
     let recv_start = Instant::now();
     trace!("got msgs");
-    let mut len = msgs.packets.len();
-    let mut batch = vec![msgs];
-    while let Ok(more) = recvr.try_recv() {
+    let mut len = batch.0.packets.len();
+    let mut batches = vec![batch];
+    while let Ok(batch) = recvr.try_recv() {
         trace!("got more msgs");
-        len += more.packets.len();
-        batch.push(more);
+        len += batch.0.packets.len();
+        batches.push(batch);
         if len > max_batch {
             break;
         }
     }
-    trace!("batch len {}", batch.len());
-    Ok((batch, len, duration_as_ms(&recv_start.elapsed())))
+    trace!("batches len {}", batches.len());
+    Ok((batches, len, duration_as_ms(&recv_start.elapsed())))
 }
 
 pub fn responder(

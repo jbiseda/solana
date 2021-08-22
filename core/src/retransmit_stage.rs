@@ -33,6 +33,7 @@ use {
         pubkey::Pubkey,
         timing::{timestamp, AtomicInterval},
     },
+    solana_streamer::packet::PacketTimeTracker,
     std::{
         collections::{BTreeSet, HashSet},
         net::UdpSocket,
@@ -443,7 +444,7 @@ impl RetransmitStage {
         cluster_info: Arc<ClusterInfo>,
         retransmit_sockets: Arc<Vec<UdpSocket>>,
         repair_socket: Arc<UdpSocket>,
-        verified_receiver: Receiver<Vec<Packets>>,
+        verified_receiver: Receiver<Vec<(Packets, PacketTimeTracker)>>,
         exit: Arc<AtomicBool>,
         cluster_slots_update_receiver: ClusterSlotsUpdateReceiver,
         epoch_schedule: EpochSchedule,

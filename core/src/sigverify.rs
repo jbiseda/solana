@@ -12,6 +12,7 @@ use solana_perf::sigverify;
 pub use solana_perf::sigverify::{
     batch_size, ed25519_verify_cpu, ed25519_verify_disabled, init, TxOffset,
 };
+use solana_streamer::packet::PacketTimeTracker;
 
 #[derive(Clone)]
 pub struct TransactionSigVerifier {
@@ -30,7 +31,7 @@ impl Default for TransactionSigVerifier {
 }
 
 impl SigVerifier for TransactionSigVerifier {
-    fn verify_batch(&self, mut batch: Vec<Packets>) -> Vec<Packets> {
+    fn verify_batch(&self, mut batch: Vec<(Packets, PacketTimeTracker)>) -> Vec<(Packets, PacketTimeTracker)> {
         sigverify::ed25519_verify(&mut batch, &self.recycler, &self.recycler_out);
         batch
     }

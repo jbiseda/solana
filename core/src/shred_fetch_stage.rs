@@ -80,7 +80,7 @@ impl ShredFetchStage {
         let mut stats = ShredFetchStats::default();
         let mut packet_hasher = PacketHasher::default();
 
-        while let Some(mut p) = recvr.iter().next() {
+        while let Some((mut p, mut time_tracker)) = recvr.iter().next() {
             if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
                 last_updated = Instant::now();
                 packet_hasher.reset();
@@ -95,6 +95,7 @@ impl ShredFetchStage {
                 }
             }
             stats.shred_count += p.packets.len();
+            time_tracker.start_outgoing();
             p.packets.iter_mut().for_each(|mut packet| {
                 Self::process_packet(
                     &mut packet,
@@ -121,7 +122,7 @@ impl ShredFetchStage {
                 stats = ShredFetchStats::default();
                 last_stats = Instant::now();
             }
-            if sendr.send(p).is_err() {
+            if sendr.send((p, time_tracker)).is_err() {
                 break;
             }
         }

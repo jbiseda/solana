@@ -63,6 +63,7 @@ use {
     },
     solana_streamer::{
         packet,
+        packet::PacketTimeTracker,
         sendmmsg::{multi_target_send, SendPktsError},
         socket::SocketAddrSpace,
         streamer::{PacketReceiver, PacketSender},
@@ -1536,7 +1537,9 @@ impl ClusterInfo {
             self.stats
                 .packets_sent_gossip_requests_count
                 .add_relaxed(packets.packets.len() as u64);
-            sender.send(packets)?;
+            let mut time_tracker = PacketTimeTracker::default();
+            time_tracker.set_outgoing_start(Instant::now());
+            sender.send((packets, time_tracker))?;
         }
         Ok(())
     }
@@ -1774,6 +1777,7 @@ impl ClusterInfo {
         &self,
         // from address, crds filter, caller contact info
         requests: Vec<(SocketAddr, CrdsFilter, CrdsValue)>,
+        mut time_tracker: PacketTimeTracker,
         thread_pool: &ThreadPool,
         recycler: &PacketsRecycler,
         stakes: &HashMap<Pubkey, u64>,
@@ -1809,6 +1813,7 @@ impl ClusterInfo {
             self.stats
                 .pull_requests_count
                 .add_relaxed(requests.len() as u64);
+            time_tracker.start_outgoing();
             let response = self.handle_pull_requests(
                 thread_pool,
                 recycler,
@@ -1816,11 +1821,12 @@ impl ClusterInfo {
                 stakes,
                 require_stake_for_gossip,
             );
+            // TODO record rec_start_time to now for this batch of requests
             if !response.is_empty() {
                 self.stats
                     .packets_sent_pull_responses_count
                     .add_relaxed(response.packets.len() as u64);
-                let _ = response_sender.send(response);
+                let _ = response_sender.send((response, time_tracker));
             }
         }
     }
@@ -2107,14 +2113,16 @@ impl ClusterInfo {
     fn handle_batch_ping_messages<I>(
         &self,
         pings: I,
+        mut time_tracker: PacketTimeTracker,
         recycler: &PacketsRecycler,
         response_sender: &PacketSender,
     ) where
         I: IntoIterator<Item = (SocketAddr, Ping)>,
     {
         let _st = ScopedTimer::from(&self.stats.handle_batch_ping_messages_time);
+        time_tracker.start_outgoing();
         if let Some(response) = self.handle_ping_messages(pings, recycler) {
-            let _ = response_sender.send(response);
+            let _ = response_sender.send((response, time_tracker));
         }
     }
 
@@ -2164,6 +2172,7 @@ impl ClusterInfo {
     fn handle_batch_push_messages(
         &self,
         messages: Vec<(Pubkey, Vec<CrdsValue>)>,
+        mut time_tracker: PacketTimeTracker,
         thread_pool: &ThreadPool,
         recycler: &PacketsRecycler,
         stakes: &HashMap<Pubkey, u64>,
@@ -2240,6 +2249,7 @@ impl ClusterInfo {
         if prune_messages.is_empty() {
             return;
         }
+        time_tracker.start_outgoing();
         let mut packets = to_packets_with_destination(recycler.clone(), &prune_messages);
         let num_prune_packets = packets.packets.len();
         self.stats
@@ -2263,7 +2273,7 @@ impl ClusterInfo {
         self.stats
             .packets_sent_push_messages_count
             .add_relaxed((packets.packets.len() - num_prune_packets) as u64);
-        let _ = response_sender.send(packets);
+        let _ = response_sender.send((packets, time_tracker));
     }
 
     fn require_stake_for_gossip(
@@ -2296,6 +2306,7 @@ impl ClusterInfo {
     fn process_packets(
         &self,
         packets: VecDeque<(/*from:*/ SocketAddr, Protocol)>,
+        time_tracker: PacketTimeTracker,
         thread_pool: &ThreadPool,
         recycler: &PacketsRecycler,
         response_sender: &PacketSender,
@@ -2389,10 +2400,11 @@ impl ClusterInfo {
             pull_responses.retain(|(_, data)| !data.is_empty());
             push_messages.retain(|(_, data)| !data.is_empty());
         }
-        self.handle_batch_ping_messages(ping_messages, recycler, response_sender);
+        self.handle_batch_ping_messages(ping_messages, time_tracker, recycler, response_sender);
         self.handle_batch_prune_messages(prune_messages);
         self.handle_batch_push_messages(
             push_messages,
+            time_tracker,
             thread_pool,
             recycler,
             stakes,
@@ -2404,6 +2416,7 @@ impl ClusterInfo {
         self.handle_batch_pong_messages(pong_messages, Instant::now());
         self.handle_batch_pull_requests(
             pull_requests,
+            time_tracker,
             thread_pool,
             recycler,
             stakes,
@@ -2419,14 +2432,16 @@ impl ClusterInfo {
     fn run_socket_consume(
         &self,
         receiver: &PacketReceiver,
-        sender: &Sender<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        sender: &Sender<(Vec<(/*from:*/ SocketAddr, Protocol)>, PacketTimeTracker)>,
         thread_pool: &ThreadPool,
     ) -> Result<(), GossipError> {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
-        let packets: Vec<_> = receiver.recv_timeout(RECV_TIMEOUT)?.packets.into();
+        let (pkts, mut time_tracker) = receiver.recv_timeout(RECV_TIMEOUT)?;
+        let packets: Vec<_> = pkts.packets.into();
         let mut packets = VecDeque::from(packets);
-        for payload in receiver.try_iter() {
+        for (payload, time_tracker_latest) in receiver.try_iter() {
             packets.extend(payload.packets.iter().cloned());
+            time_tracker.extend_incoming(time_tracker_latest);
             let excess_count = packets.len().saturating_sub(MAX_GOSSIP_TRAFFIC);
             if excess_count > 0 {
                 packets.drain(0..excess_count);
@@ -2452,7 +2467,7 @@ impl ClusterInfo {
         self.stats
             .packets_received_verified_count
             .add_relaxed(packets.len() as u64);
-        Ok(sender.send(packets)?)
+        Ok(sender.send((packets, time_tracker))?)
     }
 
     /// Process messages from the network
@@ -2460,7 +2475,7 @@ impl ClusterInfo {
         &self,
         recycler: &PacketsRecycler,
         bank_forks: Option<&RwLock<BankForks>>,
-        receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        receiver: &Receiver<(Vec<(/*from:*/ SocketAddr, Protocol)>, PacketTimeTracker)>,
         response_sender: &PacketSender,
         thread_pool: &ThreadPool,
         last_print: &mut Instant,
@@ -2468,9 +2483,11 @@ impl ClusterInfo {
     ) -> Result<(), GossipError> {
         const RECV_TIMEOUT: Duration = Duration::from_secs(1);
         const SUBMIT_GOSSIP_STATS_INTERVAL: Duration = Duration::from_secs(2);
-        let mut packets = VecDeque::from(receiver.recv_timeout(RECV_TIMEOUT)?);
-        for payload in receiver.try_iter() {
+        let (pkts, mut time_tracker) = receiver.recv_timeout(RECV_TIMEOUT)?;
+        let mut packets = VecDeque::from(pkts);
+        for (payload, time_tracker_latest) in receiver.try_iter() {
             packets.extend(payload);
+            time_tracker.extend_incoming(time_tracker_latest);
             let excess_count = packets.len().saturating_sub(MAX_GOSSIP_TRAFFIC);
             if excess_count > 0 {
                 packets.drain(0..excess_count);
@@ -2492,6 +2509,7 @@ impl ClusterInfo {
         };
         self.process_packets(
             packets,
+            time_tracker,
             thread_pool,
             recycler,
             response_sender,
@@ -2510,7 +2528,7 @@ impl ClusterInfo {
     pub(crate) fn start_socket_consume_thread(
         self: Arc<Self>,
         receiver: PacketReceiver,
-        sender: Sender<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        sender: Sender<(Vec<(/*from:*/ SocketAddr, Protocol)>, PacketTimeTracker)>,
         exit: Arc<AtomicBool>,
     ) -> JoinHandle<()> {
         let thread_pool = ThreadPoolBuilder::new()
@@ -2538,7 +2556,7 @@ impl ClusterInfo {
     pub(crate) fn listen(
         self: Arc<Self>,
         bank_forks: Option<Arc<RwLock<BankForks>>>,
-        requests_receiver: Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
+        requests_receiver: Receiver<(Vec<(/*from:*/ SocketAddr, Protocol)>, PacketTimeTracker)>,
         response_sender: PacketSender,
         should_check_duplicate_instance: bool,
         exit: Arc<AtomicBool>,

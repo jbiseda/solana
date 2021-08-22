@@ -65,12 +65,12 @@ impl FetchStage {
         sendr: &PacketSender,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
     ) -> Result<()> {
-        let msgs = recvr.recv()?;
-        let mut len = msgs.packets.len();
-        let mut batch = vec![msgs];
-        while let Ok(more) = recvr.try_recv() {
-            len += more.packets.len();
-            batch.push(more);
+        let batch = recvr.recv()?;
+        let mut len = batch.0.packets.len();
+        let mut batches = vec![batch];
+        while let Ok(batch) = recvr.try_recv() {
+            len += batch.0.packets.len();
+            batches.push(batch);
             // Read at most 1K transactions in a loop
             if len > 1024 {
                 break;
@@ -83,8 +83,8 @@ impl FetchStage {
             .would_be_leader(HOLD_TRANSACTIONS_SLOT_OFFSET.saturating_mul(DEFAULT_TICKS_PER_SLOT))
         {
             inc_new_counter_debug!("fetch_stage-honor_forwards", len);
-            for packets in batch {
-                if sendr.send(packets).is_err() {
+            for batch in batches {
+                if sendr.send(batch).is_err() {
                     return Err(Error::Send);
                 }
             }

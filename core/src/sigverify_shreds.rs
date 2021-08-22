@@ -6,6 +6,7 @@ use solana_ledger::shred::Shred;
 use solana_ledger::sigverify_shreds::verify_shreds_gpu;
 use solana_perf::{self, packet::Packets, recycler_cache::RecyclerCache};
 use solana_runtime::bank_forks::BankForks;
+use solana_streamer::packet::PacketTimeTracker;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
@@ -37,7 +38,7 @@ impl ShredSigVerifier {
 }
 
 impl SigVerifier for ShredSigVerifier {
-    fn verify_batch(&self, mut batches: Vec<Packets>) -> Vec<Packets> {
+    fn verify_batch(&self, mut batches: Vec<(Packets, PacketTimeTracker)>) -> Vec<(Packets, PacketTimeTracker)> {
         let r_bank = self.bank_forks.read().unwrap().working_bank();
         let slots: HashSet<u64> = Self::read_slots(&batches);
         let mut leader_slots: HashMap<u64, [u8; 32]> = slots

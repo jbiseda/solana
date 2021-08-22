@@ -1007,6 +1007,13 @@ while getopts "h?T:t:o:f:rc:Fn:i:d" opt "${shortArgs[@]}"; do
   esac
 done
 
+case $command in
+    build)
+	build
+	exit 0
+	;;
+esac
+
 loadConfigFile
 
 if [[ -n $numValidatorsRequested ]]; then

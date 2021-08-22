@@ -42,7 +42,7 @@ fn sink(exit: Arc<AtomicBool>, rvs: Arc<AtomicUsize>, r: PacketReceiver) -> Join
             return;
         }
         let timer = Duration::new(1, 0);
-        if let Ok(msgs) = r.recv_timeout(timer) {
+        if let Ok((msgs, _recv_start_time)) = r.recv_timeout(timer) {
             rvs.fetch_add(msgs.packets.len(), Ordering::Relaxed);
         }
     })

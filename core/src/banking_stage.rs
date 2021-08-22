@@ -39,6 +39,7 @@ use solana_sdk::{
     timing::{duration_as_ms, timestamp, AtomicInterval},
     transaction::{self, SanitizedTransaction, TransactionError, VersionedTransaction},
 };
+use solana_streamer::packet::PacketTimeTracker;
 use solana_transaction_status::token_balances::{
     collect_token_balances, TransactionTokenBalancesSet,
 };
@@ -249,8 +250,8 @@ impl BankingStage {
     pub fn new(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
-        verified_receiver: CrossbeamReceiver<Vec<Packets>>,
-        verified_vote_receiver: CrossbeamReceiver<Vec<Packets>>,
+        verified_receiver: CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
+        verified_vote_receiver: CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
         transaction_status_sender: Option<TransactionStatusSender>,
         gossip_vote_sender: ReplayVoteSender,
         cost_tracker: Arc<RwLock<CostTracker>>,
@@ -270,8 +271,8 @@ impl BankingStage {
     fn new_num_threads(
         cluster_info: &Arc<ClusterInfo>,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
-        verified_receiver: CrossbeamReceiver<Vec<Packets>>,
-        verified_vote_receiver: CrossbeamReceiver<Vec<Packets>>,
+        verified_receiver: CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
+        verified_vote_receiver: CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
         num_threads: u32,
         transaction_status_sender: Option<TransactionStatusSender>,
         gossip_vote_sender: ReplayVoteSender,
@@ -640,7 +641,7 @@ impl BankingStage {
 
     #[allow(clippy::too_many_arguments)]
     fn process_loop(
-        verified_receiver: &CrossbeamReceiver<Vec<Packets>>,
+        verified_receiver: &CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
         poh_recorder: &Arc<Mutex<PohRecorder>>,
         cluster_info: &ClusterInfo,
         recv_start: &mut Instant,
@@ -1316,7 +1317,7 @@ impl BankingStage {
     /// Process the incoming packets
     fn process_packets(
         my_pubkey: &Pubkey,
-        verified_receiver: &CrossbeamReceiver<Vec<Packets>>,
+        verified_receiver: &CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
         poh: &Arc<Mutex<PohRecorder>>,
         recv_start: &mut Instant,
         recv_timeout: Duration,
@@ -1335,7 +1336,7 @@ impl BankingStage {
         recv_time.stop();
 
         let mms_len = mms.len();
-        let count: usize = mms.iter().map(|x| x.packets.len()).sum();
+        let count: usize = mms.iter().map(|x| x.0.packets.len()).sum();
         debug!(
             "@{:?} process start stalled for: {:?}ms txs: {} id: {}",
             timestamp(),

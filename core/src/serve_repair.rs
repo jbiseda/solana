@@ -28,7 +28,10 @@ use solana_perf::packet::{limited_deserialize, Packets, PacketsRecycler};
 use solana_sdk::{
     clock::Slot, hash::Hash, packet::PACKET_DATA_SIZE, pubkey::Pubkey, timing::duration_as_ms,
 };
-use solana_streamer::streamer::{PacketReceiver, PacketSender};
+use solana_streamer::{
+    packet::PacketTimeTracker,
+    streamer::{PacketReceiver, PacketSender},
+};
 use std::{
     collections::HashSet,
     net::SocketAddr,
@@ -323,16 +326,16 @@ impl ServeRepair {
         //TODO cache connections
         let timeout = Duration::new(1, 0);
         let mut reqs_v = vec![requests_receiver.recv_timeout(timeout)?];
-        let mut total_packets = reqs_v[0].packets.len();
+        let mut total_packets = reqs_v[0].0.packets.len();
 
         let mut dropped_packets = 0;
         while let Ok(more) = requests_receiver.try_recv() {
-            total_packets += more.packets.len();
+            total_packets += more.0.packets.len();
             if total_packets < *max_packets {
                 // Drop the rest in the channel in case of dos
                 reqs_v.push(more);
             } else {
-                dropped_packets += more.packets.len();
+                dropped_packets += more.0.packets.len();
             }
         }
 
@@ -341,7 +344,7 @@ impl ServeRepair {
 
         let mut time = Measure::start("repair::handle_packets");
         for reqs in reqs_v {
-            Self::handle_packets(obj, recycler, blockstore, reqs, response_sender, stats);
+            Self::handle_packets(obj, recycler, blockstore, reqs.0, reqs.1, response_sender, stats);
         }
         time.stop();
         if total_packets >= *max_packets {
@@ -431,6 +434,7 @@ impl ServeRepair {
         recycler: &PacketsRecycler,
         blockstore: Option<&Arc<Blockstore>>,
         packets: Packets,
+        time_tracker: PacketTimeTracker,
         response_sender: &PacketSender,
         stats: &mut ServeRepairStats,
     ) {
@@ -441,10 +445,12 @@ impl ServeRepair {
                 .into_iter()
                 .for_each(|request| {
                     stats.processed += 1;
+                    let mut req_time_tracker = time_tracker;
+                    req_time_tracker.start_outgoing();
                     let rsp =
                         Self::handle_repair(me, recycler, &from_addr, blockstore, request, stats);
                     if let Some(rsp) = rsp {
-                        let _ignore_disconnect = response_sender.send(rsp);
+                        let _ignore_disconnect = response_sender.send((rsp, req_time_tracker));
                     }
                 });
         });

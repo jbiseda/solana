@@ -12,8 +12,8 @@ use solana_metrics::datapoint_debug;
 use solana_perf::packet::Packets;
 use solana_perf::perf_libs;
 use solana_sdk::timing;
-use solana_streamer::streamer::{self, PacketReceiver, StreamerError};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use solana_streamer::{packet::PacketTimeTracker, streamer::{self, PacketReceiver, StreamerError}};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, Builder, JoinHandle};
 use thiserror::Error;
@@ -24,7 +24,7 @@ const RECV_BATCH_MAX_GPU: usize = 5_000;
 #[derive(Error, Debug)]
 pub enum SigVerifyServiceError {
     #[error("send packets batch error")]
-    Send(#[from] SendError<Vec<Packets>>),
+    Send(#[from] SendError<Vec<(Packets, PacketTimeTracker)>>),
 
     #[error("streamer error")]
     Streamer(#[from] StreamerError),
@@ -37,14 +37,14 @@ pub struct SigVerifyStage {
 }
 
 pub trait SigVerifier {
-    fn verify_batch(&self, batch: Vec<Packets>) -> Vec<Packets>;
+    fn verify_batch(&self, batch: Vec<(Packets, PacketTimeTracker)>) -> Vec<(Packets, PacketTimeTracker)>;
 }
 
 #[derive(Default, Clone)]
 pub struct DisabledSigVerifier {}
 
 impl SigVerifier for DisabledSigVerifier {
-    fn verify_batch(&self, mut batch: Vec<Packets>) -> Vec<Packets> {
+    fn verify_batch(&self, mut batch: Vec<(Packets, PacketTimeTracker)>) -> Vec<(Packets, PacketTimeTracker)> {
         sigverify::ed25519_verify_disabled(&mut batch);
         batch
     }
@@ -53,8 +53,8 @@ impl SigVerifier for DisabledSigVerifier {
 impl SigVerifyStage {
     #[allow(clippy::new_ret_no_self)]
     pub fn new<T: SigVerifier + 'static + Send + Clone>(
-        packet_receiver: Receiver<Packets>,
-        verified_sender: CrossbeamSender<Vec<Packets>>,
+        packet_receiver: PacketReceiver,
+        verified_sender: CrossbeamSender<Vec<(Packets, PacketTimeTracker)>>,
         verifier: T,
     ) -> Self {
         let thread_hdls = Self::verifier_services(packet_receiver, verified_sender, verifier);
@@ -63,11 +63,11 @@ impl SigVerifyStage {
 
     fn verifier<T: SigVerifier>(
         recvr: &Arc<Mutex<PacketReceiver>>,
-        sendr: &CrossbeamSender<Vec<Packets>>,
+        sendr: &CrossbeamSender<Vec<(Packets, PacketTimeTracker)>>,
         id: usize,
         verifier: &T,
     ) -> Result<()> {
-        let (batch, len, recv_time) = streamer::recv_batch(
+        let (batches, len, recv_time) = streamer::recv_batch(
             &recvr.lock().expect("'recvr' lock in fn verifier"),
             if perf_libs::api().is_some() {
                 RECV_BATCH_MAX_GPU
@@ -77,20 +77,21 @@ impl SigVerifyStage {
         )?;
 
         let mut verify_batch_time = Measure::start("sigverify_batch_time");
-        let batch_len = batch.len();
+        let batches_len = batches.len();
         debug!(
             "@{:?} verifier: verifying: {} id: {}",
             timing::timestamp(),
             len,
             id
         );
-        sendr.send(verifier.verify_batch(batch))?;
+
+        sendr.send(verifier.verify_batch(batches))?;
         verify_batch_time.stop();
 
         debug!(
             "@{:?} verifier: done. batches: {} total verify time: {:?} id: {} verified: {} v/s {}",
             timing::timestamp(),
-            batch_len,
+            batches_len,
             verify_batch_time.as_ms(),
             id,
             len,
@@ -99,7 +100,7 @@ impl SigVerifyStage {
 
         datapoint_debug!(
             "sigverify_stage-total_verify_time",
-            ("num_batches", batch_len, i64),
+            ("num_batches", batches_len, i64),
             ("num_packets", len, i64),
             ("verify_time_ms", verify_batch_time.as_ms(), i64),
             ("recv_time", recv_time, i64),
@@ -110,7 +111,7 @@ impl SigVerifyStage {
 
     fn verifier_service<T: SigVerifier + 'static + Send + Clone>(
         packet_receiver: Arc<Mutex<PacketReceiver>>,
-        verified_sender: CrossbeamSender<Vec<Packets>>,
+        verified_sender: CrossbeamSender<Vec<(Packets, PacketTimeTracker)>>,
         id: usize,
         verifier: &T,
     ) -> JoinHandle<()> {
@@ -138,7 +139,7 @@ impl SigVerifyStage {
 
     fn verifier_services<T: SigVerifier + 'static + Send + Clone>(
         packet_receiver: PacketReceiver,
-        verified_sender: CrossbeamSender<Vec<Packets>>,
+        verified_sender: CrossbeamSender<Vec<(Packets, PacketTimeTracker)>>,
         verifier: T,
     ) -> Vec<JoinHandle<()>> {
         let receiver = Arc::new(Mutex::new(packet_receiver));

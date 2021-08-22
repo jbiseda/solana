@@ -12,7 +12,36 @@ use solana_metrics::inc_new_counter_debug;
 pub use solana_sdk::packet::{Meta, Packet, PACKET_DATA_SIZE};
 use std::{io::Result, net::UdpSocket, time::Instant};
 
-pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Result<usize> {
+#[derive(Copy, Clone, Debug, Default)]
+pub struct PacketTimeTracker {
+    incoming_start: Option<Instant>,
+    incoming_end: Option<Instant>,
+    outgoing_start: Option<Instant>,
+}
+
+impl PacketTimeTracker {
+    pub fn from_incoming(time_start: Instant, time_end: Instant) -> PacketTimeTracker {
+        PacketTimeTracker {
+            incoming_start: Some(time_start),
+            incoming_end: Some(time_end),
+            ..Default::default()
+        }
+    }
+
+    pub fn extend_incoming(&mut self, extension: PacketTimeTracker) {
+        self.incoming_end = extension.incoming_end;
+    }
+
+    pub fn start_outgoing(&mut self) {
+        self.outgoing_start = Some(Instant::now());
+    }
+
+    pub fn set_outgoing_start(&mut self, time: Instant) {
+        self.outgoing_start = Some(time);
+    }
+}
+
+pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Result<(usize, PacketTimeTracker)> {
     let mut i = 0;
     //DOCUMENTED SIDE-EFFECT
     //Performance out of the IO without poll
@@ -23,6 +52,7 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     socket.set_nonblocking(false)?;
     trace!("receiving on {}", socket.local_addr().unwrap());
     let start = Instant::now();
+    let mut first_recv_time = start;
     loop {
         obj.packets.resize(
             std::cmp::min(i + NUM_RCVMMSGS, PACKETS_PER_BATCH),
@@ -40,6 +70,7 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
             }
             Ok((_, npkts)) => {
                 if i == 0 {
+                    first_recv_time = Instant::now();
                     socket.set_nonblocking(true)?;
                 }
                 trace!("got {} packets", npkts);
@@ -52,9 +83,12 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
             }
         }
     }
+
+    assert_ne!(start, first_recv_time);
+    let tracker = PacketTimeTracker::from_incoming(first_recv_time, Instant::now());
     obj.packets.truncate(i);
     inc_new_counter_debug!("packets-recv_count", i);
-    Ok(i)
+    Ok((i, tracker))
 }
 
 pub fn send_to(

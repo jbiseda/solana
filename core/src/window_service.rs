@@ -26,6 +26,7 @@ use {
     solana_rayon_threadlimit::get_thread_count,
     solana_runtime::{bank::Bank, bank_forks::BankForks},
     solana_sdk::{clock::Slot, packet::PACKET_DATA_SIZE, pubkey::Pubkey},
+    solana_streamer::packet::PacketTimeTracker,
     std::collections::HashSet,
     std::{
         cmp::Reverse,
@@ -312,7 +313,7 @@ fn recv_window<F>(
     blockstore: &Blockstore,
     bank_forks: &RwLock<BankForks>,
     insert_shred_sender: &CrossbeamSender<(Vec<Shred>, Vec<Option<RepairMeta>>)>,
-    verified_receiver: &CrossbeamReceiver<Vec<Packets>>,
+    verified_receiver: &CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
     retransmit_sender: &Sender<Vec<Shred>>,
     shred_filter: F,
     thread_pool: &ThreadPool,
@@ -322,8 +323,8 @@ where
     F: Fn(&Shred, Arc<Bank>, /*last root:*/ Slot) -> bool + Sync,
 {
     let timer = Duration::from_millis(200);
-    let mut packets = verified_receiver.recv_timeout(timer)?;
-    packets.extend(verified_receiver.try_iter().flatten());
+    let mut batches = verified_receiver.recv_timeout(timer)?;
+    batches.extend(verified_receiver.try_iter().flatten());
     let now = Instant::now();
     let last_root = blockstore.last_root();
     let working_bank = bank_forks.read().unwrap().working_bank();
@@ -353,9 +354,9 @@ where
         }
     };
     let (shreds, repair_infos): (Vec<_>, Vec<_>) = thread_pool.install(|| {
-        packets
+        batches
             .par_iter()
-            .flat_map_iter(|pkt| pkt.packets.iter().filter_map(handle_packet))
+            .flat_map_iter(|batch| batch.0.packets.iter().filter_map(handle_packet))
             .unzip()
     });
     // Exclude repair packets from retransmit.
@@ -375,8 +376,8 @@ where
     }
     insert_shred_sender.send((shreds, repair_infos))?;
 
-    stats.num_packets += packets.iter().map(|pkt| pkt.packets.len()).sum::<usize>();
-    for packet in packets.iter().flat_map(|pkt| pkt.packets.iter()) {
+    stats.num_packets += batches.iter().map(|batch| batch.0.packets.len()).sum::<usize>();
+    for packet in batches.iter().flat_map(|batch| batch.0.packets.iter()) {
         *stats.addrs.entry(packet.meta.addr()).or_default() += 1;
     }
     stats.elapsed += now.elapsed();
@@ -417,7 +418,7 @@ impl WindowService {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F>(
         blockstore: Arc<Blockstore>,
-        verified_receiver: CrossbeamReceiver<Vec<Packets>>,
+        verified_receiver: CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
         retransmit_sender: Sender<Vec<Shred>>,
         repair_socket: Arc<UdpSocket>,
         exit: Arc<AtomicBool>,
@@ -587,7 +588,7 @@ impl WindowService {
         exit: Arc<AtomicBool>,
         blockstore: Arc<Blockstore>,
         insert_sender: CrossbeamSender<(Vec<Shred>, Vec<Option<RepairMeta>>)>,
-        verified_receiver: CrossbeamReceiver<Vec<Packets>>,
+        verified_receiver: CrossbeamReceiver<Vec<(Packets, PacketTimeTracker)>>,
         shred_filter: F,
         bank_forks: Arc<RwLock<BankForks>>,
         retransmit_sender: Sender<Vec<Shred>>,

@@ -238,16 +238,16 @@ impl AncestorHashesService {
     ) -> Result<()> {
         let timeout = Duration::new(1, 0);
         let mut responses = vec![response_receiver.recv_timeout(timeout)?];
-        let mut total_packets = responses[0].packets.len();
+        let mut total_packets = responses[0].0.packets.len();
 
         let mut dropped_packets = 0;
         while let Ok(more) = response_receiver.try_recv() {
-            total_packets += more.packets.len();
+            total_packets += more.0.packets.len();
             if total_packets < *max_packets {
                 // Drop the rest in the channel in case of DOS
                 responses.push(more);
             } else {
-                dropped_packets += more.packets.len();
+                dropped_packets += more.0.packets.len();
             }
         }
 
@@ -258,7 +258,7 @@ impl AncestorHashesService {
         for response in responses {
             Self::process_single_packets(
                 ancestor_hashes_request_statuses,
-                response,
+                response.0,
                 stats,
                 outstanding_requests,
                 blockstore,
