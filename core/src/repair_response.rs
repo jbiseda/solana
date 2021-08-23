@@ -56,7 +56,7 @@ mod test {
     use solana_sdk::signature::{Keypair, Signer};
     use std::{
         collections::HashMap,
-        net::{IpAddr, Ipv4Addr},
+        net::{IpAddr, Ipv6Addr},
     };
 
     fn run_test_sigverify_shred_cpu_repair(slot: Slot) {
@@ -79,7 +79,7 @@ mod test {
         let nonce = 9;
         let mut packet = repair_response_packet_from_bytes(
             shred.payload,
-            &SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080),
+            &SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8080),
             nonce,
         )
         .unwrap();

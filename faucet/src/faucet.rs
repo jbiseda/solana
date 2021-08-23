@@ -24,7 +24,7 @@ use {
     std::{
         collections::{HashMap, HashSet},
         io::{Read, Write},
-        net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
+        net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream},
         sync::{mpsc::Sender, Arc, Mutex},
         thread,
         time::Duration,
@@ -40,7 +40,7 @@ use {
 #[macro_export]
 macro_rules! socketaddr {
     ($ip:expr, $port:expr) => {
-        SocketAddr::from((Ipv4Addr::from($ip), $port))
+        SocketAddr::from((Ipv6Addr::from($ip), $port))
     };
     ($str:expr) => {{
         let a: SocketAddr = $str.parse().unwrap();
@@ -343,7 +343,7 @@ pub fn run_local_faucet_with_port(
     port: u16, // 0 => auto assign
 ) {
     thread::spawn(move || {
-        let faucet_addr = socketaddr!(0, port);
+        let faucet_addr = socketaddr!(Ipv6Addr::UNSPECIFIED, port);
         let faucet = Arc::new(Mutex::new(Faucet::new(
             faucet_keypair,
             None,
@@ -502,7 +502,7 @@ mod tests {
     fn test_check_time_request_limit() {
         let keypair = Keypair::new();
         let mut faucet = Faucet::new(keypair, None, Some(2), None);
-        let ip = socketaddr!([203, 0, 113, 1], 1234).ip();
+        let ip = socketaddr!("::ffff:203.0.113.1:1234").ip();
         assert!(faucet.check_time_request_limit(1, ip).is_ok());
         assert!(faucet.check_time_request_limit(1, ip).is_ok());
         assert!(faucet.check_time_request_limit(1, ip).is_err());
@@ -517,7 +517,7 @@ mod tests {
     fn test_clear_caches() {
         let keypair = Keypair::new();
         let mut faucet = Faucet::new(keypair, None, None, None);
-        let ip = socketaddr!([127, 0, 0, 1], 0).ip();
+        let ip = socketaddr!("::1:0").ip();
         assert_eq!(faucet.ip_cache.len(), 0);
         faucet.check_time_request_limit(1, ip).unwrap();
         assert_eq!(faucet.ip_cache.len(), 1);
@@ -555,7 +555,7 @@ mod tests {
             to,
             blockhash,
         };
-        let ip = socketaddr!([203, 0, 113, 1], 1234).ip();
+        let ip = socketaddr!("::ffff:203.0.113.1:1234").ip();
 
         let mint = Keypair::new();
         let mint_pubkey = mint.pubkey();
@@ -591,7 +591,7 @@ mod tests {
         // Test multiple requests from loopback with different addresses succeed
         let mint = Keypair::new();
         faucet = Faucet::new(mint, None, Some(2), None);
-        let ip = socketaddr!([127, 0, 0, 1], 0).ip();
+        let ip = socketaddr!("::1:0").ip();
         let other = Pubkey::new_unique();
         let _tx0 = faucet.build_airdrop_transaction(request, ip).unwrap(); // first request succeeds
         let request1 = FaucetRequest::GetAirdrop {
@@ -607,7 +607,8 @@ mod tests {
 
         // Test multiple requests from allowed ip with different addresses succeed
         let mint = Keypair::new();
-        let ip = socketaddr!([203, 0, 113, 1], 0).ip();
+        let ip = IpAddr::V6("::ffff:203.0.113.1".parse().unwrap());
+//        let ip = socketaddr!([203, 0, 113, 1], 0).ip();
         let mut allowed_ips = HashSet::new();
         allowed_ips.insert(ip);
         faucet = Faucet::new_with_allowed_ips(mint, None, Some(2), None, allowed_ips);
@@ -661,7 +662,8 @@ mod tests {
             blockhash,
             to,
         };
-        let ip = socketaddr!([203, 0, 113, 1], 1234).ip();
+        let ip = IpAddr::V6("::ffff:203.0.113.1".parse().unwrap());
+//        let ip = socketaddr!([203, 0, 113, 1], 1234).ip();
         let req = serialize(&req).unwrap();
 
         let keypair = Keypair::new();

@@ -8,7 +8,7 @@ use {
         timing::timestamp,
     },
     solana_streamer::socket::SocketAddrSpace,
-    std::net::{IpAddr, SocketAddr, Ipv6Addr},
+    std::net::{IpAddr, SocketAddr},
 };
 
 /// Structure representing a node on the network
@@ -51,34 +51,19 @@ impl Sanitize for ContactInfo {
 }
 
 #[macro_export]
-macro_rules! socketaddr4 {
-    ($ip:expr, $port:expr) => {
-        std::net::SocketAddr::from((std::net::Ipv4Addr::from($ip), $port))
-    };
-}
-#[macro_export]
-macro_rules! socketaddr6 {
-    ($ip:expr, $port:expr) => {
-        std::net::SocketAddr::from((std::net::Ipv6Addr::from($ip), $port))
+macro_rules! socketaddr6_any {
+    () => {
+        std::net::SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0))
     };
 }
 #[macro_export]
 macro_rules! socketaddr {
+    ($ip:expr, $port:expr) => {
+        std::net::SocketAddr::from(($ip, $port))
+    };
     ($str:expr) => {{
         $str.parse::<std::net::SocketAddr>().unwrap()
     }};
-}
-#[macro_export]
-macro_rules! socketaddr4_any {
-    () => {
-        socketaddr4!(0, 0)
-    };
-}
-#[macro_export]
-macro_rules! socketaddr6_any {
-    () => {
-        socketaddr6!(Ipv6Addr::UNSPECIFIED, 0)
-    };
 }
 
 impl Default for ContactInfo {
@@ -131,7 +116,7 @@ impl ContactInfo {
     #[cfg(test)]
     /// ContactInfo with multicast addresses for adversarial testing.
     pub fn new_multicast() -> Self {
-        let addr = socketaddr!("224.0.1.255:1000");
+        let addr = socketaddr!("::ffff:224.0.1.255:1000");
         assert!(addr.ip().is_multicast());
         Self {
             id: solana_sdk::pubkey::new_rand(),
@@ -242,25 +227,26 @@ impl ContactInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv6Addr;
 
     #[test]
     fn test_is_valid_address() {
-        let bad_address_port = socketaddr!("127.0.0.1:0");
+        let bad_address_port = socketaddr!(Ipv6Addr::LOCALHOST, 0);
         assert!(!ContactInfo::is_valid_address(
             &bad_address_port,
             &SocketAddrSpace::Unspecified
         ));
-        let bad_address_unspecified = socketaddr!(0, 1234);
+        let bad_address_unspecified = socketaddr!(Ipv6Addr::UNSPECIFIED, 1234);
         assert!(!ContactInfo::is_valid_address(
             &bad_address_unspecified,
             &SocketAddrSpace::Unspecified
         ));
-        let bad_address_multicast = socketaddr!([224, 254, 0, 0], 1234);
+        let bad_address_multicast = socketaddr!("::ffff:224.254.0.0:1234");
         assert!(!ContactInfo::is_valid_address(
             &bad_address_multicast,
             &SocketAddrSpace::Unspecified
         ));
-        let loopback = socketaddr!("127.0.0.1:1234");
+        let loopback = socketaddr!(Ipv6Addr::LOCALHOST, 1234);
         assert!(ContactInfo::is_valid_address(
             &loopback,
             &SocketAddrSpace::Unspecified

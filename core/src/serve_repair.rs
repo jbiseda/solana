@@ -754,7 +754,7 @@ impl ServeRepair {
 mod tests {
     use super::*;
     use crate::{repair_response, result::Error};
-    use solana_gossip::{socketaddr, socketaddr_any};
+    use solana_gossip::{socketaddr, socketaddr6_any};
     use solana_ledger::get_tmp_ledger_path;
     use solana_ledger::{
         blockstore::make_many_slot_entries,
@@ -779,7 +779,7 @@ mod tests {
             let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
             let rv = ServeRepair::run_highest_window_request(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 0,
                 0,
@@ -798,7 +798,7 @@ mod tests {
             let index = 1;
             let rv = ServeRepair::run_highest_window_request(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 slot,
                 index,
@@ -823,7 +823,7 @@ mod tests {
 
             let rv = ServeRepair::run_highest_window_request(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 slot,
                 index + 1,
@@ -865,7 +865,7 @@ mod tests {
             let rv = ServeRepair::run_window_request(
                 &recycler,
                 &me,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 &me.id,
                 slot,
@@ -883,7 +883,7 @@ mod tests {
             let rv = ServeRepair::run_window_request(
                 &recycler,
                 &me,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 &me.id,
                 slot,
@@ -1017,7 +1017,7 @@ mod tests {
             let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
             let rv = ServeRepair::run_orphan(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 slot,
                 0,
@@ -1035,7 +1035,7 @@ mod tests {
             // We don't have slot `slot + num_slots`, so we don't know how to service this request
             let rv = ServeRepair::run_orphan(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 slot + num_slots,
                 5,
@@ -1047,7 +1047,7 @@ mod tests {
             // from slots in the range [slot, slot + num_slots - 1]
             let rv: Vec<_> = ServeRepair::run_orphan(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 slot + num_slots - 1,
                 5,
@@ -1071,7 +1071,7 @@ mod tests {
                         &blockstore,
                         slot,
                         index,
-                        &socketaddr_any!(),
+                        &socketaddr6_any!(),
                         nonce,
                     )
                 })
@@ -1106,7 +1106,7 @@ mod tests {
                 &blockstore,
                 1,
                 0,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 nonce,
             )
             .is_none());
@@ -1116,7 +1116,7 @@ mod tests {
             // be corrupted
             let rv: Vec<_> = ServeRepair::run_orphan(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 2,
                 5,
@@ -1133,7 +1133,7 @@ mod tests {
                 &blockstore,
                 2,
                 0,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 nonce,
             )
             .unwrap()];
@@ -1165,7 +1165,7 @@ mod tests {
             // We don't have slot `slot + num_slots`, so we return empty
             let rv = ServeRepair::run_ancestor_hashes(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 slot + num_slots,
                 nonce,
@@ -1182,7 +1182,7 @@ mod tests {
             // empty
             let rv = ServeRepair::run_ancestor_hashes(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 slot + num_slots - 1,
                 nonce,
@@ -1206,7 +1206,7 @@ mod tests {
             }
             let rv = ServeRepair::run_ancestor_hashes(
                 &recycler,
-                &socketaddr_any!(),
+                &socketaddr6_any!(),
                 Some(&blockstore),
                 slot + num_slots - 1,
                 nonce,

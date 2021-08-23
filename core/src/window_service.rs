@@ -864,12 +864,12 @@ mod test {
     #[test]
     fn test_prune_shreds() {
         use crate::serve_repair::ShredRepairType;
-        use std::net::{IpAddr, Ipv4Addr};
+        use std::net::{IpAddr, Ipv6Addr};
         solana_logger::setup();
         let (common, coding) = Shredder::new_coding_shred_header(5, 5, 5, 6, 6, 0);
         let shred = Shred::new_empty_from_header(common, DataShredHeader::default(), coding);
         let mut shreds = vec![shred.clone(), shred.clone(), shred];
-        let _from_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080);
+        let _from_addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8080);
         let repair_meta = RepairMeta {
             _from_addr,
             nonce: 0,

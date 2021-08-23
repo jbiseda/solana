@@ -374,7 +374,7 @@ pub fn is_host_port(string: String) -> Result<(), String> {
 
 #[cfg(windows)]
 fn udp_socket(_reuseaddr: bool) -> io::Result<Socket> {
-    let sock = Socket::new(Domain::ipv4(), Type::dgram(), None)?;
+    let sock = Socket::new(Domain::ipv6(), Type::dgram(), None)?;
     Ok(sock)
 }
 
@@ -384,7 +384,7 @@ fn udp_socket(reuseaddr: bool) -> io::Result<Socket> {
     use nix::sys::socket::sockopt::{ReuseAddr, ReusePort};
     use std::os::unix::io::AsRawFd;
 
-    let sock = Socket::new(Domain::IPV4, Type::DGRAM, None)?;
+    let sock = Socket::new(Domain::IPV6, Type::DGRAM, None)?;
     let sock_fd = sock.as_raw_fd();
 
     if reuseaddr {
@@ -525,7 +525,7 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
+    use std::net::Ipv6Addr;
 
     #[test]
     fn test_response_length() {
@@ -623,9 +623,9 @@ mod tests {
 
     #[test]
     fn test_bind() {
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         assert_eq!(bind_in_range(ip_addr, (2000, 2001)).unwrap().0, 2000);
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let x = bind_to(ip_addr, 2002, true).unwrap();
         let y = bind_to(ip_addr, 2002, true).unwrap();
         assert_eq!(
@@ -643,14 +643,14 @@ mod tests {
 
     #[test]
     fn test_bind_in_range_nil() {
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         bind_in_range(ip_addr, (2000, 2000)).unwrap_err();
         bind_in_range(ip_addr, (2000, 1999)).unwrap_err();
     }
 
     #[test]
     fn test_find_available_port_in_range() {
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         assert_eq!(
             find_available_port_in_range(ip_addr, (3000, 3001)).unwrap(),
             3000
@@ -664,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_bind_common_in_range() {
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let (port, _sockets) = bind_common_in_range(ip_addr, (3100, 3150)).unwrap();
         assert!((3100..3150).contains(&port));
 
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn test_get_public_ip_addr_none() {
         solana_logger::setup();
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
             bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
 
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn test_get_public_ip_addr_reachable() {
         solana_logger::setup();
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let (_server_port, (server_udp_socket, server_tcp_listener)) =
             bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
         let (client_port, (client_udp_socket, client_tcp_listener)) =
@@ -716,7 +716,7 @@ mod tests {
     #[test]
     fn test_get_public_ip_addr_tcp_unreachable() {
         solana_logger::setup();
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
             bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
 
@@ -739,7 +739,7 @@ mod tests {
     #[test]
     fn test_get_public_ip_addr_udp_unreachable() {
         solana_logger::setup();
-        let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let (_server_port, (server_udp_socket, _server_tcp_listener)) =
             bind_common_in_range(ip_addr, (3200, 3250)).unwrap();
 

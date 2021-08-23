@@ -28,7 +28,7 @@ use {
     },
     std::{
         io,
-        net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket},
+        net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket},
         sync::{
             atomic::{AtomicBool, AtomicUsize, Ordering},
             RwLock,
@@ -657,7 +657,7 @@ impl AsyncClient for ThinClient {
 
 pub fn create_client((rpc, tpu): (SocketAddr, SocketAddr), range: (u16, u16)) -> ThinClient {
     let (_, transactions_socket) =
-        solana_net_utils::bind_in_range(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), range).unwrap();
+        solana_net_utils::bind_in_range(IpAddr::V6(Ipv6Addr::UNSPECIFIED), range).unwrap();
     ThinClient::new(rpc, tpu, transactions_socket)
 }
 
@@ -667,7 +667,7 @@ pub fn create_client_with_timeout(
     timeout: Duration,
 ) -> ThinClient {
     let (_, transactions_socket) =
-        solana_net_utils::bind_in_range(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), range).unwrap();
+        solana_net_utils::bind_in_range(IpAddr::V6(Ipv6Addr::UNSPECIFIED), range).unwrap();
     ThinClient::new_socket_with_timeout(rpc, tpu, transactions_socket, timeout)
 }
 

@@ -9,7 +9,7 @@ use {
     solana_sdk::signature::read_keypair_file,
     std::{
         collections::HashSet,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv6Addr, SocketAddr},
         sync::{Arc, Mutex},
         thread,
     },

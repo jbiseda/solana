@@ -3,7 +3,7 @@ use clap::{crate_description, crate_name, App, Arg};
 use solana_streamer::packet::{Packet, Packets, PacketsRecycler, PACKET_DATA_SIZE};
 use solana_streamer::streamer::{receiver, PacketReceiver};
 use std::cmp::max;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::Arc;
@@ -68,7 +68,7 @@ fn main() -> Result<()> {
     }
 
     let mut port = 0;
-    let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+    let ip_addr = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
     let mut addr = SocketAddr::new(ip_addr, 0);
 
     let exit = Arc::new(AtomicBool::new(false));

@@ -30,7 +30,7 @@ use {
         epoch_slots::EpochSlots,
         gossip_error::GossipError,
         ping_pong::{self, PingCache, Pong},
-        socketaddr, socketaddr6_any,
+        socketaddr6_any,
         weighted_shuffle::WeightedShuffle,
     },
     bincode::{serialize, serialized_size},
@@ -2988,6 +2988,7 @@ mod tests {
             crds_gossip_pull::tests::MIN_NUM_BLOOM_FILTERS,
             crds_value::{CrdsValue, CrdsValueLabel, Vote as CrdsVote},
             duplicate_shred::{self, tests::new_rand_shred, MAX_DUPLICATE_SHREDS},
+            socketaddr,
         },
         itertools::izip,
         rand::{seq::SliceRandom, SeedableRng},
@@ -3382,15 +3383,15 @@ mod tests {
 
     #[test]
     fn new_with_external_ip_test_random() {
-        let ip = Ipv4Addr::from(0);
+        let ip = Ipv6Addr::UNSPECIFIED;
         let node = Node::new_with_external_ip(
             &solana_sdk::pubkey::new_rand(),
-            &socketaddr!(ip, 0),
+            &socketaddr6_any!(),
             VALIDATOR_PORT_RANGE,
-            IpAddr::V4(ip),
+            IpAddr::V6(ip),
         );
 
-        check_node_sockets(&node, IpAddr::V4(ip), VALIDATOR_PORT_RANGE);
+        check_node_sockets(&node, IpAddr::V6(ip), VALIDATOR_PORT_RANGE);
     }
 
     #[test]
@@ -3399,11 +3400,11 @@ mod tests {
         // port returned by `bind_in_range()` might be snatched up before `Node::new_with_external_ip()` runs
         let port_range = (VALIDATOR_PORT_RANGE.1 + 10, VALIDATOR_PORT_RANGE.1 + 20);
 
-        let ip = IpAddr::V4(Ipv4Addr::from(0));
+        let ip = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
         let port = bind_in_range(ip, port_range).expect("Failed to bind").0;
         let node = Node::new_with_external_ip(
             &solana_sdk::pubkey::new_rand(),
-            &socketaddr!(0, port),
+            &socketaddr!(Ipv6Addr::UNSPECIFIED, port),
             port_range,
             ip,
         );
