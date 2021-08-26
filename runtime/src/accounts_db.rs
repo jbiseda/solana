@@ -495,7 +495,7 @@ impl AccountStorage {
             .and_then(|storage_map| storage_map.read().unwrap().get(&store_id).cloned())
     }
 
-    fn get_slot_stores(&self, slot: Slot) -> Option<SlotStores> {
+    pub fn get_slot_stores(&self, slot: Slot) -> Option<SlotStores> {
         self.0.get(&slot).map(|result| result.value().clone())
     }
 
@@ -4059,6 +4059,10 @@ impl AccountsDb {
             .fetch_add(recycle_stores_write_elapsed.as_us(), Ordering::Relaxed);
     }
 
+    pub fn flush_accounts_cache_slot(&self, slot: Slot) {
+        self.flush_slot_cache(slot, None::<&mut fn(&_, &_) -> bool>);
+    }
+
     // `force_flush` flushes all the cached roots `<= requested_flush_root`. It also then
     // flushes:
     // 1) Any remaining roots if there are > MAX_CACHE_SLOTS remaining slots in the cache,
@@ -4694,11 +4698,11 @@ impl AccountsDb {
     }
 
     pub fn update_accounts_hash(&self, slot: Slot, ancestors: &Ancestors) -> (Hash, u64) {
-        self.update_accounts_hash_with_index_option(true, false, slot, ancestors, None, false)
+        self.update_accounts_hash_with_index_option(true, false, slot, ancestors, None, false, None)
     }
 
     pub fn update_accounts_hash_test(&self, slot: Slot, ancestors: &Ancestors) -> (Hash, u64) {
-        self.update_accounts_hash_with_index_option(true, true, slot, ancestors, None, false)
+        self.update_accounts_hash_with_index_option(true, true, slot, ancestors, None, false, None)
     }
 
     fn scan_multiple_account_storages_one_slot<F, B>(
@@ -4818,6 +4822,25 @@ impl AccountsDb {
             .collect()
     }
 
+    // storages are sorted by slot and have range info.
+    // if we know slots_per_epoch, then add all stores older than slots_per_epoch to dirty_stores so clean visits these slots
+    fn mark_old_slots_as_dirty(&self, storages: &SortedStorages, slots_per_epoch: Option<Slot>) {
+        if let Some(slots_per_epoch) = slots_per_epoch {
+            let max = storages.range().end;
+            let acceptable_straggler_slot_count = 100; // do nothing special for these old stores which will likely get cleaned up shortly
+            let sub = slots_per_epoch + acceptable_straggler_slot_count;
+            let in_epoch_range_start = max.saturating_sub(sub);
+            for slot in storages.range().start..in_epoch_range_start {
+                if let Some(storages) = storages.get(slot) {
+                    storages.iter().for_each(|store| {
+                        self.dirty_stores
+                            .insert((slot, store.id.load(Ordering::Relaxed)), store.clone());
+                    });
+                }
+            }
+        }
+    }
+
     fn calculate_accounts_hash_helper(
         &self,
         use_index: bool,
@@ -4825,6 +4848,7 @@ impl AccountsDb {
         ancestors: &Ancestors,
         check_hash: bool,
         can_cached_slot_be_unflushed: bool,
+        slots_per_epoch: Option<Slot>,
     ) -> Result<(Hash, u64), BankHashVerificationError> {
         if !use_index {
             let accounts_cache_and_ancestors = if can_cached_slot_be_unflushed {
@@ -4834,7 +4858,7 @@ impl AccountsDb {
             };
 
             let mut collect_time = Measure::start("collect");
-            let (combined_maps, slots) = self.get_snapshot_storages(slot, Some(ancestors));
+            let (combined_maps, slots) = self.get_snapshot_storages(slot, None, Some(ancestors));
             collect_time.stop();
 
             let mut sort_time = Measure::start("sort_storages");
@@ -4844,6 +4868,8 @@ impl AccountsDb {
                 min_root,
                 Some(slot),
             );
+
+            self.mark_old_slots_as_dirty(&storages, slots_per_epoch);
             sort_time.stop();
 
             let timings = HashStats {
@@ -4873,6 +4899,7 @@ impl AccountsDb {
         expected_capitalization: Option<u64>,
         can_cached_slot_be_unflushed: bool,
         check_hash: bool,
+        slots_per_epoch: Option<Slot>,
     ) -> Result<(Hash, u64), BankHashVerificationError> {
         let (hash, total_lamports) = self.calculate_accounts_hash_helper(
             use_index,
@@ -4880,6 +4907,7 @@ impl AccountsDb {
             ancestors,
             check_hash,
             can_cached_slot_be_unflushed,
+            slots_per_epoch,
         )?;
         if debug_verify {
             // calculate the other way (store or non-store) and verify results match.
@@ -4889,6 +4917,7 @@ impl AccountsDb {
                 ancestors,
                 check_hash,
                 can_cached_slot_be_unflushed,
+                None,
             )?;
 
             let success = hash == hash_other
@@ -4907,6 +4936,7 @@ impl AccountsDb {
         ancestors: &Ancestors,
         expected_capitalization: Option<u64>,
         can_cached_slot_be_unflushed: bool,
+        slots_per_epoch: Option<Slot>,
     ) -> (Hash, u64) {
         let check_hash = false;
         let (hash, total_lamports) = self
@@ -4918,6 +4948,7 @@ impl AccountsDb {
                 expected_capitalization,
                 can_cached_slot_be_unflushed,
                 check_hash,
+                slots_per_epoch,
             )
             .unwrap(); // unwrap here will never fail since check_hash = false
         let mut bank_hashes = self.bank_hashes.write().unwrap();
@@ -5121,6 +5152,7 @@ impl AccountsDb {
                 None,
                 can_cached_slot_be_unflushed,
                 check_hash,
+                None,
             )?;
 
         if calculated_lamports != total_lamports {
@@ -5884,6 +5916,7 @@ impl AccountsDb {
     pub fn get_snapshot_storages(
         &self,
         snapshot_slot: Slot,
+        snapshot_base_slot: Option<Slot>,
         ancestors: Option<&Ancestors>,
     ) -> (SnapshotStorages, Vec<Slot>) {
         let mut m = Measure::start("get slots");
@@ -5905,6 +5938,8 @@ impl AccountsDb {
                         .iter()
                         .filter_map(|slot| {
                             if *slot <= snapshot_slot
+                                && snapshot_base_slot
+                                    .map_or(true, |snapshot_base_slot| *slot > snapshot_base_slot)
                                 && (self.accounts_index.is_root(*slot)
                                     || ancestors
                                         .map(|ancestors| ancestors.contains_key(slot))
@@ -6635,7 +6670,7 @@ pub mod tests {
         accounts.store_uncached(slot, &to_store[..]);
         accounts.add_root(slot);
 
-        let (storages, slots) = accounts.get_snapshot_storages(slot, None);
+        let (storages, slots) = accounts.get_snapshot_storages(slot, None, None);
         assert_eq!(storages.len(), slots.len());
         storages
             .iter()
@@ -7787,7 +7822,7 @@ pub mod tests {
             }
         }
 
-        fn ref_count_for_pubkey(&self, pubkey: &Pubkey) -> RefCount {
+        pub fn ref_count_for_pubkey(&self, pubkey: &Pubkey) -> RefCount {
             self.accounts_index.ref_count_from_storage(pubkey)
         }
     }
@@ -9024,12 +9059,13 @@ pub mod tests {
         );
         db.add_root(some_slot);
         let check_hash = true;
-        assert!(db
-            .calculate_accounts_hash_helper(false, some_slot, &ancestors, check_hash, false)
-            .is_err());
-        assert!(db
-            .calculate_accounts_hash_helper(true, some_slot, &ancestors, check_hash, false)
-            .is_err());
+        for use_index in [true, false] {
+            assert!(db
+                .calculate_accounts_hash_helper(
+                    use_index, some_slot, &ancestors, check_hash, false, None
+                )
+                .is_err());
+        }
     }
 
     #[test]
@@ -9048,9 +9084,11 @@ pub mod tests {
         db.add_root(some_slot);
         let check_hash = true;
         assert_eq!(
-            db.calculate_accounts_hash_helper(false, some_slot, &ancestors, check_hash, false)
-                .unwrap(),
-            db.calculate_accounts_hash_helper(true, some_slot, &ancestors, check_hash, false)
+            db.calculate_accounts_hash_helper(
+                false, some_slot, &ancestors, check_hash, false, None
+            )
+            .unwrap(),
+            db.calculate_accounts_hash_helper(true, some_slot, &ancestors, check_hash, false, None)
                 .unwrap(),
         );
     }
@@ -9203,7 +9241,7 @@ pub mod tests {
     #[test]
     fn test_get_snapshot_storages_empty() {
         let db = AccountsDb::new(Vec::new(), &ClusterType::Development);
-        assert!(db.get_snapshot_storages(0, None).0.is_empty());
+        assert!(db.get_snapshot_storages(0, None, None).0.is_empty());
     }
 
     #[test]
@@ -9218,10 +9256,13 @@ pub mod tests {
 
         db.add_root(base_slot);
         db.store_uncached(base_slot, &[(&key, &account)]);
-        assert!(db.get_snapshot_storages(before_slot, None).0.is_empty());
+        assert!(db
+            .get_snapshot_storages(before_slot, None, None)
+            .0
+            .is_empty());
 
-        assert_eq!(1, db.get_snapshot_storages(base_slot, None).0.len());
-        assert_eq!(1, db.get_snapshot_storages(after_slot, None).0.len());
+        assert_eq!(1, db.get_snapshot_storages(base_slot, None, None).0.len());
+        assert_eq!(1, db.get_snapshot_storages(after_slot, None, None).0.len());
     }
 
     #[test]
@@ -9241,10 +9282,13 @@ pub mod tests {
             .unwrap()
             .clear();
         db.add_root(base_slot);
-        assert!(db.get_snapshot_storages(after_slot, None).0.is_empty());
+        assert!(db
+            .get_snapshot_storages(after_slot, None, None)
+            .0
+            .is_empty());
 
         db.store_uncached(base_slot, &[(&key, &account)]);
-        assert_eq!(1, db.get_snapshot_storages(after_slot, None).0.len());
+        assert_eq!(1, db.get_snapshot_storages(after_slot, None, None).0.len());
     }
 
     #[test]
@@ -9257,10 +9301,13 @@ pub mod tests {
         let after_slot = base_slot + 1;
 
         db.store_uncached(base_slot, &[(&key, &account)]);
-        assert!(db.get_snapshot_storages(after_slot, None).0.is_empty());
+        assert!(db
+            .get_snapshot_storages(after_slot, None, None)
+            .0
+            .is_empty());
 
         db.add_root(base_slot);
-        assert_eq!(1, db.get_snapshot_storages(after_slot, None).0.len());
+        assert_eq!(1, db.get_snapshot_storages(after_slot, None, None).0.len());
     }
 
     #[test]
@@ -9274,7 +9321,7 @@ pub mod tests {
 
         db.store_uncached(base_slot, &[(&key, &account)]);
         db.add_root(base_slot);
-        assert_eq!(1, db.get_snapshot_storages(after_slot, None).0.len());
+        assert_eq!(1, db.get_snapshot_storages(after_slot, None, None).0.len());
 
         db.storage
             .get_slot_stores(0)
@@ -9285,7 +9332,32 @@ pub mod tests {
             .next()
             .unwrap()
             .remove_account(0, true);
-        assert!(db.get_snapshot_storages(after_slot, None).0.is_empty());
+        assert!(db
+            .get_snapshot_storages(after_slot, None, None)
+            .0
+            .is_empty());
+    }
+
+    #[test]
+    fn test_get_snapshot_storages_with_base_slot() {
+        let db = AccountsDb::new(Vec::new(), &ClusterType::Development);
+
+        let key = Pubkey::default();
+        let account = AccountSharedData::new(1, 0, &key);
+
+        let slot = 10;
+        db.store_uncached(slot, &[(&key, &account)]);
+        db.add_root(slot);
+        assert_eq!(
+            0,
+            db.get_snapshot_storages(slot + 1, Some(slot), None).0.len()
+        );
+        assert_eq!(
+            1,
+            db.get_snapshot_storages(slot + 1, Some(slot - 1), None)
+                .0
+                .len()
+        );
     }
 
     #[test]
@@ -9449,7 +9521,7 @@ pub mod tests {
         accounts.store_uncached(current_slot, &[(&pubkey2, &zero_lamport_account)]);
         accounts.store_uncached(current_slot, &[(&pubkey3, &zero_lamport_account)]);
 
-        let snapshot_stores = accounts.get_snapshot_storages(current_slot, None).0;
+        let snapshot_stores = accounts.get_snapshot_storages(current_slot, None, None).0;
         let total_accounts: usize = snapshot_stores
             .iter()
             .flatten()

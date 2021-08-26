@@ -608,7 +608,7 @@ mod tests {
         // Test multiple requests from allowed ip with different addresses succeed
         let mint = Keypair::new();
         let ip = IpAddr::V6("::ffff:203.0.113.1".parse().unwrap());
-//        let ip = socketaddr!([203, 0, 113, 1], 0).ip();
+        //        let ip = socketaddr!([203, 0, 113, 1], 0).ip();
         let mut allowed_ips = HashSet::new();
         allowed_ips.insert(ip);
         faucet = Faucet::new_with_allowed_ips(mint, None, Some(2), None, allowed_ips);
@@ -663,7 +663,7 @@ mod tests {
             to,
         };
         let ip = IpAddr::V6("::ffff:203.0.113.1".parse().unwrap());
-//        let ip = socketaddr!([203, 0, 113, 1], 1234).ip();
+        //        let ip = socketaddr!([203, 0, 113, 1], 1234).ip();
         let req = serialize(&req).unwrap();
 
         let keypair = Keypair::new();

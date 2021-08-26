@@ -2,6 +2,7 @@
 
 use {
     crate::{
+        cluster_tpu_info::ClusterTpuInfo,
         max_slots::MaxSlots,
         optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
         rpc::{
@@ -9,7 +10,6 @@ use {
             rpc_full::*, rpc_minimal::*, rpc_obsolete_v1_7::*, *,
         },
         rpc_health::*,
-        send_transaction_service::{LeaderInfo, SendTransactionService},
     },
     jsonrpc_core::{futures::prelude::*, MetaIoHandler},
     jsonrpc_http_server::{
@@ -34,6 +34,7 @@ use {
         exit::Exit, genesis_config::DEFAULT_GENESIS_DOWNLOAD_PATH, hash::Hash,
         native_token::lamports_to_sol, pubkey::Pubkey,
     },
+    solana_send_transaction_service::send_transaction_service::SendTransactionService,
     std::{
         collections::HashSet,
         net::SocketAddr,
@@ -149,7 +150,7 @@ impl RpcRequestMiddleware {
                     self.snapshot_config
                         .as_ref()
                         .unwrap()
-                        .snapshot_package_output_path
+                        .snapshot_archives_dir
                         .join(stem)
                 }
             }
@@ -204,7 +205,7 @@ impl RequestMiddleware for RpcRequestMiddleware {
                 // Convenience redirect to the latest snapshot
                 return if let Some(full_snapshot_archive_info) =
                     snapshot_utils::get_highest_full_snapshot_archive_info(
-                        &snapshot_config.snapshot_package_output_path,
+                        &snapshot_config.snapshot_archives_dir,
                     ) {
                     RpcRequestMiddleware::redirect(&format!(
                         "/{}",
@@ -381,7 +382,7 @@ impl JsonRpcService {
         );
 
         let leader_info =
-            poh_recorder.map(|recorder| LeaderInfo::new(cluster_info.clone(), recorder));
+            poh_recorder.map(|recorder| ClusterTpuInfo::new(cluster_info.clone(), recorder));
         let _send_transaction_service = Arc::new(SendTransactionService::new(
             tpu_address,
             &bank_forks,
@@ -604,8 +605,8 @@ mod tests {
             Some(SnapshotConfig {
                 full_snapshot_archive_interval_slots: 0,
                 incremental_snapshot_archive_interval_slots: u64::MAX,
-                snapshot_package_output_path: PathBuf::from("/"),
-                snapshot_path: PathBuf::from("/"),
+                snapshot_archives_dir: PathBuf::from("/"),
+                bank_snapshots_dir: PathBuf::from("/"),
                 archive_format: ArchiveFormat::TarBzip2,
                 snapshot_version: SnapshotVersion::default(),
                 maximum_snapshots_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
