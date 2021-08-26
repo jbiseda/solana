@@ -63,14 +63,6 @@ pub mod no_overflow_rent_distribution {
     solana_sdk::declare_id!("4kpdyrcj5jS47CZb2oJGfVxjYbsMm2Kx97gFyZrxxwXz");
 }
 
-pub mod stake_program_v2 {
-    solana_sdk::declare_id!("Gvd9gGJZDHGMNf1b3jkxrfBQSR5etrfTQSBNKCvLSFJN");
-}
-
-pub mod rewrite_stake {
-    solana_sdk::declare_id!("6ap2eGy7wx5JmsWUmQ5sHwEWrFSDUxSti2k5Hbfv5BZG");
-}
-
 pub mod filter_stake_delegation_accounts {
     solana_sdk::declare_id!("GE7fRxmW46K6EmCD9AMZSbnaJ2e3LfqCZzdHi9hmYAgi");
 }
@@ -199,6 +191,18 @@ pub mod versioned_tx_message_enabled {
     solana_sdk::declare_id!("3KZZ6Ks1885aGBQ45fwRcPXVBCtzUvxhUTkwKMR41Tca");
 }
 
+pub mod libsecp256k1_fail_on_bad_count {
+    solana_sdk::declare_id!("8aXvSuopd1PUj7UhehfXJRg6619RHp8ZvwTyyJHdUYsj");
+}
+
+pub mod instructions_sysvar_owned_by_sysvar {
+    solana_sdk::declare_id!("H3kBSaKdeiUsyHmeHqjJYNc27jesXZ6zWj3zWkowQbkV");
+}
+
+pub mod close_upgradeable_program_accounts {
+    solana_sdk::declare_id!("EQMtCuSAkMVF9ZdhGuABtgvyXJLtSRF5AQKv1RNsrhj7");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -208,8 +212,6 @@ lazy_static! {
         (full_inflation::devnet_and_testnet::id(), "full inflation on devnet and testnet"),
         (spl_token_v2_multisig_fix::id(), "spl-token multisig fix"),
         (no_overflow_rent_distribution::id(), "no overflow rent distribution"),
-        (stake_program_v2::id(), "solana_stake_program v2"),
-        (rewrite_stake::id(), "rewrite stake"),
         (filter_stake_delegation_accounts::id(), "filter stake_delegation_accounts #14062"),
         (stake_program_v3::id(), "solana_stake_program v3"),
         (require_custodian_for_locked_stake_authorize::id(), "require custodian to authorize withdrawer change for locked stake"),
@@ -229,6 +231,7 @@ lazy_static! {
         (blake3_syscall_enabled::id(), "blake3 syscall"),
         (dedupe_config_program_signers::id(), "dedupe config program signers"),
         (deterministic_shred_seed_enabled::id(), "deterministic shred seed"),
+        (verify_tx_signatures_len::id(), "prohibit extra transaction signatures"),
         (vote_stake_checked_instructions::id(), "vote/state program checked instructions #18345"),
         (updated_verify_policy::id(), "update verify policy"),
         (neon_evm_compute_budget::id(), "bump neon_evm's compute budget"),
@@ -243,6 +246,9 @@ lazy_static! {
         (gate_large_block::id(), "validator checks block cost against max limit in realtime, reject if exceeds."),
         (mem_overlap_fix::id(), "memory overlap fix"),
         (versioned_tx_message_enabled::id(), "enable versioned transaction message processing"),
+        (libsecp256k1_fail_on_bad_count::id(), "Fail libsec256k1_verify if count appears wrong"),
+        (instructions_sysvar_owned_by_sysvar::id(), "fix owner for instructions sysvar"),
+        (close_upgradeable_program_accounts::id(), "enable closing upgradeable program accounts"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

@@ -483,13 +483,6 @@ impl BankRc {
             bank_id_generator: Arc::new(AtomicU64::new(0)),
         }
     }
-
-    pub fn get_snapshot_storages(&self, slot: Slot) -> SnapshotStorages {
-        self.accounts
-            .accounts_db
-            .get_snapshot_storages(slot, None)
-            .0
-    }
 }
 
 #[derive(Default, Debug, AbiExample)]
@@ -1021,8 +1014,6 @@ pub struct Bank {
 
     pub lazy_rent_collection: AtomicBool,
 
-    pub no_stake_rewrite: AtomicBool,
-
     // this is temporary field only to remove rewards_pool entirely
     pub rewards_pool_pubkeys: Arc<HashSet<Pubkey>>,
 
@@ -1159,7 +1150,6 @@ impl Bank {
             rewards: RwLock::<Vec<(Pubkey, RewardInfo)>>::default(),
             cluster_type: Option::<ClusterType>::default(),
             lazy_rent_collection: AtomicBool::default(),
-            no_stake_rewrite: AtomicBool::default(),
             rewards_pool_pubkeys: Arc::<HashSet<Pubkey>>::default(),
             cached_executors: RwLock::<CowCachedExecutors>::default(),
             transaction_debug_keys: Option::<Arc<HashSet<Pubkey>>>::default(),
@@ -1369,7 +1359,6 @@ impl Bank {
             rewards: RwLock::new(vec![]),
             cluster_type: parent.cluster_type,
             lazy_rent_collection: AtomicBool::new(parent.lazy_rent_collection.load(Relaxed)),
-            no_stake_rewrite: AtomicBool::new(parent.no_stake_rewrite.load(Relaxed)),
             rewards_pool_pubkeys: parent.rewards_pool_pubkeys.clone(),
             cached_executors: RwLock::new(
                 (*parent.cached_executors.read().unwrap()).clone_with_epoch(epoch),
@@ -1410,11 +1399,7 @@ impl Bank {
             new.apply_feature_activations(false, false);
         }
 
-        let cloned = new
-            .stakes
-            .read()
-            .unwrap()
-            .clone_with_epoch(epoch, new.stake_program_v2_enabled());
+        let cloned = new.stakes.read().unwrap().clone_with_epoch(epoch);
         *new.stakes.write().unwrap() = cloned;
 
         let leader_schedule_epoch = epoch_schedule.get_leader_schedule_epoch(slot);
@@ -1524,7 +1509,6 @@ impl Bank {
             rewards: new(),
             cluster_type: Some(genesis_config.cluster_type),
             lazy_rent_collection: new(),
-            no_stake_rewrite: new(),
             rewards_pool_pubkeys: new(),
             cached_executors: RwLock::new(CowCachedExecutors::new(Arc::new(RwLock::new(
                 CachedExecutors::new(MAX_CACHED_EXECUTORS, fields.epoch),
@@ -1936,41 +1920,6 @@ impl Bank {
         self.epoch_schedule.get_slots_in_epoch(prev_epoch) as f64 / self.slots_per_year
     }
 
-    fn rewrite_stakes(&self) -> (usize, usize) {
-        let mut examined_count = 0;
-        let mut rewritten_count = 0;
-        self.cloned_stake_delegations()
-            .into_iter()
-            .for_each(|(stake_pubkey, _delegation)| {
-                examined_count += 1;
-                if let Some(mut stake_account) = self.get_account_with_fixed_root(&stake_pubkey) {
-                    if let Ok(result) =
-                        stake_state::rewrite_stakes(&mut stake_account, &self.rent_collector.rent)
-                    {
-                        self.store_account(&stake_pubkey, &stake_account);
-                        let message = format!("rewrote stake: {}, {:?}", stake_pubkey, result);
-                        info!("{}", message);
-                        datapoint_info!("stake_info", ("info", message, String));
-                        rewritten_count += 1;
-                    }
-                }
-            });
-
-        info!(
-            "bank (slot: {}): rewrite_stakes: {} accounts rewritten / {} accounts examined",
-            self.slot(),
-            rewritten_count,
-            examined_count,
-        );
-        datapoint_info!(
-            "rewrite-stakes",
-            ("examined_count", examined_count, i64),
-            ("rewritten_count", rewritten_count, i64)
-        );
-
-        (examined_count, rewritten_count)
-    }
-
     // Calculates the starting-slot for inflation from the activation slot.
     // This method assumes that `pico_inflation` will be enabled before `full_inflation`, giving
     // precedence to the latter. However, since `pico_inflation` is fixed-rate Inflation, should
@@ -2037,12 +1986,8 @@ impl Bank {
 
         let old_vote_balance_and_staked = self.stakes.read().unwrap().vote_balance_and_staked();
 
-        let validator_point_value = self.pay_validator_rewards(
-            prev_epoch,
-            validator_rewards,
-            reward_calc_tracer,
-            self.stake_program_v2_enabled(),
-        );
+        let validator_point_value =
+            self.pay_validator_rewards(prev_epoch, validator_rewards, reward_calc_tracer);
 
         if !self
             .feature_set
@@ -2179,7 +2124,6 @@ impl Bank {
         rewarded_epoch: Epoch,
         rewards: u64,
         reward_calc_tracer: &mut Option<impl FnMut(&RewardCalculationEvent)>,
-        fix_stake_deactivate: bool,
     ) -> f64 {
         let stake_history = self.stakes.read().unwrap().history().clone();
 
@@ -2193,13 +2137,8 @@ impl Bank {
                     .map(move |(_stake_pubkey, stake_account)| (stake_account, vote_account))
             })
             .map(|(stake_account, vote_account)| {
-                stake_state::calculate_points(
-                    stake_account,
-                    vote_account,
-                    Some(&stake_history),
-                    fix_stake_deactivate,
-                )
-                .unwrap_or(0)
+                stake_state::calculate_points(stake_account, vote_account, Some(&stake_history))
+                    .unwrap_or(0)
             })
             .sum();
 
@@ -2243,7 +2182,6 @@ impl Bank {
                     &point_value,
                     Some(&stake_history),
                     &mut reward_calc_tracer.as_mut(),
-                    fix_stake_deactivate,
                 );
                 if let Ok((stakers_reward, _voters_reward)) = redeemed {
                     self.store_account(stake_pubkey, stake_account);
@@ -3961,7 +3899,6 @@ impl Bank {
     #[cfg(test)]
     fn restore_old_behavior_for_fragile_tests(&self) {
         self.lazy_rent_collection.store(true, Relaxed);
-        self.no_stake_rewrite.store(true, Relaxed);
     }
 
     fn enable_eager_rent_collection(&self) -> bool {
@@ -4513,7 +4450,6 @@ impl Bank {
             self.stakes.write().unwrap().store(
                 pubkey,
                 account,
-                self.stake_program_v2_enabled(),
                 self.check_init_vote_data_enabled(),
             );
         }
@@ -4531,6 +4467,14 @@ impl Bank {
             .accounts
             .accounts_db
             .flush_accounts_cache(false, Some(self.slot()))
+    }
+
+    #[cfg(test)]
+    pub fn flush_accounts_cache_slot(&self) {
+        self.rc
+            .accounts
+            .accounts_db
+            .flush_accounts_cache_slot(self.slot())
     }
 
     pub fn expire_old_recycle_stores(&self) {
@@ -4961,8 +4905,12 @@ impl Bank {
         )
     }
 
-    pub fn get_snapshot_storages(&self) -> SnapshotStorages {
-        self.rc.get_snapshot_storages(self.slot())
+    pub fn get_snapshot_storages(&self, base_slot: Option<Slot>) -> SnapshotStorages {
+        self.rc
+            .accounts
+            .accounts_db
+            .get_snapshot_storages(self.slot(), base_slot, None)
+            .0
     }
 
     #[must_use]
@@ -5011,7 +4959,7 @@ impl Bank {
         }
 
         if !skip_verification {
-            sanitized_tx.verify_precompiles(self.libsecp256k1_0_5_upgrade_enabled())?;
+            sanitized_tx.verify_precompiles(self.libsecp256k1_0_5_upgrade_enabled(), true)?;
         }
 
         Ok(sanitized_tx)
@@ -5063,6 +5011,7 @@ impl Bank {
         &self,
         use_index: bool,
         debug_verify: bool,
+        slots_per_epoch: Option<Slot>,
     ) -> Hash {
         let (hash, total_lamports) = self
             .rc
@@ -5075,6 +5024,7 @@ impl Bank {
                 &self.ancestors,
                 Some(self.capitalization()),
                 false,
+                slots_per_epoch,
             );
         if total_lamports != self.capitalization() {
             datapoint_info!(
@@ -5095,7 +5045,7 @@ impl Bank {
     }
 
     pub fn update_accounts_hash(&self) -> Hash {
-        self.update_accounts_hash_with_index_option(true, false)
+        self.update_accounts_hash_with_index_option(true, false, None)
     }
 
     /// A snapshot bank should be purged of 0 lamport accounts which are not part of the hash
@@ -5221,7 +5171,6 @@ impl Bank {
                 if let Some(old_vote_account) = self.stakes.write().unwrap().store(
                     pubkey,
                     account,
-                    self.stake_program_v2_enabled(),
                     self.check_init_vote_data_enabled(),
                 ) {
                     // TODO: one of the indices is redundant.
@@ -5447,11 +5396,6 @@ impl Bank {
             .is_active(&feature_set::no_overflow_rent_distribution::id())
     }
 
-    pub fn stake_program_v2_enabled(&self) -> bool {
-        self.feature_set
-            .is_active(&feature_set::stake_program_v2::id())
-    }
-
     pub fn check_init_vote_data_enabled(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::check_init_vote_data::id())
@@ -5465,6 +5409,11 @@ impl Bank {
     pub fn libsecp256k1_0_5_upgrade_enabled(&self) -> bool {
         self.feature_set
             .is_active(&feature_set::libsecp256k1_0_5_upgrade_enabled::id())
+    }
+
+    pub fn libsecp256k1_fail_on_bad_count(&self) -> bool {
+        self.feature_set
+            .is_active(&feature_set::libsecp256k1_fail_on_bad_count::id())
     }
 
     pub fn merge_nonce_error_into_system_error(&self) -> bool {
@@ -5525,16 +5474,6 @@ impl Bank {
 
         if new_feature_activations.contains(&feature_set::spl_token_v2_set_authority_fix::id()) {
             self.apply_spl_token_v2_set_authority_fix();
-        }
-        // Remove me after a while around v1.6
-        if !self.no_stake_rewrite.load(Relaxed)
-            && new_feature_activations.contains(&feature_set::rewrite_stake::id())
-        {
-            // to avoid any potential risk of wrongly rewriting accounts in the future,
-            // only do this once, taking small risk of unknown
-            // bugs which again creates bad stake accounts..
-
-            self.rewrite_stakes();
         }
         if new_feature_activations.contains(&feature_set::rent_for_sysvars::id()) {
             // when this feature is activated, immediately all of existing sysvars are susceptible
@@ -7831,7 +7770,7 @@ pub(crate) mod tests {
                     .map(move |(_stake_pubkey, stake_account)| (stake_account, vote_account))
             })
             .map(|(stake_account, vote_account)| {
-                stake_state::calculate_points(stake_account, vote_account, None, true).unwrap_or(0)
+                stake_state::calculate_points(stake_account, vote_account, None).unwrap_or(0)
             })
             .sum();
 
@@ -9377,7 +9316,7 @@ pub(crate) mod tests {
             // epoch_stakes are a snapshot at the leader_schedule_slot_offset boundary
             //   in the prior epoch (0 in this case)
             assert_eq!(
-                leader_stake.stake(0, None, true),
+                leader_stake.stake(0, None),
                 vote_accounts.unwrap().get(&leader_vote_account).unwrap().0
             );
 
@@ -9393,7 +9332,7 @@ pub(crate) mod tests {
 
         assert!(child.epoch_vote_accounts(epoch).is_some());
         assert_eq!(
-            leader_stake.stake(child.epoch(), None, true),
+            leader_stake.stake(child.epoch(), None),
             child
                 .epoch_vote_accounts(epoch)
                 .unwrap()
@@ -9411,7 +9350,7 @@ pub(crate) mod tests {
         );
         assert!(child.epoch_vote_accounts(epoch).is_some());
         assert_eq!(
-            leader_stake.stake(child.epoch(), None, true),
+            leader_stake.stake(child.epoch(), None),
             child
                 .epoch_vote_accounts(epoch)
                 .unwrap()
@@ -11316,6 +11255,84 @@ pub(crate) mod tests {
             pubkey0_size / (pubkey0_size + bank0_total_size as f64) > DEFAULT_ACCOUNTS_SHRINK_RATIO
         );
         pubkey0_size as usize
+    }
+
+    #[test]
+    fn test_clean_nonrooted() {
+        solana_logger::setup();
+
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000_000);
+        let pubkey0 = Pubkey::new(&[0; 32]);
+        let pubkey1 = Pubkey::new(&[1; 32]);
+
+        info!("pubkey0: {}", pubkey0);
+        info!("pubkey1: {}", pubkey1);
+
+        // Set root for bank 0, with caching enabled
+        let mut bank0 = Arc::new(Bank::new_with_config(
+            &genesis_config,
+            AccountSecondaryIndexes::default(),
+            true,
+            AccountShrinkThreshold::default(),
+        ));
+
+        let account_zero = AccountSharedData::new(0, 0, &Pubkey::new_unique());
+
+        goto_end_of_slot(Arc::<Bank>::get_mut(&mut bank0).unwrap());
+        bank0.freeze();
+        bank0.squash();
+        // Flush now so that accounts cache cleaning doesn't clean up bank 0 when later
+        // slots add updates to the cache
+        bank0.force_flush_accounts_cache();
+
+        // Store some lamports in bank 1
+        let some_lamports = 123;
+        let mut bank1 = Arc::new(Bank::new_from_parent(&bank0, &Pubkey::default(), 1));
+        bank1.deposit(&pubkey0, some_lamports).unwrap();
+        goto_end_of_slot(Arc::<Bank>::get_mut(&mut bank1).unwrap());
+        bank1.freeze();
+        bank1.flush_accounts_cache_slot();
+
+        bank1.print_accounts_stats();
+
+        // Store some lamports for pubkey1 in bank 2, root bank 2
+        // bank2's parent is bank0
+        let mut bank2 = Arc::new(Bank::new_from_parent(&bank0, &Pubkey::default(), 2));
+        bank2.deposit(&pubkey1, some_lamports).unwrap();
+        bank2.store_account(&pubkey0, &account_zero);
+        goto_end_of_slot(Arc::<Bank>::get_mut(&mut bank2).unwrap());
+        bank2.freeze();
+        bank2.squash();
+        bank2.force_flush_accounts_cache();
+
+        bank2.print_accounts_stats();
+        drop(bank1);
+
+        // Clean accounts, which should add earlier slots to the shrink
+        // candidate set
+        bank2.clean_accounts(false, false, None);
+
+        let mut bank3 = Arc::new(Bank::new_from_parent(&bank2, &Pubkey::default(), 3));
+        bank3.deposit(&pubkey1, some_lamports + 1).unwrap();
+        goto_end_of_slot(Arc::<Bank>::get_mut(&mut bank3).unwrap());
+        bank3.freeze();
+        bank3.squash();
+        bank3.force_flush_accounts_cache();
+
+        bank3.clean_accounts(false, false, None);
+        assert_eq!(
+            bank3.rc.accounts.accounts_db.ref_count_for_pubkey(&pubkey0),
+            2
+        );
+        assert!(bank3
+            .rc
+            .accounts
+            .accounts_db
+            .storage
+            .get_slot_stores(1)
+            .is_none());
+
+        bank3.print_accounts_stats();
     }
 
     #[test]
@@ -13358,26 +13375,6 @@ pub(crate) mod tests {
                 AcceptableScanResults::Both,
             );
         }
-    }
-
-    #[test]
-    fn test_stake_rewrite() {
-        let GenesisConfigInfo { genesis_config, .. } =
-            create_genesis_config_with_leader(500, &solana_sdk::pubkey::new_rand(), 1);
-        let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-
-        // quickest way of creting bad stake account
-        let bootstrap_stake_pubkey = bank
-            .cloned_stake_delegations()
-            .keys()
-            .next()
-            .copied()
-            .unwrap();
-        let mut bootstrap_stake_account = bank.get_account(&bootstrap_stake_pubkey).unwrap();
-        bootstrap_stake_account.set_lamports(10000000);
-        bank.store_account(&bootstrap_stake_pubkey, &bootstrap_stake_account);
-
-        assert_eq!(bank.rewrite_stakes(), (1, 1));
     }
 
     #[test]

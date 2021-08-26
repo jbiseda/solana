@@ -2,11 +2,8 @@
 
 use {
     crate::{
-        max_slots::MaxSlots,
-        optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
-        parsed_token_accounts::*,
-        rpc_health::*,
-        send_transaction_service::{SendTransactionService, TransactionInfo},
+        max_slots::MaxSlots, optimistically_confirmed_bank_tracker::OptimisticallyConfirmedBank,
+        parsed_token_accounts::*, rpc_health::*,
     },
     bincode::{config::Options, serialize},
     jsonrpc_core::{futures::future, types::error, BoxFuture, Error, Metadata, Result},
@@ -14,7 +11,7 @@ use {
     serde::{Deserialize, Serialize},
     solana_account_decoder::{
         parse_token::{spl_token_id_v2_0, token_amount_to_ui_amount, UiTokenAmount},
-        UiAccount, UiAccountEncoding, UiDataSliceConfig,
+        UiAccount, UiAccountEncoding, UiDataSliceConfig, MAX_BASE58_BYTES,
     },
     solana_client::{
         rpc_cache::LargestAccountsCache,
@@ -68,6 +65,10 @@ use {
         system_instruction,
         sysvar::stake_history,
         transaction::{self, SanitizedTransaction, TransactionError, VersionedTransaction},
+    },
+    solana_send_transaction_service::{
+        send_transaction_service::{SendTransactionService, TransactionInfo},
+        tpu_info::NullTpuInfo,
     },
     solana_streamer::socket::SocketAddrSpace,
     solana_transaction_status::{
@@ -294,7 +295,14 @@ impl JsonRpcRequestProcessor {
         ));
         let tpu_address = cluster_info.my_contact_info().tpu;
         let (sender, receiver) = channel();
-        SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
+        SendTransactionService::new::<NullTpuInfo>(
+            tpu_address,
+            &bank_forks,
+            None,
+            receiver,
+            1000,
+            1,
+        );
 
         Self {
             config: JsonRpcConfig::default(),
@@ -1565,11 +1573,8 @@ impl JsonRpcRequestProcessor {
             solana_sdk::account::from_account::<StakeHistory, _>(&stake_history_account)
                 .ok_or_else(Error::internal_error)?;
 
-        let (active, activating, deactivating) = delegation.stake_activating_and_deactivating(
-            epoch,
-            Some(&stake_history),
-            bank.stake_program_v2_enabled(),
-        );
+        let (active, activating, deactivating) =
+            delegation.stake_activating_and_deactivating(epoch, Some(&stake_history));
         let stake_activation_state = if deactivating > 0 {
             StakeActivationState::Deactivating
         } else if activating > 0 {
@@ -1965,12 +1970,16 @@ impl JsonRpcRequestProcessor {
 fn verify_transaction(
     transaction: &SanitizedTransaction,
     libsecp256k1_0_5_upgrade_enabled: bool,
+    libsecp256k1_fail_on_bad_count: bool,
 ) -> Result<()> {
     if transaction.verify().is_err() {
         return Err(RpcCustomError::TransactionSignatureVerificationFailure.into());
     }
 
-    if let Err(e) = transaction.verify_precompiles(libsecp256k1_0_5_upgrade_enabled) {
+    if let Err(e) = transaction.verify_precompiles(
+        libsecp256k1_0_5_upgrade_enabled,
+        libsecp256k1_fail_on_bad_count,
+    ) {
         return Err(RpcCustomError::TransactionPrecompileVerificationFailure(e).into());
     }
 
@@ -2102,9 +2111,9 @@ fn encode_account<T: ReadableAccount>(
     data_slice: Option<UiDataSliceConfig>,
 ) -> Result<UiAccount> {
     if (encoding == UiAccountEncoding::Binary || encoding == UiAccountEncoding::Base58)
-        && account.data().len() > 128
+        && account.data().len() > MAX_BASE58_BYTES
     {
-        let message = "Encoded binary (base 58) data should be less than 128 bytes, please use Base64 encoding.".to_string();
+        let message = format!("Encoded binary (base 58) data should be less than {} bytes, please use Base64 encoding.", MAX_BASE58_BYTES);
         Err(error::Error {
             code: error::ErrorCode::InvalidRequest,
             message,
@@ -2207,12 +2216,14 @@ fn _send_transaction(
     wire_transaction: Vec<u8>,
     last_valid_block_height: u64,
     durable_nonce_info: Option<(Pubkey, Hash)>,
+    max_retries: Option<usize>,
 ) -> Result<String> {
     let transaction_info = TransactionInfo::new(
         signature,
         wire_transaction,
         last_valid_block_height,
         durable_nonce_info,
+        max_retries,
     );
     meta.transaction_sender
         .lock()
@@ -2368,7 +2379,7 @@ pub mod rpc_minimal {
             meta.snapshot_config
                 .and_then(|snapshot_config| {
                     snapshot_utils::get_highest_full_snapshot_archive_slot(
-                        &snapshot_config.snapshot_package_output_path,
+                        &snapshot_config.snapshot_archives_dir,
                     )
                 })
                 .ok_or_else(|| RpcCustomError::NoSnapshot.into())
@@ -3282,6 +3293,7 @@ pub mod rpc_full {
                 wire_transaction,
                 last_valid_block_height,
                 None,
+                None,
             )
         }
 
@@ -3324,6 +3336,7 @@ pub mod rpc_full {
                 if let Err(e) = verify_transaction(
                     &transaction,
                     preflight_bank.libsecp256k1_0_5_upgrade_enabled(),
+                    preflight_bank.libsecp256k1_fail_on_bad_count(),
                 ) {
                     return Err(e);
                 }
@@ -3380,6 +3393,7 @@ pub mod rpc_full {
                 wire_transaction,
                 last_valid_block_height,
                 durable_nonce_info,
+                config.max_retries,
             )
         }
 
@@ -3409,7 +3423,11 @@ pub mod rpc_full {
 
             let transaction = sanitize_transaction(unsanitized_tx)?;
             if config.sig_verify {
-                verify_transaction(&transaction, bank.libsecp256k1_0_5_upgrade_enabled())?;
+                verify_transaction(
+                    &transaction,
+                    bank.libsecp256k1_0_5_upgrade_enabled(),
+                    bank.libsecp256k1_fail_on_bad_count(),
+                )?;
             }
 
             let TransactionSimulationResult {
@@ -4394,7 +4412,14 @@ pub mod tests {
             Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
             max_complete_transaction_status_slot,
         );
-        SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
+        SendTransactionService::new::<NullTpuInfo>(
+            tpu_address,
+            &bank_forks,
+            None,
+            receiver,
+            1000,
+            1,
+        );
 
         cluster_info.insert_info(ContactInfo::new_with_pubkey_socketaddr(
             &leader_pubkey,
@@ -5977,7 +6002,14 @@ pub mod tests {
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
         );
-        SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
+        SendTransactionService::new::<NullTpuInfo>(
+            tpu_address,
+            &bank_forks,
+            None,
+            receiver,
+            1000,
+            1,
+        );
 
         let mut bad_transaction = system_transaction::transfer(
             &mint_keypair,
@@ -6259,7 +6291,14 @@ pub mod tests {
             Arc::new(LeaderScheduleCache::default()),
             Arc::new(AtomicU64::default()),
         );
-        SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
+        SendTransactionService::new::<NullTpuInfo>(
+            tpu_address,
+            &bank_forks,
+            None,
+            receiver,
+            1000,
+            1,
+        );
         assert_eq!(
             request_processor.get_block_commitment(0),
             RpcBlockCommitment {

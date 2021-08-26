@@ -205,11 +205,11 @@ health-check mechanism for use by load balancers or other network
 infrastructure. This request will always return a HTTP 200 OK response with a body of
 "ok", "behind" or "unknown" based on the following conditions:
 
-1. If one or more `--trusted-validator` arguments are provided to `solana-validator`, "ok" is returned
+1. If one or more `--known-validator` arguments are provided to `solana-validator`, "ok" is returned
    when the node has within `HEALTH_CHECK_SLOT_DISTANCE` slots of the highest
-   trusted validator, otherwise "behind". "unknown" is returned when no slot
-   information from trusted validators is not yet available.
-2. "ok" is always returned if no trusted validators are provided.
+   known validator, otherwise "behind". "unknown" is returned when no slot
+   information from known validators is not yet available.
+2. "ok" is always returned if no known validators are provided.
 
 ## JSON RPC API Reference
 
@@ -1195,10 +1195,10 @@ Result:
 
 Returns the current health of the node.
 
-If one or more `--trusted-validator` arguments are provided to
+If one or more `--known-validator` arguments are provided to
 `solana-validator`, "ok" is returned when the node has within
-`HEALTH_CHECK_SLOT_DISTANCE` slots of the highest trusted validator, otherwise
-an error is returned.  "ok" is always returned if no trusted validators are
+`HEALTH_CHECK_SLOT_DISTANCE` slots of the highest known validator, otherwise
+an error is returned.  "ok" is always returned if no known validators are
 provided.
 
 #### Parameters:
@@ -2247,7 +2247,7 @@ Result:
 
 ### getSlot
 
-Returns the current slot the node is processing
+Returns the slot that has reached the [given or default commitment level](jsonrpc-api.md#configuring-state-commitment)
 
 #### Parameters:
 
@@ -3246,6 +3246,8 @@ submission.
   - `skipPreflight: <bool>` - if true, skip the preflight transaction checks (default: false)
   - `preflightCommitment: <string>` - (optional) [Commitment](jsonrpc-api.md#configuring-state-commitment) level to use for preflight (default: `"finalized"`).
   - `encoding: <string>` - (optional) Encoding used for the transaction data. Either `"base58"` (*slow*, **DEPRECATED**), or `"base64"`. (default: `"base58"`).
+  - `maxRetries: <usize>` - (optional) Maximum number of times for the RPC node to retry sending the transaction to the leader.
+  If this parameter not provided, the RPC node will retry the transaction until it is finalized or until the blockhash expires.
 
 #### Results:
 

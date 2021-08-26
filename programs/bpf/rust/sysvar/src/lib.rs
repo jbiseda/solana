@@ -46,6 +46,7 @@ pub fn process_instruction(
     // Instructions
     msg!("Instructions identifier:");
     sysvar::instructions::id().log();
+    assert_eq!(*accounts[4].owner, sysvar::id());
     let index = instructions::load_current_index(&accounts[4].try_borrow_data()?);
     assert_eq!(0, index);
 

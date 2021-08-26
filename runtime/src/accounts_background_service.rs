@@ -108,7 +108,7 @@ impl SnapshotRequestHandler {
                 let previous_hash = if test_hash_calculation {
                     // We have to use the index version here.
                     // We cannot calculate the non-index way because cache has not been flushed and stores don't match reality.
-                    snapshot_root_bank.update_accounts_hash_with_index_option(true, false)
+                    snapshot_root_bank.update_accounts_hash_with_index_option(true, false, None)
                 } else {
                     Hash::default()
                 };
@@ -146,6 +146,7 @@ impl SnapshotRequestHandler {
                 let this_hash = snapshot_root_bank.update_accounts_hash_with_index_option(
                     use_index_hash_calculation,
                     test_hash_calculation,
+                    Some(snapshot_root_bank.epoch_schedule().slots_per_epoch),
                 );
                 let hash_for_testing = if test_hash_calculation {
                     assert_eq!(previous_hash, this_hash);
@@ -175,8 +176,8 @@ impl SnapshotRequestHandler {
                     &snapshot_root_bank,
                     status_cache_slot_deltas,
                     &self.accounts_package_sender,
-                    &self.snapshot_config.snapshot_path,
-                    &self.snapshot_config.snapshot_package_output_path,
+                    &self.snapshot_config.bank_snapshots_dir,
+                    &self.snapshot_config.snapshot_archives_dir,
                     self.snapshot_config.snapshot_version,
                     &self.snapshot_config.archive_format,
                     hash_for_testing,
@@ -192,7 +193,7 @@ impl SnapshotRequestHandler {
 
                 // Cleanup outdated snapshots
                 let mut purge_old_snapshots_time = Measure::start("purge_old_snapshots_time");
-                snapshot_utils::purge_old_bank_snapshots(&self.snapshot_config.snapshot_path);
+                snapshot_utils::purge_old_bank_snapshots(&self.snapshot_config.bank_snapshots_dir);
                 purge_old_snapshots_time.stop();
                 total_time.stop();
 

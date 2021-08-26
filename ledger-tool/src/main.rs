@@ -31,7 +31,7 @@ use solana_runtime::{
     bank_forks::BankForks,
     hardened_unpack::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
     snapshot_archive_info::SnapshotArchiveInfoGetter,
-    snapshot_config::SnapshotConfig,
+    snapshot_config::{LastFullSnapshotSlot, SnapshotConfig},
     snapshot_utils::{
         self, ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
     },
@@ -39,8 +39,6 @@ use solana_runtime::{
 use solana_sdk::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     clock::{Epoch, Slot},
-    feature::{self, Feature},
-    feature_set,
     genesis_config::{ClusterType, GenesisConfig},
     hash::Hash,
     inflation::Inflation,
@@ -701,7 +699,7 @@ fn load_bank_forks(
     process_options: ProcessOptions,
     snapshot_archive_path: Option<PathBuf>,
 ) -> bank_forks_utils::LoadResult {
-    let snapshot_path = blockstore
+    let bank_snapshots_dir = blockstore
         .ledger_path()
         .join(if blockstore.is_primary_access() {
             "snapshot"
@@ -711,16 +709,17 @@ fn load_bank_forks(
     let snapshot_config = if arg_matches.is_present("no_snapshot") {
         None
     } else {
-        let snapshot_package_output_path =
+        let snapshot_archives_dir =
             snapshot_archive_path.unwrap_or_else(|| blockstore.ledger_path().to_path_buf());
         Some(SnapshotConfig {
             full_snapshot_archive_interval_slots: 0, // Value doesn't matter
             incremental_snapshot_archive_interval_slots: Slot::MAX,
-            snapshot_package_output_path,
-            snapshot_path,
+            snapshot_archives_dir,
+            bank_snapshots_dir,
             archive_format: ArchiveFormat::TarBzip2,
             snapshot_version: SnapshotVersion::default(),
             maximum_snapshots_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            last_full_snapshot_slot: LastFullSnapshotSlot::default(),
         })
     };
     let account_paths = if let Some(account_paths) = arg_matches.value_of("account_paths") {
@@ -1382,14 +1381,6 @@ fn main() {
                     .takes_value(true)
                     .possible_values(&["pico", "full", "none"])
                     .help("Overwrite inflation when warping"),
-            )
-            .arg(
-                Arg::with_name("enable_stake_program_v2")
-                    .required(false)
-                    .long("enable-stake-program-v2")
-                    .takes_value(false)
-                    .help("Enable stake program v2 (several inflation-related staking \
-                           bugs are feature-gated behind this)"),
             )
             .arg(
                 Arg::with_name("recalculate_capitalization")
@@ -2405,95 +2396,6 @@ fn main() {
                         base_bank
                             .lazy_rent_collection
                             .store(true, std::sync::atomic::Ordering::Relaxed);
-
-                        let feature_account_balance = std::cmp::max(
-                            genesis_config.rent.minimum_balance(Feature::size_of()),
-                            1,
-                        );
-                        if arg_matches.is_present("enable_stake_program_v2") {
-                            let mut force_enabled_count = 0;
-                            if base_bank
-                                .get_account(&feature_set::stake_program_v2::id())
-                                .is_none()
-                            {
-                                base_bank.store_account(
-                                    &feature_set::stake_program_v2::id(),
-                                    &feature::create_account(
-                                        &Feature { activated_at: None },
-                                        feature_account_balance,
-                                    ),
-                                );
-                                force_enabled_count += 1;
-                            }
-                            if base_bank
-                                .get_account(&feature_set::rewrite_stake::id())
-                                .is_none()
-                            {
-                                base_bank.store_account(
-                                    &feature_set::rewrite_stake::id(),
-                                    &feature::create_account(
-                                        &Feature { activated_at: None },
-                                        feature_account_balance,
-                                    ),
-                                );
-                                force_enabled_count += 1;
-                            }
-
-                            if force_enabled_count == 0 {
-                                warn!("Already stake_program_v2 is activated (or scheduled)");
-                            }
-
-                            let mut store_failed_count = 0;
-                            if force_enabled_count >= 1 {
-                                if base_bank
-                                    .get_account(&feature_set::spl_token_v2_multisig_fix::id())
-                                    .is_some()
-                                {
-                                    // steal some lamports from the pretty old feature not to affect
-                                    // capitalizaion, which doesn't affect inflation behavior!
-                                    base_bank.store_account(
-                                        &feature_set::spl_token_v2_multisig_fix::id(),
-                                        &AccountSharedData::default(),
-                                    );
-                                    force_enabled_count -= 1;
-                                } else {
-                                    store_failed_count += 1;
-                                }
-                            }
-
-                            if force_enabled_count >= 1 {
-                                if base_bank
-                                    .get_account(&feature_set::instructions_sysvar_enabled::id())
-                                    .is_some()
-                                {
-                                    // steal some lamports from the pretty old feature not to affect
-                                    // capitalizaion, which doesn't affect inflation behavior!
-                                    base_bank.store_account(
-                                        &feature_set::instructions_sysvar_enabled::id(),
-                                        &AccountSharedData::default(),
-                                    );
-                                    force_enabled_count -= 1;
-                                } else {
-                                    store_failed_count += 1;
-                                }
-                            }
-                            assert_eq!(force_enabled_count, store_failed_count);
-                            if store_failed_count >= 1 {
-                                // we have no choice; maybe locally created blank cluster with
-                                // not-Development cluster type.
-                                let old_cap = base_bank.set_capitalization();
-                                let new_cap = base_bank.capitalization();
-                                warn!(
-                                    "Skewing capitalization a bit to enable stake_program_v2 as \
-                                     requested: increasing {} from {} to {}",
-                                    feature_account_balance, old_cap, new_cap,
-                                );
-                                assert_eq!(
-                                    old_cap + feature_account_balance * store_failed_count,
-                                    new_cap
-                                );
-                            }
-                        }
 
                         #[derive(Default, Debug)]
                         struct PointDetail {

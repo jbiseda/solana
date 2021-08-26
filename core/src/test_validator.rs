@@ -15,7 +15,7 @@ use {
     solana_runtime::{
         genesis_utils::create_genesis_config_with_leader_ex,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
-        snapshot_config::SnapshotConfig,
+        snapshot_config::{LastFullSnapshotSlot, SnapshotConfig},
         snapshot_utils::{
             ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         },
@@ -523,11 +523,12 @@ impl TestValidator {
             snapshot_config: Some(SnapshotConfig {
                 full_snapshot_archive_interval_slots: 100,
                 incremental_snapshot_archive_interval_slots: Slot::MAX,
-                snapshot_path: ledger_path.join("snapshot"),
-                snapshot_package_output_path: ledger_path.to_path_buf(),
+                bank_snapshots_dir: ledger_path.join("snapshot"),
+                snapshot_archives_dir: ledger_path.to_path_buf(),
                 archive_format: ArchiveFormat::Tar,
                 snapshot_version: SnapshotVersion::default(),
                 maximum_snapshots_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+                last_full_snapshot_slot: LastFullSnapshotSlot::default(),
             }),
             enforce_ulimit_nofile: false,
             warp_slot: config.warp_slot,

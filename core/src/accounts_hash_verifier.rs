@@ -1,7 +1,7 @@
 // Service to verify accounts hashes with other trusted validator nodes.
 //
 // Each interval, publish the snapshat hash which is the full accounts state
-// hash on gossip. Monitor gossip for messages from validators in the --trusted-validators
+// hash on gossip. Monitor gossip for messages from validators in the `--known-validator`s
 // set and halt the node if a mismatch is detected.
 
 use rayon::ThreadPool;
@@ -224,6 +224,7 @@ mod tests {
     use super::*;
     use solana_gossip::{cluster_info::make_accounts_hashes_message, contact_info::ContactInfo};
     use solana_runtime::{
+        snapshot_config::LastFullSnapshotSlot,
         snapshot_package::SnapshotType,
         snapshot_utils::{ArchiveFormat, SnapshotVersion},
     };
@@ -292,11 +293,12 @@ mod tests {
         let snapshot_config = SnapshotConfig {
             full_snapshot_archive_interval_slots,
             incremental_snapshot_archive_interval_slots: Slot::MAX,
-            snapshot_package_output_path: PathBuf::default(),
-            snapshot_path: PathBuf::default(),
+            snapshot_archives_dir: PathBuf::default(),
+            bank_snapshots_dir: PathBuf::default(),
             archive_format: ArchiveFormat::Tar,
             snapshot_version: SnapshotVersion::default(),
             maximum_snapshots_to_retain: usize::MAX,
+            last_full_snapshot_slot: LastFullSnapshotSlot::default(),
         };
         for i in 0..MAX_SNAPSHOT_HASHES + 1 {
             let slot = full_snapshot_archive_interval_slots + i as u64;
