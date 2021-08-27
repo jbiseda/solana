@@ -413,6 +413,9 @@ fn get_rpc_node(
         sleep(Duration::from_secs(1));
         info!("\n{}", cluster_info.rpc_info_trace());
 
+        //error!("validator/main get_rpc_node cluster_info={:?}", cluster_info);
+        error!("validator/main get_rpc_node cluster_entrypoints={:?}", cluster_entrypoints);
+
         let shred_version = validator_config
             .expected_shred_version
             .unwrap_or_else(|| cluster_info.my_shred_version());
@@ -442,12 +445,16 @@ fn get_rpc_node(
                 .unwrap_or_default()
         );
 
+        error!("validator/main get_rpc_node cluster_info.all_rpc_peers={:?}", cluster_info.all_rpc_peers());
+
         let rpc_peers = cluster_info
             .all_rpc_peers()
             .into_iter()
             .filter(|contact_info| contact_info.shred_version == shred_version)
             .collect::<Vec<_>>();
         let rpc_peers_total = rpc_peers.len();
+
+        error!("validator/main get_rpc_node rpc_peers={:?}", rpc_peers);
 
         // Filter out blacklisted nodes
         let rpc_peers: Vec<_> = rpc_peers
