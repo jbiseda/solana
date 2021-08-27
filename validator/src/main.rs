@@ -409,6 +409,9 @@ fn get_rpc_node(
     let mut blacklist_timeout = Instant::now();
     let mut newer_cluster_snapshot_timeout = None;
     let mut retry_reason = None;
+
+    no_untrusted_rpc = false;
+
     loop {
         sleep(Duration::from_secs(1));
         info!("\n{}", cluster_info.rpc_info_trace());
