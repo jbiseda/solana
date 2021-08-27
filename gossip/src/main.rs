@@ -14,10 +14,11 @@ use {
     solana_streamer::socket::SocketAddrSpace,
     std::{
         error,
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv6Addr, SocketAddr},
         process::exit,
         time::Duration,
     },
+    log::*,
 };
 
 fn parse_matches() -> ArgMatches<'static> {
@@ -172,7 +173,7 @@ fn parse_gossip_host(matches: &ArgMatches, entrypoint_addr: Option<SocketAddr>) 
                     exit(1);
                 })
             } else {
-                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
+                IpAddr::V6(Ipv6Addr::LOCALHOST)
             }
         })
 }
@@ -235,14 +236,16 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     let identity_keypair = keypair_of(matches, "identity");
 
     let entrypoint_addr = parse_entrypoint(matches);
+    error!("entrypoint_addr {:?}", entrypoint_addr);
 
     let gossip_host = parse_gossip_host(matches, entrypoint_addr);
+    error!("gossip_host {:?}", gossip_host);
 
     let gossip_addr = SocketAddr::new(
         gossip_host,
         value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
             solana_net_utils::find_available_port_in_range(
-                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
                 (0, 1),
             )
             .expect("unable to find an available gossip port")

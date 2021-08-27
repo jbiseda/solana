@@ -357,6 +357,7 @@ pub fn is_host(string: String) -> Result<(), String> {
 }
 
 pub fn parse_host_port(host_port: &str) -> Result<SocketAddr, String> {
+    error!("parse_host_port {:?}", host_port);
     let addrs: Vec<_> = host_port
         .to_socket_addrs()
         .map_err(|err| format!("Unable to resolve host {}: {}", host_port, err))?
@@ -364,6 +365,7 @@ pub fn parse_host_port(host_port: &str) -> Result<SocketAddr, String> {
     if addrs.is_empty() {
         Err(format!("Unable to resolve host: {}", host_port))
     } else {
+        error!("parse_host_port found addr {:?}", addrs[0]);
         Ok(addrs[0])
     }
 }
