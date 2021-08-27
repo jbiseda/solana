@@ -445,7 +445,7 @@ fn get_rpc_node(
                 .unwrap_or_default()
         );
 
-        error!("validator/main get_rpc_node cluster_info.all_rpc_peers={:?}", cluster_info.all_rpc_peers());
+        //error!("validator/main get_rpc_node cluster_info.all_rpc_peers={:?}", cluster_info.all_rpc_peers());
 
         let rpc_peers = cluster_info
             .all_rpc_peers()
@@ -454,7 +454,7 @@ fn get_rpc_node(
             .collect::<Vec<_>>();
         let rpc_peers_total = rpc_peers.len();
 
-        error!("validator/main get_rpc_node rpc_peers={:?}", rpc_peers);
+        //error!("validator/main get_rpc_node rpc_peers={:?}", rpc_peers);
 
         // Filter out blacklisted nodes
         let rpc_peers: Vec<_> = rpc_peers
@@ -495,6 +495,8 @@ fn get_rpc_node(
                     (snapshot_archive_info.slot(), *snapshot_archive_info.hash())
                 },
             );
+        error!("validator/main get_rpc_node highest_snapshot_hash {:?}", highest_snapshot_hash);
+
         let eligible_rpc_peers = if snapshot_not_required {
             rpc_peers
         } else {
@@ -573,6 +575,8 @@ fn get_rpc_node(
             }
             eligible_rpc_peers
         };
+
+        error!("validator/main get_rpc_node eligible_rpc_peers={:?}", eligible_rpc_peers);
 
         if !eligible_rpc_peers.is_empty() {
             let contact_info =
