@@ -511,6 +511,7 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
                 break Ok(rand_port);
             }
             Err(err) => {
+                error!("find_available_port_in_range {:?} {}", ip_addr, rand_port);
                 if tries_left == 0 {
                     return Err(err);
                 }
