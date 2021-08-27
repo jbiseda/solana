@@ -7,7 +7,7 @@ use {
     std::{
         collections::{BTreeMap, HashSet},
         io::{self, Read, Write},
-        net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
+        net::{IpAddr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket},
         sync::{mpsc::channel, Arc, RwLock},
         time::{Duration, Instant},
     },
@@ -140,6 +140,7 @@ fn do_verify_reachable_ports(
     for (port, tcp_listener) in tcp_listeners {
         let (sender, receiver) = channel();
         let listening_addr = tcp_listener.local_addr().unwrap();
+        error!("do_verify_reachable_port listening_addr {:?} {}", listening_addr, port);
         let thread_handle = std::thread::spawn(move || {
             debug!("Waiting for incoming connection on tcp/{}", port);
             match tcp_listener.incoming().next() {
@@ -178,6 +179,7 @@ fn do_verify_reachable_ports(
     let mut udp_ports: BTreeMap<_, _> = BTreeMap::new();
     udp_sockets.iter().for_each(|udp_socket| {
         let port = udp_socket.local_addr().unwrap().port();
+        error!("do_verify_reachable_port {:?}", udp_socket.local_addr().unwrap());
         udp_ports
             .entry(port)
             .or_insert_with(Vec::new)
@@ -286,6 +288,7 @@ pub fn verify_reachable_ports(
     tcp_listeners: Vec<(u16, TcpListener)>,
     udp_sockets: &[&UdpSocket],
 ) -> bool {
+    error!("net-utils verify_reachable_ports {:?}", tcp_listeners);
     do_verify_reachable_ports(
         ip_echo_server_addr,
         tcp_listeners,
@@ -332,6 +335,7 @@ pub fn parse_port_range(port_range: &str) -> Option<PortRange> {
 }
 
 pub fn parse_host(host: &str) -> Result<IpAddr, String> {
+    error!("parse_host input {}", host);
     // First, check if the host syntax is valid. This check is needed because addresses
     // such as `("localhost:1234", 0)` will resolve to IPs on some networks.
     let parsed_url = Url::parse(&format!("http://{}", host)).map_err(|e| e.to_string())?;
@@ -346,8 +350,10 @@ pub fn parse_host(host: &str) -> Result<IpAddr, String> {
         .map(|socket_address| socket_address.ip())
         .collect();
     if ips.is_empty() {
+        error!("parse_host err unable to resolve host");
         Err(format!("Unable to resolve host: {}", host))
     } else {
+        error!("parse_host {:?}", ips[0]);
         Ok(ips[0])
     }
 }
@@ -386,7 +392,7 @@ fn udp_socket(reuseaddr: bool) -> io::Result<Socket> {
     use nix::sys::socket::sockopt::{ReuseAddr, ReusePort};
     use std::os::unix::io::AsRawFd;
 
-    let sock = Socket::new(Domain::IPV6, Type::DGRAM, None)?;
+    let sock = Socket::new(Domain::IPV6, Type::DGRAM, None)?; //TODO handle v4
     let sock_fd = sock.as_raw_fd();
 
     if reuseaddr {
@@ -505,6 +511,8 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
     let (start, end) = range;
     let mut tries_left = end - start;
     let mut rand_port = thread_rng().gen_range(start, end);
+    error!("V6 {:?}", Ipv6Addr::UNSPECIFIED);
+    error!("V6addr {:?}", IpAddr::V6(Ipv6Addr::UNSPECIFIED));
     loop {
         error!("trying bind_common {:?}", ip_addr);
         match bind_common(ip_addr, rand_port, false) {
@@ -514,6 +522,7 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
             Err(err) => {
                 error!("find_available_port_in_range {:?} {}", ip_addr, rand_port);
                 if tries_left == 0 {
+                    panic!("bad addr");
                     return Err(err);
                 }
             }

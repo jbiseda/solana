@@ -70,7 +70,7 @@ use {
         collections::{HashSet, VecDeque},
         env,
         fs::{self, File},
-        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
+        net::{IpAddr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket},
         path::{Path, PathBuf},
         process::exit,
         str::FromStr,
@@ -374,6 +374,7 @@ fn start_gossip_node(
     should_check_duplicate_instance: bool,
     socket_addr_space: SocketAddrSpace,
 ) -> (Arc<ClusterInfo>, Arc<AtomicBool>, GossipService) {
+    error!("start_gossip_node gossip_addr={:?} gossip_socket={:?}", gossip_addr, gossip_socket);
     let contact_info = ClusterInfo::gossip_contact_info(
         identity_keypair.pubkey(),
         *gossip_addr,
@@ -724,6 +725,7 @@ fn verify_reachable_ports(
         tcp_listeners.push((ip_echo.local_addr().unwrap().port(), ip_echo));
     }
 
+    error!("validator main cluster_entrypoint.gossip {:?}", cluster_entrypoint.gossip);
     solana_net_utils::verify_reachable_ports(
         &cluster_entrypoint.gossip,
         tcp_listeners,
@@ -1635,8 +1637,8 @@ pub fn main() {
                 .long("bind-address")
                 .value_name("HOST")
                 .takes_value(true)
-                .validator(solana_net_utils::is_host)
-                .default_value("0.0.0.0")
+//                .validator(solana_net_utils::is_host)
+                .default_value("::") //TODO
                 .help("IP address to bind the validator ports"),
         )
         .arg(
@@ -2301,14 +2303,17 @@ pub fn main() {
         "--gossip-validator",
     );
 
-    let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
-        .expect("invalid bind_address");
+//    let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
+//        .expect("invalid bind_address");
+    let bind_address = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
+    error!("validator_main bind_address {:?}", bind_address);
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
     } else {
         bind_address
     };
+    error!("rpc_bind_address {:?}", rpc_bind_address);
 
     let contact_debug_interval = value_t_or_exit!(matches, "contact_debug_interval", u64);
 

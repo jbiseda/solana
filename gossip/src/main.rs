@@ -241,6 +241,7 @@ fn process_spy(matches: &ArgMatches, socket_addr_space: SocketAddrSpace) -> std:
     let gossip_host = parse_gossip_host(matches, entrypoint_addr);
     error!("gossip_host {:?}", gossip_host);
 
+    error!("v6addr {:?}", Ipv6Addr::UNSPECIFIED);
     let gossip_addr = SocketAddr::new(
         gossip_host,
         value_t!(matches, "gossip_port", u16).unwrap_or_else(|_| {
