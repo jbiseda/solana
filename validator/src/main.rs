@@ -509,6 +509,7 @@ fn get_rpc_node(
                 if no_untrusted_rpc
                     && !is_trusted_validator(&rpc_peer.id, &validator_config.trusted_validators)
                 {
+                    error!("validator/main get_rpc_node no untrusted");
                     continue;
                 }
                 cluster_info.get_snapshot_hash_for_node(&rpc_peer.id, |snapshot_hashes| {
@@ -516,6 +517,7 @@ fn get_rpc_node(
                         if let Some(ref trusted_snapshot_hashes) = trusted_snapshot_hashes {
                             if !trusted_snapshot_hashes.contains(snapshot_hash) {
                                 // Ignore all untrusted snapshot hashes
+                                error!("validator/main get_rpc_node no trusted hashes");
                                 continue;
                             }
                         }
@@ -534,6 +536,8 @@ fn get_rpc_node(
                     }
                 });
             }
+
+            error!("validator/main get_rpc_node after rpc_peers scan");
 
             match highest_snapshot_hash {
                 None => {
@@ -554,6 +558,7 @@ fn get_rpc_node(
                             "Wait for newer snapshot than local: {:?}",
                             highest_snapshot_hash
                         ));
+                        error!("validator/main get_rpc_node wait for higher than local");
                         continue;
                     }
 
