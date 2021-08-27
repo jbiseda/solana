@@ -410,8 +410,6 @@ fn get_rpc_node(
     let mut newer_cluster_snapshot_timeout = None;
     let mut retry_reason = None;
 
-    no_untrusted_rpc = false;
-
     loop {
         sleep(Duration::from_secs(1));
         info!("\n{}", cluster_info.rpc_info_trace());
@@ -509,12 +507,14 @@ fn get_rpc_node(
             let mut eligible_rpc_peers = vec![];
 
             for rpc_peer in rpc_peers.iter() {
+                /*
                 if no_untrusted_rpc
                     && !is_trusted_validator(&rpc_peer.id, &validator_config.trusted_validators)
                 {
                     error!("validator/main get_rpc_node no untrusted");
                     continue;
                 }
+                */
                 cluster_info.get_snapshot_hash_for_node(&rpc_peer.id, |snapshot_hashes| {
                     for snapshot_hash in snapshot_hashes {
                         if let Some(ref trusted_snapshot_hashes) = trusted_snapshot_hashes {
