@@ -506,6 +506,7 @@ pub fn find_available_port_in_range(ip_addr: IpAddr, range: PortRange) -> io::Re
     let mut tries_left = end - start;
     let mut rand_port = thread_rng().gen_range(start, end);
     loop {
+        error!("trying bind_common {:?}", ip_addr);
         match bind_common(ip_addr, rand_port, false) {
             Ok(_) => {
                 break Ok(rand_port);
