@@ -46,7 +46,7 @@ fn recv_loop(
     let mut now = Instant::now();
     let mut num_max_received = 0; // Number of times maximum packets were received
     loop {
-        error!("recv_loop sock={:?}", sock);
+//        error!("recv_loop sock={:?}", sock);
         let mut msgs = if use_pinned_memory {
             Packets::new_with_recycler(recycler.clone(), PACKETS_PER_BATCH, name)
         } else {
@@ -60,7 +60,7 @@ fn recv_loop(
             }
             if let Ok(len) = packet::recv_from(&mut msgs, sock, coalesce_ms) {
                 if len > 0 {
-                    error!("recv_loop npkts={}", len);
+//                    error!("recv_loop npkts={}", len);
                 }
                 if len == NUM_RCVMMSGS {
                     num_max_received += 1;
