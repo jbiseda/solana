@@ -14,6 +14,7 @@ use crate::{
 };
 use log::{log_enabled, trace, Level::Trace};
 use solana_measure::measure::Measure;
+use solana_program_runtime::InstructionProcessor;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
     ebpf::HOST_ALIGN,
@@ -22,7 +23,6 @@ use solana_rbpf::{
     verifier::{self, VerifierError},
     vm::{Config, EbpfVm, Executable, InstructionMeter},
 };
-use solana_runtime::message_processor::MessageProcessor;
 use solana_sdk::{
     account::{ReadableAccount, WritableAccount},
     account_utils::State,
@@ -400,7 +400,7 @@ fn process_loader_upgradeable_instruction(
                 .iter()
                 .map(|seeds| Pubkey::create_program_address(*seeds, caller_program_id))
                 .collect::<Result<Vec<Pubkey>, solana_sdk::pubkey::PubkeyError>>()?;
-            MessageProcessor::native_invoke(
+            InstructionProcessor::native_invoke(
                 invoke_context,
                 instruction,
                 &[0, 1, 6],
@@ -691,6 +691,10 @@ fn process_loader_upgradeable_instruction(
                     if !program_account.is_writable() {
                         ic_logger_msg!(logger, "Program account is not writable");
                         return Err(InstructionError::InvalidArgument);
+                    }
+                    if &program_account.owner()? != program_id {
+                        ic_logger_msg!(logger, "Program account not owned by loader");
+                        return Err(InstructionError::IncorrectProgramId);
                     }
 
                     match program_account.state()? {
