@@ -335,13 +335,17 @@ pub fn parse_port_range(port_range: &str) -> Option<PortRange> {
 }
 
 pub fn parse_host(host: &str) -> Result<IpAddr, String> {
-    error!("parse_host input {}", host);
+    println!("parse_host input [{}]", host);
     // First, check if the host syntax is valid. This check is needed because addresses
     // such as `("localhost:1234", 0)` will resolve to IPs on some networks.
+
+    // TODO what is this trying to solve? this fails to parse ipv6 numeric addresses
+    /*
     let parsed_url = Url::parse(&format!("http://{}", host)).map_err(|e| e.to_string())?;
     if parsed_url.port().is_some() {
-        return Err(format!("Expected port in URL: {}", host));
+        return Err(format!("Unexpected port in URL: {}", host));
     }
+    */
 
     // Next, check to see if it resolves to an IP address
     let ips: Vec<_> = (host, 0)
@@ -350,10 +354,13 @@ pub fn parse_host(host: &str) -> Result<IpAddr, String> {
         .map(|socket_address| socket_address.ip())
         .collect();
     if ips.is_empty() {
-        error!("parse_host err unable to resolve host");
         Err(format!("Unable to resolve host: {}", host))
     } else {
-        error!("parse_host {:?}", ips[0]);
+        // TODO do we want to filter by v4/v6?
+        for addr in &ips {
+            println!("parse_host addr: [{:?}]", addr);
+        }
+        println!("parse_host returning [{:?}]", ips[0]);
         Ok(ips[0])
     }
 }
@@ -363,7 +370,7 @@ pub fn is_host(string: String) -> Result<(), String> {
 }
 
 pub fn parse_host_port(host_port: &str) -> Result<SocketAddr, String> {
-    error!("parse_host_port {:?}", host_port);
+    println!("parse_host_port input [{:?}]", host_port);
     let addrs: Vec<_> = host_port
         .to_socket_addrs()
         .map_err(|err| format!("Unable to resolve host {}: {}", host_port, err))?
@@ -371,7 +378,7 @@ pub fn parse_host_port(host_port: &str) -> Result<SocketAddr, String> {
     if addrs.is_empty() {
         Err(format!("Unable to resolve host: {}", host_port))
     } else {
-        error!("parse_host_port found addr {:?}", addrs[0]);
+        println!("parse_host_port returning [{:?}]", addrs[0]);
         Ok(addrs[0])
     }
 }
@@ -380,19 +387,29 @@ pub fn is_host_port(string: String) -> Result<(), String> {
     parse_host_port(&string).map(|_| ())
 }
 
+fn ip_addr_to_domain(addr: IpAddr) -> Domain {
+    if addr.is_ipv4() {
+        Domain::IPV4
+    } else if addr.is_ipv6() {
+        Domain::IPV6
+    } else {
+        panic!("unexpected addr type {:?}", addr);
+    }
+}
+
 #[cfg(windows)]
-fn udp_socket(_reuseaddr: bool) -> io::Result<Socket> {
-    let sock = Socket::new(Domain::ipv6(), Type::dgram(), None)?;
+fn udp_socket(domain: Domain, _reuseaddr: bool) -> io::Result<Socket> {
+    let sock = Socket::new(domain, Type::dgram(), None)?;
     Ok(sock)
 }
 
 #[cfg(not(windows))]
-fn udp_socket(reuseaddr: bool) -> io::Result<Socket> {
+fn udp_socket(domain: Domain, reuseaddr: bool) -> io::Result<Socket> {
     use nix::sys::socket::setsockopt;
     use nix::sys::socket::sockopt::{ReuseAddr, ReusePort};
     use std::os::unix::io::AsRawFd;
 
-    let sock = Socket::new(Domain::IPV6, Type::DGRAM, None)?; //TODO handle v4
+    let sock = Socket::new(domain, Type::DGRAM, None)?; //TODO handle v4
     let sock_fd = sock.as_raw_fd();
 
     if reuseaddr {
@@ -422,7 +439,7 @@ pub fn bind_common_in_range(
 }
 
 pub fn bind_in_range(ip_addr: IpAddr, range: PortRange) -> io::Result<(u16, UdpSocket)> {
-    let sock = udp_socket(false)?;
+    let sock = udp_socket(ip_addr_to_domain(ip_addr), false)?;
 
     for port in range.0..range.1 {
         let addr = SocketAddr::new(ip_addr, port);
@@ -486,7 +503,7 @@ pub fn multi_bind_in_range(
 }
 
 pub fn bind_to(ip_addr: IpAddr, port: u16, reuseaddr: bool) -> io::Result<UdpSocket> {
-    let sock = udp_socket(reuseaddr)?;
+    let sock = udp_socket(ip_addr_to_domain(ip_addr), reuseaddr)?;
 
     let addr = SocketAddr::new(ip_addr, port);
 
@@ -499,7 +516,7 @@ pub fn bind_common(
     port: u16,
     reuseaddr: bool,
 ) -> io::Result<(UdpSocket, TcpListener)> {
-    let sock = udp_socket(reuseaddr)?;
+    let sock = udp_socket(ip_addr_to_domain(ip_addr), reuseaddr)?;
 
     let addr = SocketAddr::new(ip_addr, port);
     let sock_addr = SockAddr::from(addr);

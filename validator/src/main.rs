@@ -1656,8 +1656,8 @@ pub fn main() {
                 .long("bind-address")
                 .value_name("HOST")
                 .takes_value(true)
-//                .validator(solana_net_utils::is_host)
-                .default_value("::") //TODO
+                .validator(solana_net_utils::is_host)
+                .default_value("0.0.0.0")
                 .help("IP address to bind the validator ports"),
         )
         .arg(
@@ -2357,10 +2357,9 @@ pub fn main() {
         "--gossip-validator",
     );
 
-//    let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
-//        .expect("invalid bind_address");
-    let bind_address = IpAddr::V6(Ipv6Addr::UNSPECIFIED);
-    error!("validator_main bind_address {:?}", bind_address);
+    let bind_address = solana_net_utils::parse_host(matches.value_of("bind_address").unwrap())
+        .expect("invalid bind_address");
+    println!("validator_main bind_address [{:?}]", bind_address);
     let rpc_bind_address = if matches.is_present("rpc_bind_address") {
         solana_net_utils::parse_host(matches.value_of("rpc_bind_address").unwrap())
             .expect("invalid rpc_bind_address")
