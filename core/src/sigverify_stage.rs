@@ -16,6 +16,7 @@ use solana_streamer::streamer::{self, PacketReceiver, StreamerError};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, Builder, JoinHandle};
+use std::time::Instant;
 use thiserror::Error;
 
 const RECV_BATCH_MAX_CPU: usize = 1_000;
@@ -45,7 +46,12 @@ pub struct DisabledSigVerifier {}
 
 impl SigVerifier for DisabledSigVerifier {
     fn verify_batch(&self, mut batch: Vec<Packets>) -> Vec<Packets> {
+        let before_ts = Instant::now();
         sigverify::ed25519_verify_disabled(&mut batch);
+        let after_ts = Instant::now();
+        batch
+            .iter_mut()
+            .for_each(|pkts| pkts.timer.set_verify(before_ts, after_ts));
         batch
     }
 }
