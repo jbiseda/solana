@@ -88,6 +88,8 @@ struct ReceiveWindowStats {
     batch_first_recv_us_hist: histogram::Histogram,
     batch_start_verify_us_hist: histogram::Histogram,
     batch_end_verify_us_hist: histogram::Histogram,
+    num_verify_found: usize,
+    num_verify_missing: usize,
 }
 
 impl ReceiveWindowStats {
@@ -234,6 +236,8 @@ impl ReceiveWindowStats {
                 self.batch_start_verify_us_hist.mean().unwrap_or(0),
                 i64
             ),
+            ("num_verify_found", self.num_verify_found, i64),
+            ("num_verify_missing", self.num_verify_missing, i64),
         );
         for (slot, num_shreds) in &self.slots {
             datapoint_info!(
@@ -573,7 +577,9 @@ where
         .batch_first_recv_us_hist
         .increment((now - first_time).as_micros() as u64)
         .unwrap();
-    stats
+    if packet_timer.get_verify_start().is_some() {
+        stats.num_verify_found += 1;
+        stats
         .batch_start_verify_us_hist
         .increment((now - packet_timer.get_verify_start().unwrap()).as_micros() as u64)
         .unwrap();
@@ -581,6 +587,9 @@ where
         .batch_end_verify_us_hist
         .increment((now - packet_timer.get_verify_end().unwrap()).as_micros() as u64)
         .unwrap();
+    } else {
+        stats.num_verify_missing += 1;
+    }
 
     Ok(())
 }
