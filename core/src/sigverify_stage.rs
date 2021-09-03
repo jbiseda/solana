@@ -90,7 +90,16 @@ impl SigVerifyStage {
             len,
             id
         );
-        sendr.send(verifier.verify_batch(batch))?;
+        
+        let before_ts = Instant::now();
+        let mut batch = verifier.verify_batch(batch);
+        let after_ts = Instant::now();
+
+        batch.iter_mut().for_each(|pkts| pkts.timer.set_verify(before_ts, after_ts));
+
+        sendr.send(batch)?;
+
+        //sendr.send(verifier.verify_batch(batch))?;
         verify_batch_time.stop();
 
         debug!(
