@@ -40,6 +40,7 @@ pub struct SigVerifyStage {
 struct SigVerifierStats {
     batch_time_us_hist: histogram::Histogram,
     batch_time_pp_us_hist: histogram::Histogram,
+    packets_per_batch: histogram::Histogram,
 }
 
 pub trait SigVerifier {
@@ -122,6 +123,10 @@ impl SigVerifyStage {
             .batch_time_pp_us_hist
             .increment(verify_batch_time.as_us() / (total_packets as u64))
             .unwrap();
+        stats
+            .packets_per_batch
+            .increment(total_packets as u64)
+            .unwrap();
 
         debug!(
             "@{:?} verifier: done. batches: {} total verify time: {:?} id: {} verified: {} v/s {}",
@@ -154,6 +159,7 @@ impl SigVerifyStage {
         let mut stats = SigVerifierStats {
             batch_time_us_hist: histogram::Histogram::new(),
             batch_time_pp_us_hist: histogram::Histogram::new(),
+            packets_per_batch: histogram::Histogram::new(),
         };
         let mut last_stats = Instant::now();
 
@@ -234,9 +240,35 @@ impl SigVerifyStage {
                             stats.batch_time_pp_us_hist.mean().unwrap_or(0),
                             i64
                         ),
+                        (
+                            "packets_per_batch_50pct",
+                            stats.packets_per_batch.percentile(50.0).unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "packets_per_batch_90pct",
+                            stats.packets_per_batch.percentile(90.0).unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "packets_per_batch_min",
+                            stats.packets_per_batch.minimum().unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "packets_per_batch_max",
+                            stats.packets_per_batch.maximum().unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "packets_per_batch_mean",
+                            stats.packets_per_batch.mean().unwrap_or(0),
+                            i64
+                        ),
                     );
                     stats.batch_time_us_hist.clear();
                     stats.batch_time_pp_us_hist.clear();
+                    stats.packets_per_batch.clear();
                     last_stats = Instant::now();
                 }
             })
