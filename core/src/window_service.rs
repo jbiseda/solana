@@ -88,6 +88,7 @@ struct ReceiveWindowStats {
     batch_first_recv_us_hist: histogram::Histogram,
     batch_start_verify_us_hist: histogram::Histogram,
     batch_end_verify_us_hist: histogram::Histogram,
+    batch_span_pp_verify_ns_hist: histogram::Histogram,
     num_verify_found: usize,
     num_verify_missing: usize,
 }
@@ -236,6 +237,31 @@ impl ReceiveWindowStats {
                 self.batch_start_verify_us_hist.mean().unwrap_or(0),
                 i64
             ),
+            (
+                "batch_span_pp_verify_ns_hist_50pct",
+                self.batch_span_pp_verify_ns_hist.percentile(50.0).unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_span_pp_verify_ns_hist_90pct",
+                self.batch_span_pp_verify_ns_hist.percentile(90.0).unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_span_pp_verify_ns_hist_min",
+                self.batch_span_pp_verify_ns_hist.minimum().unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_span_pp_verify_ns_hist_max",
+                self.batch_span_pp_verify_ns_hist.maximum().unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_span_pp_verify_ns_hist_mean",
+                self.batch_span_pp_verify_ns_hist.mean().unwrap_or(0),
+                i64
+            ),
             ("num_verify_found", self.num_verify_found, i64),
             ("num_verify_missing", self.num_verify_missing, i64),
         );
@@ -267,6 +293,7 @@ impl ReceiveWindowStats {
         self.batch_first_recv_us_hist.clear();
         self.batch_start_verify_us_hist.clear();
         self.batch_end_verify_us_hist.clear();
+        self.batch_span_pp_verify_ns_hist.clear();
     }
 }
 
@@ -477,9 +504,12 @@ where
     let mut packet_timer = packets[0].timer;
     packets.extend(verified_receiver.try_iter().flatten());
 
+    let mut total_packets = 0;
+
     for pkts in &packets {
         //packet_timer.extend_incoming_from(&pkts.timer);
         packet_timer.coalesce_from(&pkts.timer);
+        total_packets += pkts.packets.len();
     }
     let now = Instant::now();
     let last_root = blockstore.last_root();
@@ -580,13 +610,20 @@ where
     if packet_timer.get_verify_start().is_some() {
         stats.num_verify_found += 1;
         stats
-        .batch_start_verify_us_hist
-        .increment((now - packet_timer.get_verify_start().unwrap()).as_micros() as u64)
-        .unwrap();
-    stats
-        .batch_end_verify_us_hist
-        .increment((now - packet_timer.get_verify_end().unwrap()).as_micros() as u64)
-        .unwrap();
+            .batch_start_verify_us_hist
+            .increment((now - packet_timer.get_verify_start().unwrap()).as_micros() as u64)
+            .unwrap();
+        stats
+            .batch_end_verify_us_hist
+            .increment((now - packet_timer.get_verify_end().unwrap()).as_micros() as u64)
+            .unwrap();
+        stats
+            .batch_span_pp_verify_ns_hist
+            .increment(
+                ((packet_timer.get_verify_end().unwrap() - packet_timer.get_verify_start().unwrap())
+                    .as_nanos() as u64) / (total_packets as u64),
+            )
+            .unwrap();
     } else {
         stats.num_verify_missing += 1;
     }
