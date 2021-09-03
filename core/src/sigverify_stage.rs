@@ -197,8 +197,22 @@ impl SigVerifyStage {
                 }
 
                 if last_stats.elapsed().as_secs() > 2 {
+                    let ts = Instant::now();
+                    let mut test_hist = histogram::Histogram::new();
+                    for i in 0..10_000 {
+                        test_hist.increment(i * 7).unwrap();
+                    }
+                    let test_mean = test_hist.mean().unwrap();
+                    let test_50pct = test_hist.percentile(50.0).unwrap();
+                    let test_90pct = test_hist.percentile(90.0).unwrap();
+                    let hist_elapsed = ts.elapsed().as_micros();
+
                     datapoint_info!(
                         "verifier_service-timing",
+                        ("test_hist_mean", test_mean, i64),
+                        ("test_hist_50pct", test_50pct, i64),
+                        ("test_hist_90pct", test_90pct, i64),
+                        ("test_hist_elapsed_10000", hist_elapsed, i64),
                         (
                             "batch_time_us_50pct",
                             stats.batch_time_us_hist.percentile(50.0).unwrap_or(0),
@@ -274,10 +288,26 @@ impl SigVerifyStage {
                             stats.packets_per_batch.mean().unwrap_or(0),
                             i64
                         ),
-                        ("batches_50pct", stats.batches_hist.percentile(50.0).unwrap_or(0), i64),
-                        ("batches_90pct", stats.batches_hist.percentile(90.0).unwrap_or(0), i64),
-                        ("batches_min", stats.batches_hist.minimum().unwrap_or(0), i64),
-                        ("batches_max", stats.batches_hist.maximum().unwrap_or(0), i64),
+                        (
+                            "batches_50pct",
+                            stats.batches_hist.percentile(50.0).unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batches_90pct",
+                            stats.batches_hist.percentile(90.0).unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batches_min",
+                            stats.batches_hist.minimum().unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batches_max",
+                            stats.batches_hist.maximum().unwrap_or(0),
+                            i64
+                        ),
                         ("batches_mean", stats.batches_hist.mean().unwrap_or(0), i64),
                         ("total_packets", stats.total_packets, i64),
                         ("total_batches", stats.total_batches, i64),
