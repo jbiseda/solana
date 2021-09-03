@@ -15,6 +15,8 @@ pub struct PacketTimer {
     incoming_start: Option<Instant>,
     incoming_initial_end: Option<Instant>,
     incoming_end: Option<Instant>,
+    verify_start: Option<Instant>,
+    verify_end: Option<Instant>,
     outgoing_start: Option<Instant>,
     num_coalesced: usize,
 }
@@ -48,6 +50,23 @@ impl PacketTimer {
         self.num_coalesced = self.num_coalesced.saturating_add(1);
     }
 
+    pub fn coalesce_from(&mut self, pkt_timer: &PacketTimer) {
+        if pkt_timer.incoming_start < self.incoming_start {
+            self.incoming_start = pkt_timer.incoming_start;
+            self.incoming_initial_end = pkt_timer.incoming_initial_end;
+        }
+        if pkt_timer.incoming_end > self.incoming_end {
+            self.incoming_end = pkt_timer.incoming_end;
+        }
+        if pkt_timer.verify_start < self.verify_start {
+            self.verify_start = pkt_timer.verify_start;
+        }
+        if pkt_timer.verify_end > self.verify_end {
+            self.verify_end = pkt_timer.verify_end;
+        }
+        self.num_coalesced = self.num_coalesced.saturating_add(1);
+    }
+
     pub fn get_incoming_start(&self) -> Option<Instant> {
         self.incoming_start
     }
@@ -58,6 +77,19 @@ impl PacketTimer {
 
     pub fn get_num_coalesced(&self) -> usize {
         self.num_coalesced
+    }
+
+    pub fn get_verify_start(&self) -> Option<Instant> {
+        self.verify_start
+    }
+
+    pub fn get_verify_end(&self) -> Option<Instant> {
+        self.verify_end
+    }
+
+    pub fn set_verify(&mut self, start: Instant, end: Instant) {
+        self.verify_start = Some(start);
+        self.verify_end = Some(end);
     }
 }
 

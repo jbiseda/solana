@@ -86,6 +86,8 @@ struct ReceiveWindowStats {
     elapsed_last_recv_to_start: Duration,
     batch_span_us_hist: histogram::Histogram,
     batch_first_recv_us_hist: histogram::Histogram,
+    batch_start_verify_us_hist: histogram::Histogram,
+    batch_end_verify_us_hist: histogram::Histogram,
 }
 
 impl ReceiveWindowStats {
@@ -174,6 +176,64 @@ impl ReceiveWindowStats {
                 self.batch_first_recv_us_hist.stddev().unwrap_or(0),
                 i64
             ),
+            (
+                "batch_start_verify_us_hist_50pct",
+                self.batch_start_verify_us_hist
+                    .percentile(50.0)
+                    .unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_start_verify_us_hist_90pct",
+                self.batch_start_verify_us_hist
+                    .percentile(90.0)
+                    .unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_start_verify_us_hist_min",
+                self.batch_start_verify_us_hist.minimum().unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_start_verify_us_hist_max",
+                self.batch_start_verify_us_hist.maximum().unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_start_verify_us_hist_mean",
+                self.batch_start_verify_us_hist.mean().unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_end_verify_us_hist_50pct",
+                self.batch_start_verify_us_hist
+                    .percentile(50.0)
+                    .unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_end_verify_us_hist_90pct",
+                self.batch_start_verify_us_hist
+                    .percentile(90.0)
+                    .unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_end_verify_us_hist_min",
+                self.batch_start_verify_us_hist.minimum().unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_end_verify_us_hist_max",
+                self.batch_start_verify_us_hist.maximum().unwrap_or(0),
+                i64
+            ),
+            (
+                "batch_end_verify_us_hist_mean",
+                self.batch_start_verify_us_hist.mean().unwrap_or(0),
+                i64
+            ),
         );
         for (slot, num_shreds) in &self.slots {
             datapoint_info!(
@@ -201,6 +261,8 @@ impl ReceiveWindowStats {
 
         self.batch_span_us_hist.clear();
         self.batch_first_recv_us_hist.clear();
+        self.batch_start_verify_us_hist.clear();
+        self.batch_end_verify_us_hist.clear();
     }
 }
 
@@ -410,8 +472,10 @@ where
     let mut packets = verified_receiver.recv_timeout(timer)?;
     let mut packet_timer = packets[0].timer;
     packets.extend(verified_receiver.try_iter().flatten());
+
     for pkts in &packets {
-        packet_timer.extend_incoming_from(&pkts.timer);
+        //packet_timer.extend_incoming_from(&pkts.timer);
+        packet_timer.coalesce_from(&pkts.timer);
     }
     let now = Instant::now();
     let last_root = blockstore.last_root();
@@ -508,6 +572,14 @@ where
     stats
         .batch_first_recv_us_hist
         .increment((now - first_time).as_micros() as u64)
+        .unwrap();
+    stats
+        .batch_start_verify_us_hist
+        .increment((now - packet_timer.get_verify_start().unwrap()).as_micros() as u64)
+        .unwrap();
+    stats
+        .batch_end_verify_us_hist
+        .increment((now - packet_timer.get_verify_end().unwrap()).as_micros() as u64)
         .unwrap();
 
     Ok(())

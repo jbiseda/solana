@@ -12,6 +12,7 @@ use solana_perf::sigverify;
 pub use solana_perf::sigverify::{
     batch_size, ed25519_verify_cpu, ed25519_verify_disabled, init, TxOffset,
 };
+use std::time::Instant;
 
 #[derive(Clone)]
 pub struct TransactionSigVerifier {
@@ -31,7 +32,12 @@ impl Default for TransactionSigVerifier {
 
 impl SigVerifier for TransactionSigVerifier {
     fn verify_batch(&self, mut batch: Vec<Packets>) -> Vec<Packets> {
+        let before_ts = Instant::now();
         sigverify::ed25519_verify(&mut batch, &self.recycler, &self.recycler_out);
+        let after_ts = Instant::now();
+        batch
+            .iter_mut()
+            .for_each(|pkts| pkts.timer.set_verify(before_ts, after_ts));
         batch
     }
 }
