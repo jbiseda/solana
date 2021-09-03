@@ -41,7 +41,9 @@ struct SigVerifierStats {
     batch_time_us_hist: histogram::Histogram,
     batch_time_pp_us_hist: histogram::Histogram,
     packets_per_batch: histogram::Histogram,
+    batches_hist: histogram::Histogram,
     total_packets: usize,
+    total_batches: usize,
 }
 
 pub trait SigVerifier {
@@ -129,6 +131,8 @@ impl SigVerifyStage {
             .increment(total_packets as u64)
             .unwrap();
         stats.total_packets += total_packets;
+        stats.total_batches += batch_len;
+        stats.batches_hist.increment(batch_len as u64).unwrap();
 
         debug!(
             "@{:?} verifier: done. batches: {} total verify time: {:?} id: {} verified: {} v/s {}",
@@ -162,7 +166,9 @@ impl SigVerifyStage {
             batch_time_us_hist: histogram::Histogram::new(),
             batch_time_pp_us_hist: histogram::Histogram::new(),
             packets_per_batch: histogram::Histogram::new(),
+            batches_hist: histogram::Histogram::new(),
             total_packets: 0,
+            total_batches: 0,
         };
         let mut last_stats = Instant::now();
 
@@ -268,12 +274,20 @@ impl SigVerifyStage {
                             stats.packets_per_batch.mean().unwrap_or(0),
                             i64
                         ),
+                        ("batches_50pct", stats.batches_hist.percentile(50.0).unwrap_or(0), i64),
+                        ("batches_90pct", stats.batches_hist.percentile(90.0).unwrap_or(0), i64),
+                        ("batches_min", stats.batches_hist.minimum().unwrap_or(0), i64),
+                        ("batches_max", stats.batches_hist.maximum().unwrap_or(0), i64),
+                        ("batches_mean", stats.batches_hist.mean().unwrap_or(0), i64),
                         ("total_packets", stats.total_packets, i64),
+                        ("total_batches", stats.total_batches, i64),
                     );
                     stats.batch_time_us_hist.clear();
                     stats.batch_time_pp_us_hist.clear();
                     stats.packets_per_batch.clear();
+                    stats.batches_hist.clear();
                     stats.total_packets = 0;
+                    stats.total_batches = 0;
                     last_stats = Instant::now();
                 }
             })
