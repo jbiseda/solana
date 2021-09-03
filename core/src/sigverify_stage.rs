@@ -41,6 +41,7 @@ struct SigVerifierStats {
     batch_time_us_hist: histogram::Histogram,
     batch_time_pp_us_hist: histogram::Histogram,
     packets_per_batch: histogram::Histogram,
+    total_packets: usize,
 }
 
 pub trait SigVerifier {
@@ -127,6 +128,7 @@ impl SigVerifyStage {
             .packets_per_batch
             .increment(total_packets as u64)
             .unwrap();
+        stats.total_packets += total_packets;
 
         debug!(
             "@{:?} verifier: done. batches: {} total verify time: {:?} id: {} verified: {} v/s {}",
@@ -160,6 +162,7 @@ impl SigVerifyStage {
             batch_time_us_hist: histogram::Histogram::new(),
             batch_time_pp_us_hist: histogram::Histogram::new(),
             packets_per_batch: histogram::Histogram::new(),
+            total_packets: 0,
         };
         let mut last_stats = Instant::now();
 
@@ -265,10 +268,12 @@ impl SigVerifyStage {
                             stats.packets_per_batch.mean().unwrap_or(0),
                             i64
                         ),
+                        ("total_packets", stats.total_packets, i64),
                     );
                     stats.batch_time_us_hist.clear();
                     stats.batch_time_pp_us_hist.clear();
                     stats.packets_per_batch.clear();
+                    stats.total_packets = 0;
                     last_stats = Instant::now();
                 }
             })
