@@ -239,12 +239,16 @@ impl ReceiveWindowStats {
             ),
             (
                 "batch_span_pp_verify_ns_hist_50pct",
-                self.batch_span_pp_verify_ns_hist.percentile(50.0).unwrap_or(0),
+                self.batch_span_pp_verify_ns_hist
+                    .percentile(50.0)
+                    .unwrap_or(0),
                 i64
             ),
             (
                 "batch_span_pp_verify_ns_hist_90pct",
-                self.batch_span_pp_verify_ns_hist.percentile(90.0).unwrap_or(0),
+                self.batch_span_pp_verify_ns_hist
+                    .percentile(90.0)
+                    .unwrap_or(0),
                 i64
             ),
             (
@@ -621,7 +625,8 @@ where
             .batch_span_pp_verify_ns_hist
             .increment(
                 ((packet_timer.get_verify_end().unwrap() - packet_timer.get_verify_start().unwrap())
-                    .as_nanos() as u64) / (total_packets as u64),
+                    .as_nanos() as u64)
+                    / (total_packets as u64),
             )
             .unwrap();
     } else {

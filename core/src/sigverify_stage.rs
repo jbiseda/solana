@@ -37,6 +37,11 @@ pub struct SigVerifyStage {
     thread_hdls: Vec<JoinHandle<()>>,
 }
 
+struct SigVerifierStats {
+    batch_time_us_hist: histogram::Histogram,
+    batch_time_pp_us_hist: histogram::Histogram,
+}
+
 pub trait SigVerifier {
     fn verify_batch(&self, batch: Vec<Packets>) -> Vec<Packets>;
 }
@@ -72,6 +77,7 @@ impl SigVerifyStage {
         sendr: &CrossbeamSender<Vec<Packets>>,
         id: usize,
         verifier: &T,
+        stats: &mut SigVerifierStats,
     ) -> Result<()> {
         let (batch, len, recv_time) = streamer::recv_batch(
             &recvr.lock().expect("'recvr' lock in fn verifier"),
@@ -95,14 +101,27 @@ impl SigVerifyStage {
         let mut batch = verifier.verify_batch(batch);
         let after_ts = Instant::now();
 
-        batch
-            .iter_mut()
-            .for_each(|pkts| pkts.timer.set_verify(before_ts, after_ts));
+        let mut total_packets = 0;
+        batch.iter_mut().for_each(|pkts| {
+            pkts.timer.set_verify(before_ts, after_ts);
+            total_packets += pkts.packets.len();
+        });
 
         sendr.send(batch)?;
 
         //sendr.send(verifier.verify_batch(batch))?;
         verify_batch_time.stop();
+
+        //        let total_packets: usize = batch.iter().map(|pkts| pkts.packets.len()).sum();
+
+        stats
+            .batch_time_us_hist
+            .increment(verify_batch_time.as_us())
+            .unwrap();
+        stats
+            .batch_time_pp_us_hist
+            .increment(verify_batch_time.as_us() / (total_packets as u64))
+            .unwrap();
 
         debug!(
             "@{:?} verifier: done. batches: {} total verify time: {:?} id: {} verified: {} v/s {}",
@@ -132,10 +151,22 @@ impl SigVerifyStage {
         verifier: &T,
     ) -> JoinHandle<()> {
         let verifier = verifier.clone();
+        let mut stats = SigVerifierStats {
+            batch_time_us_hist: histogram::Histogram::new(),
+            batch_time_pp_us_hist: histogram::Histogram::new(),
+        };
+        let mut last_stats = Instant::now();
+
         Builder::new()
             .name(format!("solana-verifier-{}", id))
             .spawn(move || loop {
-                if let Err(e) = Self::verifier(&packet_receiver, &verified_sender, id, &verifier) {
+                if let Err(e) = Self::verifier(
+                    &packet_receiver,
+                    &verified_sender,
+                    id,
+                    &verifier,
+                    &mut stats,
+                ) {
                     match e {
                         SigVerifyServiceError::Streamer(StreamerError::RecvTimeout(
                             RecvTimeoutError::Disconnected,
@@ -148,6 +179,65 @@ impl SigVerifyStage {
                         }
                         _ => error!("{:?}", e),
                     }
+                }
+
+                if last_stats.elapsed().as_secs() > 2 {
+                    datapoint_info!(
+                        "verifier_service-timing",
+                        (
+                            "batch_time_us_50pct",
+                            stats.batch_time_us_hist.percentile(50.0).unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_us_90pct",
+                            stats.batch_time_us_hist.percentile(90.0).unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_us_min",
+                            stats.batch_time_us_hist.minimum().unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_us_max",
+                            stats.batch_time_us_hist.maximum().unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_us_mean",
+                            stats.batch_time_us_hist.mean().unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_pp_us_50pct",
+                            stats.batch_time_pp_us_hist.percentile(50.0).unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_pp_us_90pct",
+                            stats.batch_time_pp_us_hist.percentile(90.0).unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_pp_us_min",
+                            stats.batch_time_pp_us_hist.minimum().unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_pp_us_max",
+                            stats.batch_time_pp_us_hist.maximum().unwrap_or(0),
+                            i64
+                        ),
+                        (
+                            "batch_time_pp_us_mean",
+                            stats.batch_time_pp_us_hist.mean().unwrap_or(0),
+                            i64
+                        ),
+                    );
+                    stats.batch_time_us_hist.clear();
+                    stats.batch_time_pp_us_hist.clear();
+                    last_stats = Instant::now();
                 }
             })
             .unwrap()
