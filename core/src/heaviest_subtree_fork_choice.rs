@@ -850,6 +850,23 @@ impl HeaviestSubtreeForkChoice {
             self.latest_votes,
             best_path.iter().rev().collect::<Vec<&SlotHashKey>>()
         );
+
+        let mut sum_children = 0;
+        let mut sum_children_cap = 0;
+        for fork_info in self.fork_infos.values() {
+            sum_children += fork_info.children.len();
+            sum_children_cap += fork_info.children.capacity();
+        }
+
+        datapoint_info!(
+            "heaviest_subtree_fork_choice",
+            ("fork_infos.len", self.fork_infos.len(), i64),
+            ("fork_infos.capacity", self.fork_infos.capacity(), i64),
+            ("fork_infos-sum_children", sum_children, i64),
+            ("fork_infos-sum_children_cap", sum_children_cap, i64),
+            ("latest_votes.len", self.latest_votes.len(), i64),
+            ("latest_votes.capacity", self.latest_votes.capacity(), i64),
+        );
     }
 
     fn heaviest_slot_on_same_voted_fork(&self, tower: &Tower) -> Option<SlotHashKey> {
