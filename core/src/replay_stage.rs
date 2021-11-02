@@ -117,6 +117,12 @@ struct SkippedSlotsInfo {
     last_skipped_slot: u64,
 }
 
+struct LastRetransmitInfo {
+    slot: Slot,
+    time: Instant,
+    retry_iteration: u8,
+}
+
 pub struct ReplayStageConfig {
     pub vote_account: Pubkey,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
@@ -374,6 +380,7 @@ impl ReplayStage {
                 let mut last_reset = Hash::default();
                 let mut partition_exists = false;
                 let mut skipped_slots_info = SkippedSlotsInfo::default();
+                let mut last_retransmit_retry_info = LastRetransmitInfo { slot: 0, time: Instant::now(), retry_iteration: 0 };
                 let mut replay_timing = ReplayTiming::default();
                 let mut duplicate_slots_tracker = DuplicateSlotsTracker::default();
                 let mut gossip_duplicate_confirmed_slots: GossipDuplicateConfirmedSlots = GossipDuplicateConfirmedSlots::default();
@@ -756,6 +763,51 @@ impl ReplayStage {
                     // will be outdated, and we cannot assume `poh_bank` will be in either of these maps.
                     Self::dump_then_repair_correct_slots(&mut duplicate_slots_to_repair, &mut ancestors, &mut descendants, &mut progress, &bank_forks, &blockstore, poh_bank.map(|bank| bank.slot()));
                     dump_then_repair_correct_slots_time.stop();
+
+                    {
+                        //TODO retransmitting here?
+
+                        let (_reached_leader_slot, _grace_ticks, _poh_slot, parent_slot) =
+                            poh_recorder.lock().unwrap().reached_leader_slot();
+
+                        let latest_unconfirmed_leader_slot = progress.get_latest_leader_slot(parent_slot)
+                            .expect("In order for propagated check to fail, latest leader must exist in progress map");
+
+                        let bank = bank_forks
+                            .read()
+                            .unwrap()
+                            .get(latest_unconfirmed_leader_slot)
+                            .expect(
+                                "In order for propagated check to fail, \
+                                    latest leader must exist in progress map, and thus also in BankForks",
+                            )
+                            .clone();
+
+                        if last_retransmit_retry_info.slot == bank.slot() {
+                            error!("retransmit slot mached bank: {}", bank.slot());
+                            let time_offset = 2_u64.pow(last_retransmit_retry_info.retry_iteration.into()) * 5; // TODO make const
+                            if last_retransmit_retry_info.time.elapsed().as_secs() > time_offset {
+                                error!("retransmit time limit reached for iter {}, slot {}", // TODO make worn/info
+                                    last_retransmit_retry_info.retry_iteration,
+                                    bank.slot(),
+                                );
+                                if last_retransmit_retry_info.retry_iteration < 8 { // TODO make const
+                                    last_retransmit_retry_info.retry_iteration += 1;
+                                }
+                                last_retransmit_retry_info.time = Instant::now();
+
+                                datapoint_info!("replay_stage-retransmit", ("slot", bank.slot(), i64));
+                                let _ = retransmit_slots_sender.send(vec![(bank.slot(), bank.clone())].into_iter().collect());
+                            }
+                        } else {
+                            last_retransmit_retry_info.slot = bank.slot();
+                            last_retransmit_retry_info.time = Instant::now();
+                            last_retransmit_retry_info.retry_iteration = 0;
+                            error!("setting start of retransmit retry for {}", bank.slot());
+                        }
+
+                        // TODO if sent pass down to start_leader to bypass send
+                    }
 
                     // From this point on, its not safe to use ancestors/descendants since maybe_start_leader
                     // may add a bank that will not included in either of these maps.
