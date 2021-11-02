@@ -117,6 +117,7 @@ struct SkippedSlotsInfo {
     last_skipped_slot: u64,
 }
 
+#[derive(Debug)]
 struct LastRetransmitInfo {
     slot: Slot,
     time: Instant,
@@ -787,10 +788,7 @@ impl ReplayStage {
                             error!("retransmit slot mached bank: {}", bank.slot());
                             let time_offset = 2_u64.pow(last_retransmit_retry_info.retry_iteration.into()) * 5; // TODO make const
                             if last_retransmit_retry_info.time.elapsed().as_secs() > time_offset {
-                                error!("retransmit time limit reached for iter {}, slot {}", // TODO make worn/info
-                                    last_retransmit_retry_info.retry_iteration,
-                                    bank.slot(),
-                                );
+                                error!("retransmit time limit reached for {:?}", &last_retransmit_retry_info); // TODO make warn/info
                                 if last_retransmit_retry_info.retry_iteration < 8 { // TODO make const
                                     last_retransmit_retry_info.retry_iteration += 1;
                                 }
@@ -803,7 +801,7 @@ impl ReplayStage {
                             last_retransmit_retry_info.slot = bank.slot();
                             last_retransmit_retry_info.time = Instant::now();
                             last_retransmit_retry_info.retry_iteration = 0;
-                            error!("setting start of retransmit retry for {}", bank.slot());
+                            error!("setting start of retransmit retry for {:?}", &last_retransmit_retry_info);
                         }
 
                         // TODO if sent pass down to start_leader to bypass send
