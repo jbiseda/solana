@@ -90,7 +90,7 @@ pub fn get_closest_completion(
             if let Some(last_index) = slot_meta.known_last_index() {
 
                 let shred_index = blockstore.get_index(slot).unwrap().unwrap();
-                let shred_count = shred_index.data().num_shreds();
+                let shred_count = shred_index.data().num_shreds() as u64;
 
                 //let dist = last_index - slot_meta.consumed;
                 let dist = last_index - shred_count;
