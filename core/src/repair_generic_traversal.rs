@@ -88,7 +88,12 @@ pub fn get_closest_completion(
                 continue;
             }
             if let Some(last_index) = slot_meta.known_last_index() {
-                let dist = last_index - slot_meta.consumed;
+
+                let shred_index = blockstore.get_index(slot).unwrap().unwrap();
+                let shred_count = shred_index.data().num_shreds();
+
+                //let dist = last_index - slot_meta.consumed;
+                let dist = last_index - shred_count;
                 v.push((slot, dist));
                 processed_slots.insert(slot);
             }
