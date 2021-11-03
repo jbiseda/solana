@@ -789,7 +789,7 @@ impl ReplayStage {
                                 error!("retransmit slot mached bank: {}", bank.slot());
                                 let time_offset = 2_u64.pow(last_retransmit_retry_info.retry_iteration.into()) * 5; // TODO make const
                                 if last_retransmit_retry_info.time.elapsed().as_secs() > time_offset {
-                                    error!("retransmit time limit reached for {:?}", &last_retransmit_retry_info); // TODO make warn/info
+                                    warn!("retransmit time limit reached for {:?}", &last_retransmit_retry_info); // TODO make warn/info
                                     if last_retransmit_retry_info.retry_iteration < 8 { // TODO make const
                                         last_retransmit_retry_info.retry_iteration += 1;
                                     }
@@ -805,7 +805,7 @@ impl ReplayStage {
                                 error!("setting start of retransmit retry for {:?}", &last_retransmit_retry_info);
                             }
                         } else {
-                            error!("Latest leader slot not found in progress map for parent slot {}", parent_slot); //TODO cleanup
+                            info!("Latest leader slot not found in progress map for parent slot {}", parent_slot); //TODO cleanup
                         }
 
                         // TODO if sent pass down to start_leader to bypass send
