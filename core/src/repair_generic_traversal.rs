@@ -46,7 +46,7 @@ pub fn get_unknown_last_index(
     limit: usize,
 ) -> Vec<ShredRepairType> {
     let iter = GenericTraversal::new(tree);
-    let mut missing = Vec::new();
+    let mut unknown_last = Vec::new();
     for slot in iter {
         if processed_slots.contains(&slot) {
             continue;
@@ -62,41 +62,43 @@ pub fn get_unknown_last_index(
                 } else {
                     slot_meta.consumed
                 };
-                missing.push((slot, slot_meta.received, num_processed_shreds));
+                unknown_last.push((slot, slot_meta.received, num_processed_shreds));
                 processed_slots.insert(slot);
             }
         }
     }
     // prioritize slots with more received shreds
-    missing.sort_by(|(_, _, count1), (_, _, count2)| count2.cmp(count1));
-    missing
+    unknown_last.sort_by(|(_, _, count1), (_, _, count2)| count2.cmp(count1));
+    unknown_last
         .iter()
         .take(limit)
         .map(|(slot, received, _)| ShredRepairType::HighestShred(*slot, *received))
         .collect()
 }
 
-fn visit_parents_once(
-    slot: Slot,
+fn get_unrepaired_path(
+    start_slot: Slot,
     blockstore: &Blockstore,
     slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
     visited: &mut HashSet<Slot>,
-    path: &mut Vec<Slot>,
-) {
-    if visited.contains(&slot) {
-        return;
-    }
-    visited.insert(slot);
-    let slot_meta = slot_meta_cache
-        .entry(slot)
-        .or_insert_with(|| blockstore.meta(slot).unwrap());
-    if let Some(slot_meta) = slot_meta {
-        if slot_meta.is_full() {
-            return;
+) -> Vec<Slot> {
+    let mut path = Vec::new();
+    let mut slot = start_slot;
+    while !visited.contains(&slot) {
+        visited.insert(slot);     
+        let slot_meta = slot_meta_cache
+            .entry(slot)
+            .or_insert_with(|| blockstore.meta(slot).unwrap());
+        if let Some(slot_meta) = slot_meta {
+            if slot_meta.is_full() {
+                break;
+            }
+            path.push(slot);
+            slot = slot_meta.parent_slot;
         }
-        visit_parents_once(slot_meta.parent_slot, blockstore, slot_meta_cache, visited, path);
-        path.push(slot);
     }
+    path.reverse();
+    path
 }
 
 pub fn get_closest_completion(
@@ -140,8 +142,9 @@ pub fn get_closest_completion(
         if repairs.len() >= limit {
             break;
         }
-        let mut path = Vec::new();
-        visit_parents_once(slot, blockstore, slot_meta_cache, &mut visited, &mut path);
+        // attempt to repair heaviest slots starting with their parents
+        let path = get_unrepaired_path(slot, blockstore, slot_meta_cache, &mut visited);
+        error!("CLOSEST COMPLETION parent path len:{}, {:?}", path.len(), path);
         for slot in path {
             if repairs.len() >= limit {
                 break;
