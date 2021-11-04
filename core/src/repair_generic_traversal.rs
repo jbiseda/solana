@@ -45,29 +45,7 @@ pub fn get_unknown_last_index(
     processed_slots: &mut HashSet<Slot>,
     limit: usize,
 ) -> Vec<ShredRepairType> {
-    //let mut repairs = Vec::new();
     let iter = GenericTraversal::new(tree);
-
-    /*
-    for slot in iter {
-        if repairs.len() >= limit {
-            break;
-        }
-        if processed_slots.contains(&slot) {
-            continue;
-        }
-        let slot_meta = slot_meta_cache
-            .entry(slot)
-            .or_insert_with(|| blockstore.meta(slot).unwrap());
-        if let Some(slot_meta) = slot_meta {
-            if slot_meta.known_last_index().is_none() {
-                repairs.push(ShredRepairType::HighestShred(slot, slot_meta.received));
-                processed_slots.insert(slot);
-            }
-        }
-    }
-    */
-
     let mut missing = Vec::new();
     for slot in iter {
         if processed_slots.contains(&slot) {
@@ -80,8 +58,7 @@ pub fn get_unknown_last_index(
             if slot_meta.known_last_index().is_none() {
                 let shred_index = blockstore.get_index(slot).unwrap();
                 let num_processed_shreds = if let Some(shred_index) = shred_index {
-                    let shred_count = shred_index.data().num_shreds() as u64;
-                    shred_count
+                    shred_index.data().num_shreds() as u64
                 } else {
                     slot_meta.consumed
                 };
@@ -90,14 +67,36 @@ pub fn get_unknown_last_index(
             }
         }
     }
+    // prioritize slots with more received shreds
     missing.sort_by(|(_, _, count1), (_, _, count2)| count2.cmp(count1));
     missing
         .iter()
         .take(limit)
         .map(|(slot, received, _)| ShredRepairType::HighestShred(*slot, *received))
         .collect()
+}
 
-    //repairs
+fn visit_parents_once(
+    slot: Slot,
+    blockstore: &Blockstore,
+    slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
+    visited: &mut HashSet<Slot>,
+    path: &mut Vec<Slot>,
+) {
+    if visited.contains(&slot) {
+        return;
+    }
+    visited.insert(slot);
+    let slot_meta = slot_meta_cache
+        .entry(slot)
+        .or_insert_with(|| blockstore.meta(slot).unwrap());
+    if let Some(slot_meta) = slot_meta {
+        if slot_meta.is_full() {
+            return;
+        }
+        visit_parents_once(slot_meta.parent_slot, blockstore, slot_meta_cache, visited, path);
+        path.push(slot);
+    }
 }
 
 pub fn get_closest_completion(
@@ -123,7 +122,6 @@ pub fn get_closest_completion(
             if let Some(last_index) = slot_meta.known_last_index() {
                 let shred_index = blockstore.get_index(slot).unwrap();
                 let dist = if let Some(shred_index) = shred_index {
-                    //let dist = last_index - slot_meta.consumed;
                     let shred_count = shred_index.data().num_shreds() as u64;
                     last_index - shred_count
                 } else {
@@ -136,19 +134,27 @@ pub fn get_closest_completion(
     }
     v.sort_by(|(_, d1), (_, d2)| d1.cmp(d2));
 
-    let mut repairs = Vec::default();
+    let mut visited = HashSet::new();
+    let mut repairs = Vec::new();
     for (slot, _) in v {
         if repairs.len() >= limit {
             break;
         }
-        let slot_meta = slot_meta_cache.get(&slot).unwrap().as_ref().unwrap();
-        let new_repairs = RepairService::generate_repairs_for_slot(
-            blockstore,
-            slot,
-            slot_meta,
-            limit - repairs.len(),
-        );
-        repairs.extend(new_repairs);
+        let mut path = Vec::new();
+        visit_parents_once(slot, blockstore, slot_meta_cache, &mut visited, &mut path);
+        for slot in path {
+            if repairs.len() >= limit {
+                break;
+            }
+            let slot_meta = slot_meta_cache.get(&slot).unwrap().as_ref().unwrap();
+            let new_repairs = RepairService::generate_repairs_for_slot(
+                blockstore,
+                slot,
+                slot_meta,
+                limit - repairs.len(),
+            );
+            repairs.extend(new_repairs);
+        }
     }
 
     repairs
