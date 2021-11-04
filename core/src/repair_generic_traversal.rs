@@ -77,13 +77,15 @@ pub fn get_unknown_last_index(
             .entry(slot)
             .or_insert_with(|| blockstore.meta(slot).unwrap());
         if let Some(slot_meta) = slot_meta {
-            if slot_meta.is_full() {
-                continue;
-            }
-            let shred_index = blockstore.get_index(slot).unwrap();
-            if let Some(shred_index) = shred_index {
-                let shred_count = shred_index.data().num_shreds() as u64;
-                missing.push((slot, slot_meta.received, shred_count));
+            if slot_meta.known_last_index().is_none() {
+                let shred_index = blockstore.get_index(slot).unwrap();
+                let num_processed_shreds = if let Some(shred_index) = shred_index {
+                    let shred_count = shred_index.data().num_shreds() as u64;
+                    shred_count
+                } else {
+                    slot_meta.consumed
+                };
+                missing.push((slot, slot_meta.received, num_processed_shreds));
                 processed_slots.insert(slot);
             }
         }
@@ -120,13 +122,15 @@ pub fn get_closest_completion(
             }
             if let Some(last_index) = slot_meta.known_last_index() {
                 let shred_index = blockstore.get_index(slot).unwrap();
-                if let Some(shred_index) = shred_index {
+                let dist = if let Some(shred_index) = shred_index {
                     //let dist = last_index - slot_meta.consumed;
                     let shred_count = shred_index.data().num_shreds() as u64;
-                    let dist = last_index - shred_count;
-                    v.push((slot, dist));
-                    processed_slots.insert(slot);
-                }
+                    last_index - shred_count
+                } else {
+                    last_index - slot_meta.consumed
+                };
+                v.push((slot, dist));
+                processed_slots.insert(slot);
             }
         }
     }
