@@ -45,8 +45,10 @@ pub fn get_unknown_last_index(
     processed_slots: &mut HashSet<Slot>,
     limit: usize,
 ) -> Vec<ShredRepairType> {
-    let mut repairs = Vec::new();
+    //let mut repairs = Vec::new();
     let iter = GenericTraversal::new(tree);
+
+    /*
     for slot in iter {
         if repairs.len() >= limit {
             break;
@@ -64,7 +66,34 @@ pub fn get_unknown_last_index(
             }
         }
     }
-    repairs
+    */
+
+    let mut missing = Vec::new();
+    for slot in iter {
+        if processed_slots.contains(&slot) {
+            continue;
+        }
+        let slot_meta = slot_meta_cache
+            .entry(slot)
+            .or_insert_with(|| blockstore.meta(slot).unwrap());
+        if let Some(slot_meta) = slot_meta {
+            if slot_meta.is_full() {
+                continue;
+            }
+            let shred_index = blockstore.get_index(slot).unwrap().unwrap();
+            let shred_count = shred_index.data().num_shreds() as u64;
+            missing.push((slot, slot_meta.received, shred_count));
+            processed_slots.insert(slot);
+        }
+    }
+    missing.sort_by(|(_, _, count1), (_, _, count2)| count2.cmp(count1));
+    missing
+        .iter()
+        .take(limit)
+        .map(|(slot, received, _)| ShredRepairType::HighestShred(*slot, *received))
+        .collect()
+
+    //repairs
 }
 
 pub fn get_closest_completion(
@@ -88,7 +117,6 @@ pub fn get_closest_completion(
                 continue;
             }
             if let Some(last_index) = slot_meta.known_last_index() {
-
                 let shred_index = blockstore.get_index(slot).unwrap().unwrap();
                 let shred_count = shred_index.data().num_shreds() as u64;
 
