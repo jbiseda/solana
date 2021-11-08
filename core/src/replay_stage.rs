@@ -782,14 +782,14 @@ impl ReplayStage {
                             .clone();
                             if last_retransmit_retry_info.slot == bank.slot() {
                                 if !progress.is_propagated(bank.slot()) {
-                                    warn!("NOT PROPAGATED slot:{}", bank.slot());
+                                    error!("NOT PROPAGATED slot:{}", bank.slot()); // TODO change to warn
                                     let backoff = std::cmp::min(
                                         last_retransmit_retry_info.retry_iteration,
                                         RETRANSMIT_BACKOFF_CAP
                                     );
                                     let time_offset = 2_u64.pow(backoff) * RETRANSMIT_BASE_DELAY_MS;
                                     if last_retransmit_retry_info.time.elapsed().as_millis() > time_offset.into() {
-                                        warn!("RETRYING: time elapsed for retransmit retry slot:{} retry:{} backoff:{}",
+                                        error!("RETRYING: time elapsed for retransmit retry slot:{} retry:{} backoff:{}", // TODO change to warn
                                             start_slot, last_retransmit_retry_info.retry_iteration, backoff);
 
                                         datapoint_info!("replay_stage-retransmit", ("slot", bank.slot(), i64));
@@ -804,7 +804,7 @@ impl ReplayStage {
                                 last_retransmit_retry_info.slot = bank.slot();
                                 last_retransmit_retry_info.time = Instant::now();
                                 last_retransmit_retry_info.retry_iteration = 0;
-                                info!("setting start of retransmit retry for {:?}", &last_retransmit_retry_info);
+                                warn!("setting start of retransmit retry for {:?}", &last_retransmit_retry_info); // TODO change to info
                             }
                     }
                     // TODO if sent pass down to start_leader to bypass send
