@@ -788,6 +788,10 @@ impl ReplayStage {
                                         RETRANSMIT_BACKOFF_CAP
                                     );
                                     let time_offset = 2_u64.pow(backoff) * RETRANSMIT_BASE_DELAY_MS;
+
+                                    let elapsed = last_retransmit_retry_info.time.elapsed().as_millis();
+                                    error!("retransmit check elapsed:{} offset:{}", elapsed, time_offset);
+
                                     if last_retransmit_retry_info.time.elapsed().as_millis() > time_offset.into() {
                                         error!("RETRYING: time elapsed for retransmit retry slot:{} retry:{} backoff:{}", // TODO change to warn
                                             start_slot, last_retransmit_retry_info.retry_iteration, backoff);
@@ -798,6 +802,8 @@ impl ReplayStage {
                                         );
                                         last_retransmit_retry_info.retry_iteration += 1;
                                         last_retransmit_retry_info.time = Instant::now();
+                                    } else {
+                                        error!("bypass retry iteration {} / {}", elapsed, time_offset);
                                     }
                                 }
                             } else {
