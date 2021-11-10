@@ -348,6 +348,10 @@ impl BroadcastStage {
             retransmit_slots.extend(new_retransmit_slots);
         }
 
+        if !retransmit_slots.is_empty() {
+            error!("Got retransmit signals for banks count:{}", retransmit_slots.len());
+        }
+
         for (_, bank) in retransmit_slots.iter() {
             let slot = bank.slot();
             let data_shreds = Arc::new(
@@ -356,6 +360,7 @@ impl BroadcastStage {
                     .expect("My own shreds must be reconstructable"),
             );
             debug_assert!(data_shreds.iter().all(|shred| shred.slot() == slot));
+            error!("retransmit sending data_shreds.len:{}", data_shreds.len());
             if !data_shreds.is_empty() {
                 socket_sender.send((data_shreds, None))?;
             }
@@ -367,6 +372,7 @@ impl BroadcastStage {
             );
 
             debug_assert!(coding_shreds.iter().all(|shred| shred.slot() == slot));
+            error!("retransmit sending coding_shreds.len:{}", coding_shreds.len());
             if !coding_shreds.is_empty() {
                 socket_sender.send((coding_shreds, None))?;
             }

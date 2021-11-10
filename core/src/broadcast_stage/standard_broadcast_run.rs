@@ -353,6 +353,8 @@ impl StandardBroadcastRun {
         // Broadcast the shreds
         let mut transmit_time = Measure::start("broadcast_shreds");
 
+        error!("standard_broadcast_run broadcast shreds:{}", shreds.len());
+
         broadcast_shreds(
             sock,
             &shreds,
