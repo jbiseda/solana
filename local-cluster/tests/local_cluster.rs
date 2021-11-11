@@ -2597,18 +2597,26 @@ fn test_repair_sinkhole() {
     // This validator will see that validator 2 has much more stake than validator 1.
 
     let validator1_stake = 1;
+    //let validator1_stake = 10000000000;
     let validator2_stake = 10000000000;
+    //let validator2_stake = 1;
     let validator3_stake = 10000000000;
+
+    info!("start test_repair_sinkhole");
 
     // 1) Set up the cluster
     let node_stakes = vec![validator1_stake, validator2_stake, validator3_stake];
     let (cluster, _validator_keys) = test_faulty_node(
-        BroadcastStageType::BroadcastMissingShreds,
+        //BroadcastStageType::BroadcastMissingShreds,
+        BroadcastStageType::BroadcastRandomDrop,
+        //BroadcastStageType::FailEntryVerification,
         node_stakes,
         // Make the first leader the only one with any slots in the leader
         // schedule
         Some(vec![1]),
     );
+
+    info!("test_repair_sinkhole marker");
 
     // 2) Check for new roots
     cluster.check_for_new_roots(16, "test_repair_sinkhole", SocketAddrSpace::Unspecified);
@@ -2819,8 +2827,14 @@ fn test_faulty_node(
     node_stakes: Vec<u64>,
     fixed_leader_schedule: Option<Vec<usize>>,
 ) -> (LocalCluster, Vec<Arc<Keypair>>) {
-    solana_logger::setup_with_default("solana_local_cluster=info");
+    error!("test_faulty_node 0");
+
+    //solana_logger::setup_with_default("solana_local_cluster=info");
+    //solana_logger::setup_with_default("trace");
+    solana_logger::setup_with_default("info");
     let num_nodes = node_stakes.len();
+
+    error!("test_faulty_node start");
 
     let (fixed_leader_schedule, mut validator_keys) = {
         if let Some(fixed_leader_schedule) = fixed_leader_schedule {
@@ -2870,6 +2884,7 @@ fn test_faulty_node(
     };
 
     let cluster = LocalCluster::new(&mut cluster_config, SocketAddrSpace::Unspecified);
+    error!("CLUSTER created");
     let validator_keys: Vec<Arc<Keypair>> = validator_keys
         .into_iter()
         .map(|(keypair, _)| keypair)

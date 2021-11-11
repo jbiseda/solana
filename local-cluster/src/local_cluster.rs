@@ -168,6 +168,7 @@ impl LocalCluster {
                     }
                 })
                 .unzip();
+        error!("TEST1");
         let leader_keypair = &keys_in_genesis[0].node_keypair;
         let leader_vote_keypair = &keys_in_genesis[0].vote_keypair;
         let leader_pubkey = leader_keypair.pubkey();

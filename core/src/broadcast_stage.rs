@@ -6,6 +6,7 @@ use {
         broadcast_fake_shreds_run::BroadcastFakeShredsRun,
         broadcast_metrics::*,
         broadcast_missing_shreds_run::BroadcastMissingShredsRun,
+        random_drop_broadcast_run::RandomDropBroadcastRun,
         fail_entry_verification_broadcast_run::FailEntryVerificationBroadcastRun,
         standard_broadcast_run::StandardBroadcastRun,
     },
@@ -53,6 +54,7 @@ pub mod broadcast_missing_shreds_run;
 pub(crate) mod broadcast_utils;
 mod fail_entry_verification_broadcast_run;
 mod standard_broadcast_run;
+mod random_drop_broadcast_run;
 
 const CLUSTER_NODES_CACHE_NUM_EPOCH_CAP: usize = 8;
 const CLUSTER_NODES_CACHE_TTL: Duration = Duration::from_secs(5);
@@ -75,6 +77,7 @@ pub enum BroadcastStageType {
     BroadcastFakeShreds,
     BroadcastDuplicates(BroadcastDuplicatesConfig),
     BroadcastMissingShreds,
+    BroadcastRandomDrop,
 }
 
 impl BroadcastStageType {
@@ -144,6 +147,17 @@ impl BroadcastStageType {
                 blockstore,
                 bank_forks,
                 BroadcastMissingShredsRun::new(shred_version),
+            ),
+
+            BroadcastStageType::BroadcastRandomDrop => BroadcastStage::new(
+                sock,
+                cluster_info,
+                receiver,
+                retransmit_slots_receiver,
+                exit_sender,
+                blockstore,
+                bank_forks,
+                RandomDropBroadcastRun::new(shred_version),
             ),
         }
     }

@@ -84,6 +84,7 @@ pub struct BroadcastMissingShredsRun {
     last_datapoint_submit: Arc<AtomicInterval>,
     num_batches: usize,
     cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
+    broadcast_iter: u64,
 }
 
 impl BroadcastMissingShredsRun {
@@ -103,6 +104,7 @@ impl BroadcastMissingShredsRun {
             last_datapoint_submit: Arc::default(),
             num_batches: 0,
             cluster_nodes_cache,
+            broadcast_iter: 0,
         }
     }
 
@@ -364,19 +366,37 @@ impl BroadcastMissingShredsRun {
         // Broadcast the shreds
         let mut transmit_time = Measure::start("broadcast_shreds");
 
+        error!("MISSING_SHREDS broadcast");
+
         if shreds.is_empty() {
             return Ok(());
         }
 
-        for shred_slice in FindLastShredsInSlotIterator::new(&shreds) {
-            // Check for last shreds in each slot in case there are multiple slots
-            // included in the input `shreds`. We want to avoid broadcasting
-            // such shreds
+        error!("{}:{} broadcast shreds.len:{} iter:{}", file!(), line!(), shreds.len(), self.broadcast_iter);
+
+        if self.broadcast_iter < 4 {
+            for shred_slice in FindLastShredsInSlotIterator::new(&shreds) {
+                // Check for last shreds in each slot in case there are multiple slots
+                // included in the input `shreds`. We want to avoid broadcasting
+                // such shreds
+                broadcast_shreds(
+                    sock,
+                    // `end_send_index` is non-inclusive to avoid broadcasting the last
+                    // shred in each slot.
+                    shred_slice,
+                    &self.cluster_nodes_cache,
+                    &self.last_datapoint_submit,
+                    &mut transmit_stats,
+                    cluster_info,
+                    bank_forks,
+                    cluster_info.socket_addr_space(),
+                )?;
+            }
+        } else {
+            error!("BROADCAST ALL SHREDS {}", shreds.len());
             broadcast_shreds(
                 sock,
-                // `end_send_index` is non-inclusive to avoid broadcasting the last
-                // shred in each slot.
-                shred_slice,
+                &shreds,
                 &self.cluster_nodes_cache,
                 &self.last_datapoint_submit,
                 &mut transmit_stats,
@@ -385,6 +405,9 @@ impl BroadcastMissingShredsRun {
                 cluster_info.socket_addr_space(),
             )?;
         }
+
+        self.broadcast_iter += 1;
+
         transmit_time.stop();
 
         transmit_stats.transmit_elapsed = transmit_time.as_us();
