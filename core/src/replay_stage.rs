@@ -769,6 +769,7 @@ impl ReplayStage {
                     dump_then_repair_correct_slots_time.stop();
 
                     //////////////////////////////////////////////////////////////////////////
+                    /*
                     let mut time_base_retransmit_time = Measure::start("time_base_retransmit_time");
                     let start_slot = poh_recorder.lock().unwrap().start_slot();
                     if let Some(latest_leader_slot) = progress.get_latest_leader_slot(start_slot) {
@@ -817,6 +818,7 @@ impl ReplayStage {
                     }
                     // TODO if sent pass down to start_leader to bypass send
                     time_base_retransmit_time.stop();
+                    */
                     //////////////////////////////////////////////////////////////////////////
 
                     // From this point on, its not safe to use ancestors/descendants since maybe_start_leader

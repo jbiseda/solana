@@ -2588,7 +2588,8 @@ fn test_fake_shreds_broadcast_leader() {
 #[allow(unused_attributes)]
 fn test_just_to_test() {
     let node_stakes = vec![1, 100_000, 100_000];
-    let (cluster, _) = test_faulty_node(BroadcastStageType::Incomplete, node_stakes, Some(vec![1]));
+    //let (cluster, _) = test_faulty_node(BroadcastStageType::Incomplete, node_stakes, Some(vec![1]));
+    let (cluster, _) = test_faulty_node(BroadcastStageType::Standard, node_stakes, Some(vec![1]));
     cluster.check_for_new_roots(
         16,
         "test_just_to_test",
