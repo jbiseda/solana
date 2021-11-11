@@ -2801,8 +2801,8 @@ fn test_faulty_node(
     node_stakes: Vec<u64>,
     fixed_leader_schedule: Option<Vec<usize>>,
 ) -> (LocalCluster, Vec<Arc<Keypair>>) {
-    //solana_logger::setup_with_default("solana_local_cluster=info");
-    solana_logger::setup_with_default("info");
+    solana_logger::setup_with_default("solana_local_cluster=info");
+    //solana_logger::setup_with_default("info");
     let num_nodes = node_stakes.len();
 
     /////////////////////////////////////
