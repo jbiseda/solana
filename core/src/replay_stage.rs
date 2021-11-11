@@ -117,6 +117,16 @@ struct SkippedSlotsInfo {
     last_skipped_slot: u64,
 }
 
+#[derive(Debug)]
+struct LastRetransmitInfo {
+    slot: Slot,
+    time: Instant,
+    retry_iteration: u32,
+}
+
+const RETRANSMIT_BASE_DELAY_MS: u64 = 10; // TODO change
+const RETRANSMIT_BACKOFF_CAP: u32 = 8;
+
 pub struct ReplayStageConfig {
     pub vote_account: Pubkey,
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
@@ -374,6 +384,7 @@ impl ReplayStage {
                 let mut last_reset = Hash::default();
                 let mut partition_exists = false;
                 let mut skipped_slots_info = SkippedSlotsInfo::default();
+                let mut last_retransmit_retry_info = LastRetransmitInfo { slot: 0, time: Instant::now(), retry_iteration: 0 };
                 let mut replay_timing = ReplayTiming::default();
                 let mut duplicate_slots_tracker = DuplicateSlotsTracker::default();
                 let mut gossip_duplicate_confirmed_slots: GossipDuplicateConfirmedSlots = GossipDuplicateConfirmedSlots::default();
@@ -756,6 +767,57 @@ impl ReplayStage {
                     // will be outdated, and we cannot assume `poh_bank` will be in either of these maps.
                     Self::dump_then_repair_correct_slots(&mut duplicate_slots_to_repair, &mut ancestors, &mut descendants, &mut progress, &bank_forks, &blockstore, poh_bank.map(|bank| bank.slot()));
                     dump_then_repair_correct_slots_time.stop();
+
+                    //////////////////////////////////////////////////////////////////////////
+                    let mut time_base_retransmit_time = Measure::start("time_base_retransmit_time");
+                    let start_slot = poh_recorder.lock().unwrap().start_slot();
+                    if let Some(latest_leader_slot) = progress.get_latest_leader_slot(start_slot) {
+                        let bank = bank_forks
+                            .read()
+                            .unwrap()
+                            .get(latest_leader_slot)
+                            .expect(
+                                "In order for propagated check to fail, \
+                                    latest leader must exist in progress map, and thus also in BankForks",
+                            )
+                            .clone();
+                            if last_retransmit_retry_info.slot == bank.slot() {
+                                if !progress.is_propagated(bank.slot()) {
+                                    error!("NOT PROPAGATED slot:{}", bank.slot()); // TODO change to warn
+                                    let backoff = std::cmp::min(
+                                        last_retransmit_retry_info.retry_iteration,
+                                        RETRANSMIT_BACKOFF_CAP
+                                    );
+                                    let time_offset = 2_u64.pow(backoff) * RETRANSMIT_BASE_DELAY_MS;
+
+                                    let elapsed = last_retransmit_retry_info.time.elapsed().as_millis();
+                                    error!("retransmit check elapsed:{} offset:{}", elapsed, time_offset);
+
+                                    if last_retransmit_retry_info.time.elapsed().as_millis() > time_offset.into() {
+                                        error!("*\n*\n*\n*\n*\n*\n*\n*\n*\n*\n*\n*");
+                                        error!("RETRYING: time elapsed for retransmit retry slot:{} retry:{} backoff:{}", // TODO change to warn
+                                            start_slot, last_retransmit_retry_info.retry_iteration, backoff);
+
+                                        datapoint_info!("replay_stage-retransmit", ("slot", bank.slot(), i64));
+                                        let _ = retransmit_slots_sender.send(
+                                            vec![(bank.slot(), bank.clone())].into_iter().collect()
+                                        );
+                                        last_retransmit_retry_info.retry_iteration += 1;
+                                        last_retransmit_retry_info.time = Instant::now();
+                                    } else {
+                                        error!("bypass retry iteration {} / {}", elapsed, time_offset);
+                                    }
+                                }
+                            } else {
+                                last_retransmit_retry_info.slot = bank.slot();
+                                last_retransmit_retry_info.time = Instant::now();
+                                last_retransmit_retry_info.retry_iteration = 0;
+                                warn!("setting start of retransmit retry for {:?}", &last_retransmit_retry_info); // TODO change to info
+                            }
+                    }
+                    // TODO if sent pass down to start_leader to bypass send
+                    time_base_retransmit_time.stop();
+                    //////////////////////////////////////////////////////////////////////////
 
                     // From this point on, its not safe to use ancestors/descendants since maybe_start_leader
                     // may add a bank that will not included in either of these maps.

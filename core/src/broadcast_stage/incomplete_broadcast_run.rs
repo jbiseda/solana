@@ -8,6 +8,7 @@ use {
     crate::{
         broadcast_stage::broadcast_utils::UnfinishedSlotInfo, cluster_nodes::ClusterNodesCache,
     },
+    rand::Rng,
     solana_entry::entry::Entry,
     solana_ledger::shred::{
         ProcessShredsStats, Shred, Shredder, MAX_DATA_SHREDS_PER_FEC_BLOCK,
@@ -327,6 +328,19 @@ impl IncompleteBroadcastRun {
         let mut transmit_stats = TransmitShredsStats::default();
         // Broadcast the shreds
         let mut transmit_time = Measure::start("broadcast_shreds");
+
+        error!("########\n##########\nSLOT {}\n##############\n############", shreds[0].slot());
+
+        /*
+        let mut rng = rand::thread_rng();
+        let x = rng.gen_range(0, 5);
+        if x < 1 {
+            error!(">>>>>>>>>>>> bypass broadcast {} slot {}", x, shreds[0].slot());
+            return Ok(());
+        } else {
+            error!("<<<<<<<<<<<< broadcast {} slot {}", x, shreds[0].slot());
+        }
+        */
 
         broadcast_shreds(
             sock,
