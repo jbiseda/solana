@@ -329,7 +329,7 @@ impl IncompleteBroadcastRun {
         // Broadcast the shreds
         let mut transmit_time = Measure::start("broadcast_shreds");
 
-        error!("########\n##########\nSLOT {}\n##############\n############", shreds[0].slot());
+        //error!("########\n##########\nSLOT {}\n##############\n############", shreds[0].slot());
 
         /*
         let mut rng = rand::thread_rng();
