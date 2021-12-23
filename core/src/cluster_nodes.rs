@@ -132,6 +132,7 @@ impl ClusterNodes<BroadcastStage> {
             }
             return Vec::default();
         }
+        // MARKMARK
         let mut rng = ChaChaRng::from_seed(shred_seed);
         let index = match weighted_sample_single(&mut rng, &self.cumulative_weights) {
             None => return Vec::default(),
