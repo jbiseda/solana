@@ -20,6 +20,7 @@ pub enum TransactionConfirmationStatus {
     Processed,
     Confirmed,
     Finalized,
+    // MARKMARK
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -192,6 +192,8 @@ pub enum CommitmentLevel {
     /// The highest slot having reached max vote lockout, as recognized by a supermajority of the
     /// cluster.
     Finalized,
+
+    // MARKMARK
 }
 
 impl Default for CommitmentLevel {
