@@ -216,6 +216,10 @@ impl JsonRpcRequestProcessor {
                 debug!("RPC using block: {:?}", slot);
             }
             CommitmentLevel::SingleGossip | CommitmentLevel::Confirmed => unreachable!(), // SingleGossip variant is deprecated
+
+            CommitmentLevel::Distributed(_) => {
+                debug!("RPC using distributed slot: {:?}", slot);
+            }
         };
 
         r_bank_forks.get(slot).cloned().unwrap_or_else(|| {

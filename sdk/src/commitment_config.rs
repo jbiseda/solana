@@ -194,6 +194,7 @@ pub enum CommitmentLevel {
     Finalized,
 
     // MARKMARK
+    Distributed(u64),
 }
 
 impl Default for CommitmentLevel {
@@ -215,6 +216,7 @@ impl FromStr for CommitmentLevel {
             "processed" => Ok(CommitmentLevel::Processed),
             "confirmed" => Ok(CommitmentLevel::Confirmed),
             "finalized" => Ok(CommitmentLevel::Finalized),
+            "distributed" => Ok(CommitmentLevel::Distributed(0)),
             _ => Err(ParseCommitmentLevelError::Invalid),
         }
     }
@@ -231,6 +233,7 @@ impl std::fmt::Display for CommitmentLevel {
             CommitmentLevel::Processed => "processed",
             CommitmentLevel::Confirmed => "confirmed",
             CommitmentLevel::Finalized => "finalized",
+            CommitmentLevel::Distributed(_) => "distributed",
         };
         write!(f, "{}", s)
     }

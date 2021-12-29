@@ -121,6 +121,7 @@ impl BlockCommitmentCache {
                 self.highest_gossip_confirmed_slot()
             }
             CommitmentLevel::Max | CommitmentLevel::Finalized => self.highest_confirmed_root(),
+            CommitmentLevel::Distributed(_) => self.slot(),
         }
     }
 
