@@ -6,7 +6,11 @@ use crate::{
     lamports::LamportsError,
     pubkey::Pubkey,
 };
-use std::cell::{RefCell, RefMut};
+use std::{
+    cell::{RefCell, RefMut},
+    collections::HashSet,
+    pin::Pin,
+};
 
 pub type TransactionAccount = (Pubkey, AccountSharedData);
 
@@ -23,8 +27,8 @@ pub struct InstructionAccount {
 /// This context is valid for the entire duration of a transaction being processed.
 #[derive(Debug)]
 pub struct TransactionContext {
-    account_keys: Vec<Pubkey>,
-    accounts: Vec<RefCell<AccountSharedData>>,
+    account_keys: Pin<Box<[Pubkey]>>,
+    accounts: Pin<Box<[RefCell<AccountSharedData>]>>,
     instruction_context_capacity: usize,
     instruction_context_stack: Vec<InstructionContext>,
     return_data: (Pubkey, Vec<u8>),
@@ -36,13 +40,14 @@ impl TransactionContext {
         transaction_accounts: Vec<TransactionAccount>,
         instruction_context_capacity: usize,
     ) -> Self {
-        let (account_keys, accounts) = transaction_accounts
-            .into_iter()
-            .map(|(key, account)| (key, RefCell::new(account)))
-            .unzip();
+        let (account_keys, accounts): (Vec<Pubkey>, Vec<RefCell<AccountSharedData>>) =
+            transaction_accounts
+                .into_iter()
+                .map(|(key, account)| (key, RefCell::new(account)))
+                .unzip();
         Self {
-            account_keys,
-            accounts,
+            account_keys: Pin::new(account_keys.into_boxed_slice()),
+            accounts: Pin::new(accounts.into_boxed_slice()),
             instruction_context_capacity,
             instruction_context_stack: Vec::with_capacity(instruction_context_capacity),
             return_data: (Pubkey::default(), Vec::new()),
@@ -51,10 +56,10 @@ impl TransactionContext {
 
     /// Used by the bank in the runtime to write back the processed accounts
     pub fn deconstruct(self) -> Vec<TransactionAccount> {
-        self.account_keys
+        Vec::from(Pin::into_inner(self.account_keys))
             .into_iter()
             .zip(
-                self.accounts
+                Vec::from(Pin::into_inner(self.accounts))
                     .into_iter()
                     .map(|account| account.into_inner()),
             )
@@ -66,8 +71,7 @@ impl TransactionContext {
         if !self.instruction_context_stack.is_empty() {
             return Err(InstructionError::CallDepth);
         }
-        Ok(self
-            .accounts
+        Ok(Vec::from(Pin::into_inner(self.accounts))
             .into_iter()
             .map(|account| account.into_inner())
             .collect())
@@ -243,21 +247,29 @@ impl InstructionContext {
             .map(|index| index.saturating_add(self.program_accounts.len()))
     }
 
+    /// Translates the given instruction wide index into a transaction wide index
+    pub fn get_index_in_transaction(
+        &self,
+        index_in_instruction: usize,
+    ) -> Result<usize, InstructionError> {
+        if index_in_instruction < self.program_accounts.len() {
+            Ok(self.program_accounts[index_in_instruction])
+        } else if index_in_instruction < self.get_number_of_accounts() {
+            Ok(self.instruction_accounts
+                [index_in_instruction.saturating_sub(self.program_accounts.len())]
+            .index_in_transaction)
+        } else {
+            Err(InstructionError::NotEnoughAccountKeys)
+        }
+    }
+
     /// Tries to borrow an account from this Instruction
     pub fn try_borrow_account<'a, 'b: 'a>(
         &'a self,
         transaction_context: &'b TransactionContext,
         index_in_instruction: usize,
     ) -> Result<BorrowedAccount<'a>, InstructionError> {
-        let index_in_transaction = if index_in_instruction < self.program_accounts.len() {
-            self.program_accounts[index_in_instruction]
-        } else if index_in_instruction < self.get_number_of_accounts() {
-            self.instruction_accounts
-                [index_in_instruction.saturating_sub(self.program_accounts.len())]
-            .index_in_transaction
-        } else {
-            return Err(InstructionError::NotEnoughAccountKeys);
-        };
+        let index_in_transaction = self.get_index_in_transaction(index_in_instruction)?;
         if index_in_transaction >= transaction_context.accounts.len() {
             return Err(InstructionError::MissingAccount);
         }
@@ -273,7 +285,7 @@ impl InstructionContext {
         })
     }
 
-    /// Gets the last program account of the current InstructionContext
+    /// Gets the last program account of this Instruction
     pub fn try_borrow_program_account<'a, 'b: 'a>(
         &'a self,
         transaction_context: &'b TransactionContext,
@@ -284,7 +296,7 @@ impl InstructionContext {
         )
     }
 
-    /// Gets an instruction account of the current InstructionContext
+    /// Gets an instruction account of this Instruction
     pub fn try_borrow_instruction_account<'a, 'b: 'a>(
         &'a self,
         transaction_context: &'b TransactionContext,
@@ -296,6 +308,19 @@ impl InstructionContext {
                 .len()
                 .saturating_add(index_in_instruction),
         )
+    }
+
+    /// Calculates the set of all keys of signer accounts in this Instruction
+    pub fn get_signers(&self, transaction_context: &TransactionContext) -> HashSet<Pubkey> {
+        let mut result = HashSet::new();
+        for instruction_account in self.instruction_accounts.iter() {
+            if instruction_account.is_signer {
+                result.insert(
+                    transaction_context.account_keys[instruction_account.index_in_transaction],
+                );
+            }
+        }
+        result
     }
 }
 
@@ -331,12 +356,10 @@ impl<'a> BorrowedAccount<'a> {
     }
 
     /// Assignes the owner of this account (transaction wide)
-    pub fn set_owner(&mut self, pubkey: Pubkey) -> Result<(), InstructionError> {
-        if !self.is_writable() {
-            return Err(InstructionError::Immutable);
-        }
-        self.account.set_owner(pubkey);
-        Ok(())
+    pub fn set_owner(&mut self, pubkey: &[u8]) -> Result<(), InstructionError> {
+        self.account.copy_into_owner_from_slice(pubkey);
+        self.verify_writability()
+        // TODO: return Err(InstructionError::ModifiedProgramId);
     }
 
     /// Returns the number of lamports of this account (transaction wide)
@@ -346,10 +369,14 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Overwrites the number of lamports of this account (transaction wide)
     pub fn set_lamports(&mut self, lamports: u64) -> Result<(), InstructionError> {
-        if !self.is_writable() {
-            return Err(InstructionError::Immutable);
-        }
         self.account.set_lamports(lamports);
+        if self.index_in_instruction < self.instruction_context.program_accounts.len() {
+            return Err(InstructionError::ExecutableLamportChange);
+        }
+        if !self.is_writable() {
+            return Err(InstructionError::ReadonlyLamportChange);
+        }
+        // TODO: return Err(InstructionError::ExternalAccountLamportSpend);
         Ok(())
     }
 
@@ -371,31 +398,38 @@ impl<'a> BorrowedAccount<'a> {
         )
     }
 
+    /// Verifies that this account is writable (instruction wide)
+    fn verify_writability(&self) -> Result<(), InstructionError> {
+        if self.index_in_instruction < self.instruction_context.program_accounts.len() {
+            return Err(InstructionError::ExecutableDataModified);
+        }
+        if !self.is_writable() {
+            return Err(InstructionError::ReadonlyDataModified);
+        }
+        // TODO: return Err(InstructionError::ExternalAccountDataModified);
+        Ok(())
+    }
+
     /// Returns a read-only slice of the account data (transaction wide)
     pub fn get_data(&self) -> &[u8] {
         self.account.data()
     }
 
-    /// Returns a writable slice of the account data (transaction wide)
-    pub fn get_data_mut(&mut self) -> Result<&mut [u8], InstructionError> {
-        if !self.is_writable() {
-            return Err(InstructionError::Immutable);
+    /// Overwrites the account data and size (transaction wide)
+    pub fn set_data(&mut self, data: &[u8]) -> Result<(), InstructionError> {
+        if data.len() == self.account.data().len() {
+            self.account.data_as_mut_slice().copy_from_slice(data);
+        } else {
+            self.account.set_data_from_slice(data);
+            // TODO: return Err(InstructionError::AccountDataSizeChanged);
         }
-        Ok(self.account.data_as_mut_slice())
+        self.verify_writability()
     }
 
-    /// Guarded alternative to `get_data_mut()?.copy_from_slice()` which checks if the account size matches
-    pub fn copy_from_slice(&mut self, data: &[u8]) -> Result<(), InstructionError> {
-        if !self.is_writable() {
-            return Err(InstructionError::Immutable);
-        }
-        let account_data = self.account.data_as_mut_slice();
-        if data.len() != account_data.len() {
-            return Err(InstructionError::AccountDataSizeChanged);
-        }
-        account_data.copy_from_slice(data);
-        Ok(())
-    }
+    /*pub fn realloc(&self, new_len: usize, zero_init: bool) {
+        // TODO: return Err(InstructionError::InvalidRealloc);
+        // TODO: return Err(InstructionError::AccountDataSizeChanged);
+    }*/
 
     /// Deserializes the account data into a state
     pub fn get_state<T: serde::de::DeserializeOwned>(&self) -> Result<T, InstructionError> {
@@ -406,21 +440,15 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Serializes a state into the account data
     pub fn set_state<T: serde::Serialize>(&mut self, state: &T) -> Result<(), InstructionError> {
-        if !self.is_writable() {
-            return Err(InstructionError::Immutable);
-        }
         let data = self.account.data_as_mut_slice();
         let serialized_size =
             bincode::serialized_size(state).map_err(|_| InstructionError::GenericError)?;
         if serialized_size > data.len() as u64 {
             return Err(InstructionError::AccountDataTooSmall);
         }
-        bincode::serialize_into(&mut *data, state).map_err(|_| InstructionError::GenericError)
+        bincode::serialize_into(&mut *data, state).map_err(|_| InstructionError::GenericError)?;
+        self.verify_writability()
     }
-
-    /*pub fn realloc(&self, new_len: usize, zero_init: bool) {
-        // TODO
-    }*/
 
     /// Returns whether this account is executable (transaction wide)
     pub fn is_executable(&self) -> bool {
@@ -429,11 +457,15 @@ impl<'a> BorrowedAccount<'a> {
 
     /// Configures whether this account is executable (transaction wide)
     pub fn set_executable(&mut self, is_executable: bool) -> Result<(), InstructionError> {
-        if !self.is_writable() {
-            return Err(InstructionError::Immutable);
-        }
         self.account.set_executable(is_executable);
-        Ok(())
+        self.verify_writability()
+        // TODO: return Err(InstructionError::ExecutableAccountNotRentExempt);
+        // TODO: return Err(InstructionError::ExecutableModified);
+    }
+
+    /// Returns the rent epoch of this account (transaction wide)
+    pub fn get_rent_epoch(&self) -> u64 {
+        self.account.rent_epoch()
     }
 
     /// Returns whether this account is a signer (instruction wide)

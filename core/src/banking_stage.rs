@@ -18,12 +18,10 @@ use {
         perf_libs,
     },
     solana_poh::poh_recorder::{BankStart, PohRecorder, PohRecorderError, TransactionRecorder},
+    solana_program_runtime::timings::ExecuteTimings,
     solana_runtime::{
         accounts_db::ErrorCounters,
-        bank::{
-            Bank, ExecuteTimings, TransactionBalancesSet, TransactionCheckResult,
-            TransactionExecutionResult,
-        },
+        bank::{Bank, TransactionBalancesSet, TransactionCheckResult, TransactionExecutionResult},
         bank_utils,
         cost_model::CostModel,
         transaction_batch::TransactionBatch,
@@ -406,7 +404,7 @@ impl BankingStage {
         let packet_vec: Vec<_> = packets
             .iter()
             .filter_map(|p| {
-                if !p.meta.forwarded && data_budget.take(p.meta.size) {
+                if !p.meta.forwarded() && data_budget.take(p.meta.size) {
                     Some((&p.data[..p.meta.size], tpu_forwards))
                 } else {
                     None
@@ -794,22 +792,23 @@ impl BankingStage {
     fn record_transactions(
         bank_slot: Slot,
         txs: &[SanitizedTransaction],
-        results: &[TransactionExecutionResult],
+        execution_results: &[TransactionExecutionResult],
         recorder: &TransactionRecorder,
     ) -> (Result<usize, PohRecorderError>, Vec<usize>) {
         let mut processed_generation = Measure::start("record::process_generation");
-        let (processed_transactions, processed_transactions_indexes): (Vec<_>, Vec<_>) = results
-            .iter()
-            .zip(txs)
-            .enumerate()
-            .filter_map(|(i, ((r, _n), tx))| {
-                if Bank::can_commit(r) {
-                    Some((tx.to_versioned_transaction(), i))
-                } else {
-                    None
-                }
-            })
-            .unzip();
+        let (processed_transactions, processed_transactions_indexes): (Vec<_>, Vec<_>) =
+            execution_results
+                .iter()
+                .zip(txs)
+                .enumerate()
+                .filter_map(|(i, (execution_result, tx))| {
+                    if execution_result.was_executed() {
+                        Some((tx.to_versioned_transaction(), i))
+                    } else {
+                        None
+                    }
+                })
+                .unzip();
 
         processed_generation.stop();
         let num_to_commit = processed_transactions.len();
@@ -875,28 +874,25 @@ impl BankingStage {
         };
 
         let mut execute_timings = ExecuteTimings::default();
-        let (
-            mut loaded_accounts,
-            results,
-            inner_instructions,
-            transaction_logs,
-            mut retryable_txs,
-            tx_count,
-            signature_count,
-        ) = bank.load_and_execute_transactions(
-            batch,
-            MAX_PROCESSING_AGE,
-            transaction_status_sender.is_some(),
-            transaction_status_sender.is_some(),
-            &mut execute_timings,
-        );
+        let (mut loaded_accounts, execution_results, mut retryable_txs, tx_count, signature_count) =
+            bank.load_and_execute_transactions(
+                batch,
+                MAX_PROCESSING_AGE,
+                transaction_status_sender.is_some(),
+                transaction_status_sender.is_some(),
+                &mut execute_timings,
+            );
         load_execute_time.stop();
 
         let freeze_lock = bank.freeze_lock();
 
         let mut record_time = Measure::start("record_time");
-        let (num_to_commit, retryable_record_txs) =
-            Self::record_transactions(bank.slot(), batch.sanitized_transactions(), &results, poh);
+        let (num_to_commit, retryable_record_txs) = Self::record_transactions(
+            bank.slot(),
+            batch.sanitized_transactions(),
+            &execution_results,
+            poh,
+        );
         inc_new_counter_info!(
             "banking_stage-record_transactions_num_to_commit",
             *num_to_commit.as_ref().unwrap_or(&0)
@@ -918,7 +914,7 @@ impl BankingStage {
             let tx_results = bank.commit_transactions(
                 sanitized_txs,
                 &mut loaded_accounts,
-                &results,
+                execution_results,
                 tx_count,
                 signature_count,
                 &mut execute_timings,
@@ -935,8 +931,6 @@ impl BankingStage {
                     tx_results.execution_results,
                     TransactionBalancesSet::new(pre_balances, post_balances),
                     TransactionTokenBalancesSet::new(pre_token_balances, post_token_balances),
-                    inner_instructions,
-                    transaction_logs,
                     tx_results.rent_debits,
                 );
             }
@@ -1125,7 +1119,7 @@ impl BankingStage {
             .iter()
             .filter_map(|tx_index| {
                 let p = &packet_batch.packets[*tx_index];
-                if votes_only && !p.meta.is_simple_vote_tx {
+                if votes_only && !p.meta.is_simple_vote_tx() {
                     return None;
                 }
 
@@ -1135,7 +1129,7 @@ impl BankingStage {
                 let tx = SanitizedTransaction::try_create(
                     tx,
                     message_hash,
-                    Some(p.meta.is_simple_vote_tx),
+                    Some(p.meta.is_simple_vote_tx()),
                     |_| Err(TransactionError::UnsupportedVersion),
                 )
                 .ok()?;
@@ -1306,15 +1300,8 @@ impl BankingStage {
     fn generate_packet_indexes(vers: &PinnedVec<Packet>) -> Vec<usize> {
         vers.iter()
             .enumerate()
-            .filter_map(
-                |(index, ver)| {
-                    if !ver.meta.discard {
-                        Some(index)
-                    } else {
-                        None
-                    }
-                },
-            )
+            .filter(|(_, pkt)| !pkt.meta.discard())
+            .map(|(index, _)| index)
             .collect()
     }
 
@@ -1492,12 +1479,13 @@ mod tests {
             get_tmp_ledger_path,
             leader_schedule_cache::LeaderScheduleCache,
         },
-        solana_perf::packet::to_packet_batches,
+        solana_perf::packet::{to_packet_batches, PacketFlags},
         solana_poh::{
             poh_recorder::{create_test_recorder, Record, WorkingBankEntry},
             poh_service::PohService,
         },
         solana_rpc::transaction_status_service::TransactionStatusService,
+        solana_runtime::bank::TransactionExecutionDetails,
         solana_sdk::{
             hash::Hash,
             instruction::InstructionError,
@@ -1527,6 +1515,15 @@ mod tests {
             Arc::new(Keypair::new()),
             SocketAddrSpace::Unspecified,
         )
+    }
+
+    fn new_execution_result(status: Result<(), TransactionError>) -> TransactionExecutionResult {
+        TransactionExecutionResult::Executed(TransactionExecutionDetails {
+            status,
+            log_messages: None,
+            inner_instructions: None,
+            durable_nonce_fee: None,
+        })
     }
 
     #[test]
@@ -1638,7 +1635,7 @@ mod tests {
             b.packets
                 .iter_mut()
                 .zip(v)
-                .for_each(|(p, f)| p.meta.discard = *f == 0)
+                .for_each(|(p, f)| p.meta.set_discard(*f == 0))
         });
         with_vers.into_iter().map(|(b, _)| b).collect()
     }
@@ -1920,19 +1917,16 @@ mod tests {
                 system_transaction::transfer(&keypair2, &pubkey2, 1, genesis_config.hash()),
             ]);
 
-            let mut results = vec![(Ok(()), None), (Ok(()), None)];
+            let mut results = vec![new_execution_result(Ok(())); 2];
             let _ = BankingStage::record_transactions(bank.slot(), &txs, &results, &recorder);
             let (_bank, (entry, _tick_height)) = entry_receiver.recv().unwrap();
             assert_eq!(entry.transactions.len(), txs.len());
 
             // InstructionErrors should still be recorded
-            results[0] = (
-                Err(TransactionError::InstructionError(
-                    1,
-                    SystemError::ResultWithNegativeLamports.into(),
-                )),
-                None,
-            );
+            results[0] = new_execution_result(Err(TransactionError::InstructionError(
+                1,
+                SystemError::ResultWithNegativeLamports.into(),
+            )));
             let (res, retryable) =
                 BankingStage::record_transactions(bank.slot(), &txs, &results, &recorder);
             res.unwrap();
@@ -1941,7 +1935,7 @@ mod tests {
             assert_eq!(entry.transactions.len(), txs.len());
 
             // Other TransactionErrors should not be recorded
-            results[0] = (Err(TransactionError::AccountNotFound), None);
+            results[0] = TransactionExecutionResult::NotExecuted(TransactionError::AccountNotFound);
             let (res, retryable) =
                 BankingStage::record_transactions(bank.slot(), &txs, &results, &recorder);
             res.unwrap();
@@ -2825,8 +2819,7 @@ mod tests {
                     .unwrap();
 
                 let mut packets = vec![Packet::default(); 2];
-                let (_, num_received) =
-                    recv_mmsg(recv_socket, &mut packets[..]).unwrap_or_default();
+                let num_received = recv_mmsg(recv_socket, &mut packets[..]).unwrap_or_default();
                 assert_eq!(num_received, expected_num_forwarded, "{}", name);
             }
 
@@ -2843,7 +2836,7 @@ mod tests {
         const FWD_PACKET: u8 = 1;
         let forwarded_packet = {
             let mut packet = Packet::from_data(None, &[FWD_PACKET]).unwrap();
-            packet.meta.forwarded = true;
+            packet.meta.flags |= PacketFlags::FORWARDED;
             packet
         };
 
@@ -2925,8 +2918,7 @@ mod tests {
                     .unwrap();
 
                 let mut packets = vec![Packet::default(); 2];
-                let (_, num_received) =
-                    recv_mmsg(recv_socket, &mut packets[..]).unwrap_or_default();
+                let num_received = recv_mmsg(recv_socket, &mut packets[..]).unwrap_or_default();
                 assert_eq!(num_received, expected_ids.len(), "{}", name);
                 for (i, expected_id) in expected_ids.iter().enumerate() {
                     assert_eq!(packets[i].meta.size, 1);
@@ -3084,7 +3076,7 @@ mod tests {
             packet_indexes.push(index);
         }
         for index in vote_indexes.iter() {
-            packet_batch.packets[*index].meta.is_simple_vote_tx = true;
+            packet_batch.packets[*index].meta.flags |= PacketFlags::SIMPLE_VOTE_TX;
         }
         (packet_batch, packet_indexes)
     }

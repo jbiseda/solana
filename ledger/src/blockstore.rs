@@ -6,7 +6,7 @@ use {
     crate::{
         ancestor_iterator::AncestorIterator,
         blockstore_db::{
-            columns as cf, AccessType, BlockstoreRecoveryMode, Column, Database, IteratorDirection,
+            columns as cf, AccessType, BlockstoreOptions, Column, Database, IteratorDirection,
             IteratorMode, LedgerColumn, Result, WriteBatch,
         },
         blockstore_meta::*,
@@ -41,8 +41,9 @@ use {
     },
     solana_storage_proto::{StoredExtendedRewards, StoredTransactionStatusMeta},
     solana_transaction_status::{
-        ConfirmedBlock, ConfirmedTransaction, ConfirmedTransactionStatusWithSignature, Rewards,
-        TransactionStatusMeta, TransactionWithStatusMeta,
+        ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
+        ConfirmedTransactionWithStatusMeta, Rewards, TransactionStatusMeta,
+        TransactionWithStatusMeta,
     },
     std::{
         borrow::Cow,
@@ -340,38 +341,26 @@ impl Blockstore {
 
     /// Opens a Ledger in directory, provides "infinite" window of shreds
     pub fn open(ledger_path: &Path) -> Result<Blockstore> {
-        Self::do_open(ledger_path, AccessType::PrimaryOnly, None, true)
+        Self::do_open(ledger_path, BlockstoreOptions::default())
     }
 
     pub fn open_with_access_type(
         ledger_path: &Path,
-        access_type: AccessType,
-        recovery_mode: Option<BlockstoreRecoveryMode>,
-        enforce_ulimit_nofile: bool,
+        options: BlockstoreOptions,
     ) -> Result<Blockstore> {
-        Self::do_open(
-            ledger_path,
-            access_type,
-            recovery_mode,
-            enforce_ulimit_nofile,
-        )
+        Self::do_open(ledger_path, options)
     }
 
-    fn do_open(
-        ledger_path: &Path,
-        access_type: AccessType,
-        recovery_mode: Option<BlockstoreRecoveryMode>,
-        enforce_ulimit_nofile: bool,
-    ) -> Result<Blockstore> {
+    fn do_open(ledger_path: &Path, options: BlockstoreOptions) -> Result<Blockstore> {
         fs::create_dir_all(&ledger_path)?;
         let blockstore_path = ledger_path.join(BLOCKSTORE_DIRECTORY);
 
-        adjust_ulimit_nofile(enforce_ulimit_nofile)?;
+        adjust_ulimit_nofile(options.enforce_ulimit_nofile)?;
 
         // Open the database
         let mut measure = Measure::start("open");
         info!("Opening database at {:?}", blockstore_path);
-        let db = Database::open(&blockstore_path, access_type, recovery_mode)?;
+        let db = Database::open(&blockstore_path, options)?;
 
         // Create the metadata column family
         let meta_cf = db.column();
@@ -466,15 +455,9 @@ impl Blockstore {
 
     pub fn open_with_signal(
         ledger_path: &Path,
-        recovery_mode: Option<BlockstoreRecoveryMode>,
-        enforce_ulimit_nofile: bool,
+        options: BlockstoreOptions,
     ) -> Result<BlockstoreSignals> {
-        let mut blockstore = Self::open_with_access_type(
-            ledger_path,
-            AccessType::PrimaryOnly,
-            recovery_mode,
-            enforce_ulimit_nofile,
-        )?;
+        let mut blockstore = Self::open_with_access_type(ledger_path, options)?;
         let (ledger_signal_sender, ledger_signal_receiver) = sync_channel(1);
         let (completed_slots_sender, completed_slots_receiver) =
             sync_channel(MAX_COMPLETED_SLOTS_IN_CHANNEL);
@@ -2307,7 +2290,7 @@ impl Blockstore {
     pub fn get_rooted_transaction(
         &self,
         signature: Signature,
-    ) -> Result<Option<ConfirmedTransaction>> {
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
         datapoint_info!(
             "blockstore-rpc-api",
             ("method", "get_rooted_transaction".to_string(), String)
@@ -2320,7 +2303,7 @@ impl Blockstore {
         &self,
         signature: Signature,
         highest_confirmed_slot: Slot,
-    ) -> Result<Option<ConfirmedTransaction>> {
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
         datapoint_info!(
             "blockstore-rpc-api",
             ("method", "get_complete_transaction".to_string(), String)
@@ -2337,7 +2320,7 @@ impl Blockstore {
         &self,
         signature: Signature,
         confirmed_unrooted_slots: &[Slot],
-    ) -> Result<Option<ConfirmedTransaction>> {
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
         if let Some((slot, status)) =
             self.get_transaction_status(signature, confirmed_unrooted_slots)?
         {
@@ -2351,7 +2334,7 @@ impl Blockstore {
                 .ok_or(BlockstoreError::UnsupportedTransactionVersion)?;
 
             let block_time = self.get_block_time(slot)?;
-            Ok(Some(ConfirmedTransaction {
+            Ok(Some(ConfirmedTransactionWithStatusMeta {
                 slot,
                 transaction: TransactionWithStatusMeta {
                     transaction,
@@ -3772,7 +3755,14 @@ pub fn create_new_ledger(
     genesis_config.write(ledger_path)?;
 
     // Fill slot 0 with ticks that link back to the genesis_config to bootstrap the ledger.
-    let blockstore = Blockstore::open_with_access_type(ledger_path, access_type, None, false)?;
+    let blockstore = Blockstore::open_with_access_type(
+        ledger_path,
+        BlockstoreOptions {
+            access_type,
+            recovery_mode: None,
+            enforce_ulimit_nofile: false,
+        },
+    )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
     let hashes_per_tick = genesis_config.poh_config.hashes_per_tick.unwrap_or(0);
     let entries = create_ticks(ticks_per_slot, hashes_per_tick, genesis_config.hash());
@@ -4715,7 +4705,7 @@ pub mod tests {
     fn test_data_set_completed_on_insert() {
         let ledger_path = get_tmp_ledger_path_auto_delete!();
         let BlockstoreSignals { blockstore, .. } =
-            Blockstore::open_with_signal(ledger_path.path(), None, true).unwrap();
+            Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
 
         // Create enough entries to fill 2 shreds, only the later one is data complete
         let slot = 0;
@@ -4756,8 +4746,7 @@ pub mod tests {
             blockstore,
             ledger_signal_receiver: recvr,
             ..
-        } = Blockstore::open_with_signal(ledger_path.path(), None, true).unwrap();
-        //let blockstore = Arc::new(blockstore);
+        } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
 
         let entries_per_slot = 50;
         // Create entries for slot 0
@@ -4840,8 +4829,7 @@ pub mod tests {
             blockstore,
             completed_slots_receiver: recvr,
             ..
-        } = Blockstore::open_with_signal(ledger_path.path(), None, true).unwrap();
-        // let blockstore = Arc::new(blockstore);
+        } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
 
         let entries_per_slot = 10;
 
@@ -4866,8 +4854,7 @@ pub mod tests {
             blockstore,
             completed_slots_receiver: recvr,
             ..
-        } = Blockstore::open_with_signal(ledger_path.path(), None, true).unwrap();
-        // let blockstore = Arc::new(blockstore);
+        } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
 
         let entries_per_slot = 10;
         let slots = vec![2, 5, 10];
@@ -4912,8 +4899,7 @@ pub mod tests {
             blockstore,
             completed_slots_receiver: recvr,
             ..
-        } = Blockstore::open_with_signal(ledger_path.path(), None, true).unwrap();
-        // let blockstore = Arc::new(blockstore);
+        } = Blockstore::open_with_signal(ledger_path.path(), BlockstoreOptions::default()).unwrap();
 
         let entries_per_slot = 10;
         let mut slots = vec![2, 5, 10];
@@ -7171,7 +7157,7 @@ pub mod tests {
             let signature = transaction.transaction.signatures[0];
             assert_eq!(
                 blockstore.get_rooted_transaction(signature).unwrap(),
-                Some(ConfirmedTransaction {
+                Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     transaction: transaction.clone(),
                     block_time: None
@@ -7181,7 +7167,7 @@ pub mod tests {
                 blockstore
                     .get_complete_transaction(signature, slot + 1)
                     .unwrap(),
-                Some(ConfirmedTransaction {
+                Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     transaction,
                     block_time: None
@@ -7277,7 +7263,7 @@ pub mod tests {
                 blockstore
                     .get_complete_transaction(signature, slot)
                     .unwrap(),
-                Some(ConfirmedTransaction {
+                Some(ConfirmedTransactionWithStatusMeta {
                     slot,
                     transaction,
                     block_time: None

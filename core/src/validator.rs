@@ -36,7 +36,7 @@ use {
     solana_ledger::{
         bank_forks_utils,
         blockstore::{Blockstore, BlockstoreSignals, CompletedSlotsReceiver, PurgeType},
-        blockstore_db::BlockstoreRecoveryMode,
+        blockstore_db::{BlockstoreOptions, BlockstoreRecoveryMode},
         blockstore_processor::{self, TransactionStatusSender},
         leader_schedule::FixedSchedule,
         leader_schedule_cache::LeaderScheduleCache,
@@ -708,6 +708,9 @@ impl Validator {
         };
 
         let (stats_reporter_sender, stats_reporter_receiver) = channel();
+        // https://github.com/rust-lang/rust/issues/39364#issuecomment-634545136
+        let _stats_reporter_sender = stats_reporter_sender.clone();
+
         let stats_reporter_service = StatsReporterService::new(stats_reporter_receiver, &exit);
 
         let gossip_service = GossipService::new(
@@ -1262,8 +1265,11 @@ fn new_banks_from_ledger(
         ..
     } = Blockstore::open_with_signal(
         ledger_path,
-        config.wal_recovery_mode.clone(),
-        enforce_ulimit_nofile,
+        BlockstoreOptions {
+            recovery_mode: config.wal_recovery_mode.clone(),
+            enforce_ulimit_nofile,
+            ..BlockstoreOptions::default()
+        },
     )
     .expect("Failed to open ledger database");
     blockstore.set_no_compaction(config.no_rocksdb_compaction);

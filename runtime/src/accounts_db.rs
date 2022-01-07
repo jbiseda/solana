@@ -75,7 +75,7 @@ use {
         path::{Path, PathBuf},
         str::FromStr,
         sync::{
-            atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+            atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
             Arc, Condvar, Mutex, MutexGuard, RwLock,
         },
         thread::Builder,
@@ -353,8 +353,8 @@ impl<'a> MultiThreadProgress<'a> {
 }
 
 /// An offset into the AccountsDb::storage vector
-pub type AtomicAppendVecId = AtomicUsize;
-pub type AppendVecId = usize;
+pub type AtomicAppendVecId = AtomicU32;
+pub type AppendVecId = u32;
 pub type SnapshotStorage = Vec<Arc<AccountStorageEntry>>;
 pub type SnapshotStorages = Vec<SnapshotStorage>;
 
@@ -2608,11 +2608,15 @@ impl AccountsDb {
         alive_total
     }
 
-    fn do_shrink_slot_stores<'a, I>(&'a self, slot: Slot, stores: I) -> usize
+    /// get all accounts in all the storages passed in
+    /// for duplicate pubkeys, the account with the highest write_value is returned
+    fn get_unique_accounts_from_storages<'a, I>(
+        &'a self,
+        stores: I,
+    ) -> (HashMap<Pubkey, FoundStoredAccount>, usize, u64)
     where
         I: Iterator<Item = &'a Arc<AccountStorageEntry>>,
     {
-        debug!("do_shrink_slot_stores: slot: {}", slot);
         let mut stored_accounts: HashMap<Pubkey, FoundStoredAccount> = HashMap::new();
         let mut original_bytes = 0;
         let mut num_stores = 0;
@@ -2642,6 +2646,16 @@ impl AccountsDb {
             }
             num_stores += 1;
         }
+        (stored_accounts, num_stores, original_bytes)
+    }
+
+    fn do_shrink_slot_stores<'a, I>(&'a self, slot: Slot, stores: I) -> usize
+    where
+        I: Iterator<Item = &'a Arc<AccountStorageEntry>>,
+    {
+        debug!("do_shrink_slot_stores: slot: {}", slot);
+        let (stored_accounts, num_stores, original_bytes) =
+            self.get_unique_accounts_from_storages(stores);
 
         // sort by pubkey to keep account index lookups close
         let mut stored_accounts = stored_accounts.into_iter().collect::<Vec<_>>();
@@ -2736,26 +2750,8 @@ impl AccountsDb {
             start.stop();
             find_alive_elapsed = start.as_us();
 
-            let mut start = Measure::start("create_and_insert_store_elapsed");
-            let shrunken_store = if let Some(new_store) =
-                self.try_recycle_and_insert_store(slot, aligned_total, aligned_total + 1024)
-            {
-                new_store
-            } else {
-                let maybe_shrink_paths = self.shrink_paths.read().unwrap();
-                if let Some(ref shrink_paths) = *maybe_shrink_paths {
-                    self.create_and_insert_store_with_paths(
-                        slot,
-                        aligned_total,
-                        "shrink-w-path",
-                        shrink_paths,
-                    )
-                } else {
-                    self.create_and_insert_store(slot, aligned_total, "shrink")
-                }
-            };
-            start.stop();
-            create_and_insert_store_elapsed = start.as_us();
+            let (shrunken_store, time) = self.get_store_for_shrink(slot, aligned_total);
+            create_and_insert_store_elapsed = time;
 
             // here, we're writing back alive_accounts. That should be an atomic operation
             // without use of rather wide locks in this whole function, because we're
@@ -2862,6 +2858,34 @@ impl AccountsDb {
         self.shrink_stats.report();
 
         total_accounts_after_shrink
+    }
+
+    /// return a store that can contain 'aligned_total' bytes and the time it took to execute
+    fn get_store_for_shrink(
+        &self,
+        slot: Slot,
+        aligned_total: u64,
+    ) -> (Arc<AccountStorageEntry>, u64) {
+        let mut start = Measure::start("create_and_insert_store_elapsed");
+        let shrunken_store = if let Some(new_store) =
+            self.try_recycle_and_insert_store(slot, aligned_total, aligned_total + 1024)
+        {
+            new_store
+        } else {
+            let maybe_shrink_paths = self.shrink_paths.read().unwrap();
+            if let Some(ref shrink_paths) = *maybe_shrink_paths {
+                self.create_and_insert_store_with_paths(
+                    slot,
+                    aligned_total,
+                    "shrink-w-path",
+                    shrink_paths,
+                )
+            } else {
+                self.create_and_insert_store(slot, aligned_total, "shrink")
+            }
+        };
+        start.stop();
+        (shrunken_store, start.as_us())
     }
 
     // Reads all accounts in given slot's AppendVecs and filter only to alive,
@@ -6676,7 +6700,9 @@ impl AccountsDb {
                         &self.account_indexes,
                     );
                 }
-                accounts_data_len += stored_account.data().len() as u64;
+                if !stored_account.is_zero_lamport() {
+                    accounts_data_len += stored_account.data().len() as u64;
+                }
 
                 if !rent_collector.should_collect_rent(&pubkey, &stored_account, false) || {
                     let (_rent_due, exempt) = rent_collector.get_rent_due(&stored_account);
@@ -11253,6 +11279,58 @@ pub mod tests {
                 account_ref
             );
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "We've run out of storage ids!")]
+    fn test_wrapping_append_vec_id() {
+        let db = AccountsDb::new(Vec::new(), &ClusterType::Development);
+        let zero_lamport_account =
+            AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+
+        // set 'next' id to the max possible value
+        db.next_id.store(AppendVecId::MAX, Ordering::Release);
+        let slots = 3;
+        let keys = (0..slots).map(|_| Pubkey::new_unique()).collect::<Vec<_>>();
+        // write unique keys to successive slots
+        keys.iter().enumerate().for_each(|(slot, key)| {
+            let slot = slot as Slot;
+            db.store_uncached(slot, &[(key, &zero_lamport_account)]);
+            db.get_accounts_delta_hash(slot);
+            db.add_root(slot);
+        });
+        assert_eq!(slots - 1, db.next_id.load(Ordering::Acquire));
+        let ancestors = Ancestors::default();
+        keys.iter().for_each(|key| {
+            assert!(db.load_without_fixed_root(&ancestors, key).is_some());
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "We've run out of storage ids!")]
+    fn test_reuse_append_vec_id() {
+        solana_logger::setup();
+        let db = AccountsDb::new(Vec::new(), &ClusterType::Development);
+        let zero_lamport_account =
+            AccountSharedData::new(0, 0, AccountSharedData::default().owner());
+
+        // set 'next' id to the max possible value
+        db.next_id.store(AppendVecId::MAX, Ordering::Release);
+        let slots = 3;
+        let keys = (0..slots).map(|_| Pubkey::new_unique()).collect::<Vec<_>>();
+        // write unique keys to successive slots
+        keys.iter().enumerate().for_each(|(slot, key)| {
+            let slot = slot as Slot;
+            db.store_uncached(slot, &[(key, &zero_lamport_account)]);
+            db.get_accounts_delta_hash(slot);
+            db.add_root(slot);
+            // reset next_id to what it was previously to cause us to re-use the same id
+            db.next_id.store(AppendVecId::MAX, Ordering::Release);
+        });
+        let ancestors = Ancestors::default();
+        keys.iter().for_each(|key| {
+            assert!(db.load_without_fixed_root(&ancestors, key).is_some());
+        });
     }
 
     #[test]

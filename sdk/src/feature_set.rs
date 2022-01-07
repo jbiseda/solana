@@ -161,6 +161,10 @@ pub mod gate_large_block {
     solana_sdk::declare_id!("2ry7ygxiYURULZCrypHhveanvP5tzZ4toRwVp89oCNSj");
 }
 
+pub mod zk_token_sdk_enabled {
+    solana_sdk::declare_id!("zk1snxsc6Fh3wsGNbbHAJNHiJoYgF29mMnTSusGx5EJ");
+}
+
 pub mod versioned_tx_message_enabled {
     solana_sdk::declare_id!("3KZZ6Ks1885aGBQ45fwRcPXVBCtzUvxhUTkwKMR41Tca");
 }
@@ -287,6 +291,10 @@ pub mod cap_accounts_data_len {
     solana_sdk::declare_id!("capRxUrBjNkkCpjrJxPGfPaWijB7q3JoDfsWXAnt46r");
 }
 
+pub mod max_tx_account_locks {
+    solana_sdk::declare_id!("CBkDroRDqm8HwHe6ak9cguPjUomrASEkfmxEaZ5CNNxz");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -322,6 +330,7 @@ lazy_static! {
         (disable_fees_sysvar::id(), "disable fees sysvar"),
         (stake_merge_with_unmatched_credits_observed::id(), "allow merging active stakes with unmatched credits_observed #18985"),
         (gate_large_block::id(), "validator checks block cost against max limit in realtime, reject if exceeds."),
+        (zk_token_sdk_enabled::id(), "enable Zk Token proof program and syscalls"),
         (versioned_tx_message_enabled::id(), "enable versioned transaction message processing"),
         (libsecp256k1_fail_on_bad_count::id(), "fail libsec256k1_verify if count appears wrong"),
         (instructions_sysvar_owned_by_sysvar::id(), "fix owner for instructions sysvar"),
@@ -353,6 +362,7 @@ lazy_static! {
         (allow_votes_to_directly_update_vote_state::id(), "enable direct vote state update"),
         (reject_all_elf_rw::id(), "reject all read-write data in program elfs"),
         (cap_accounts_data_len::id(), "cap the accounts data len"),
+        (max_tx_account_locks::id(), "enforce max number of locked accounts per transaction"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
