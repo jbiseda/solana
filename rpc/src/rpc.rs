@@ -179,7 +179,6 @@ impl JsonRpcRequestProcessor {
     #[allow(deprecated)]
     fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
         debug!("RPC commitment_config: {:?}", commitment);
-        let r_bank_forks = self.bank_forks.read().unwrap();
 
         let commitment = commitment.unwrap_or_default();
 
@@ -224,6 +223,7 @@ impl JsonRpcRequestProcessor {
             }
         };
 
+        let r_bank_forks = self.bank_forks.read().unwrap();
         r_bank_forks.get(slot).cloned().unwrap_or_else(|| {
             // We log a warning instead of returning an error, because all known error cases
             // are due to known bugs that should be fixed instead.
