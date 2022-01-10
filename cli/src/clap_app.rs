@@ -71,11 +71,12 @@ pub fn get_clap_app<'ab, 'v>(name: &str, about: &'ab str, version: &'v str) -> A
                     "singleGossip", // Deprecated as of v1.5.5
                     "root", // Deprecated as of v1.5.5
                     "max", // Deprecated as of v1.5.5
+                    "distributed",
                 ])
                 .value_name("COMMITMENT_LEVEL")
                 .hide_possible_values(true)
                 .global(true)
-                .help("Return information at the selected commitment level [possible values: processed, confirmed, finalized]"),
+                .help("Return information at the selected commitment level [possible values: processed, confirmed, finalized, distributed]"),
         )
         .arg(
             Arg::with_name("verbose")

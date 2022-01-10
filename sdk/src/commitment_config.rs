@@ -78,6 +78,12 @@ impl CommitmentConfig {
         }
     }
 
+    pub fn distributed(x: u64) -> Self {
+        Self {
+            commitment: CommitmentLevel::Distributed(x)
+        }
+    }
+
     pub fn ok(self) -> Option<Self> {
         if self == Self::default() {
             None
@@ -105,6 +111,10 @@ impl CommitmentConfig {
             &self.commitment,
             CommitmentLevel::Processed | CommitmentLevel::Recent
         )
+    }
+
+    pub fn is_distributed(&self) -> bool {
+        matches!(&self.commitment, CommitmentLevel::Distributed(_))
     }
 
     pub fn is_at_least_confirmed(&self) -> bool {

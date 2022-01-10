@@ -57,7 +57,7 @@ use {
     },
 };
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct RpcClientConfig {
     commitment_config: CommitmentConfig,
     confirm_transaction_initial_timeout: Option<Duration>,
@@ -152,7 +152,7 @@ impl RpcClientConfig {
 /// calling an appropriate constructor with a `timeout` parameter.
 pub struct RpcClient {
     sender: Box<dyn RpcSender + Send + Sync + 'static>,
-    config: RpcClientConfig,
+    pub config: RpcClientConfig,
     node_version: RwLock<Option<semver::Version>>,
 }
 

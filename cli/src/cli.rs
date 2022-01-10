@@ -921,6 +921,8 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
         config.rpc_client.as_ref().unwrap().clone()
     };
 
+    println!("rpc_client: {:?}", &rpc_client.config);
+
     match &config.command {
         // Cluster Query Commands
         // Get address of this client
