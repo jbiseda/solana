@@ -100,6 +100,7 @@ use {
         time::Duration,
     },
 };
+//use backtrace::Backtrace;
 
 type RpcCustomResult<T> = std::result::Result<T, RpcCustomError>;
 
@@ -218,8 +219,11 @@ impl JsonRpcRequestProcessor {
             }
             CommitmentLevel::SingleGossip | CommitmentLevel::Confirmed => unreachable!(), // SingleGossip variant is deprecated
 
-            CommitmentLevel::Distributed(_) => {
-                debug!("RPC using distributed slot: {:?}", slot);
+            CommitmentLevel::Distributed(x) => {
+                //let bt = Backtrace::new();
+                //let bt = std::backtrace::Backtrace::new();
+                error!("CommitmentLevel::Distributed({:?}) RPC using slot: {:?}", x, slot);
+                //error!("{:?}", &bt);
             }
         };
 
@@ -3451,9 +3455,26 @@ pub mod rpc_full {
             let preflight_commitment = config
                 .preflight_commitment
                 .map(|commitment| CommitmentConfig { commitment });
+
             let preflight_bank = &*meta.bank(preflight_commitment);
             let transaction = sanitize_transaction(unsanitized_tx)?;
             let signature = *transaction.signature();
+
+            error!(
+                "send_transaction config={:?} transaction={:?}",
+                &config,
+                &transaction
+            );
+
+            /*
+            error!(
+                "send_transaction: preflight_commitment={:?} preflight_bank={:?} transaction={:?} signature={:?}",
+                &preflight_commitment,
+                &preflight_bank,
+                &transaction,
+                &signature,
+            );
+            */
 
             let mut last_valid_block_height = preflight_bank
                 .get_blockhash_last_valid_block_height(transaction.message().recent_blockhash())
@@ -3476,6 +3497,9 @@ pub mod rpc_full {
             }
 
             if !config.skip_preflight {
+
+                error!("running preflight");
+
                 if let Err(e) = verify_transaction(&transaction, &preflight_bank.feature_set) {
                     return Err(e);
                 }
@@ -3525,6 +3549,8 @@ pub mod rpc_full {
                     .into());
                 }
             }
+
+            error!("calling _send_transaction");
 
             _send_transaction(
                 meta,

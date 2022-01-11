@@ -4904,6 +4904,8 @@ impl Bank {
         &self,
         txs: Vec<VersionedTransaction>,
     ) -> Result<Vec<Result<()>>> {
+        //error!("try_process_transaction: {:?}", &txs);
+        error!("try_process_transaction");
         let batch = self.prepare_entry_batch(txs)?;
         Ok(self.process_transaction_batch(&batch))
     }

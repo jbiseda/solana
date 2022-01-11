@@ -5600,6 +5600,7 @@ dependencies = [
 name = "solana-rpc"
 version = "1.10.0"
 dependencies = [
+ "backtrace",
  "base64 0.12.3",
  "bincode",
  "bs58 0.4.0",

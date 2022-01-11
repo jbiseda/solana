@@ -29,6 +29,7 @@ pub struct SendTransactionService {
     thread: JoinHandle<()>,
 }
 
+#[derive(Debug)]
 pub struct TransactionInfo {
     pub signature: Signature,
     pub wire_transaction: Vec<u8>,
@@ -143,6 +144,7 @@ impl SendTransactionService {
                     Err(RecvTimeoutError::Disconnected) => break,
                     Err(RecvTimeoutError::Timeout) => {}
                     Ok(transaction_info) => {
+                        error!("recv transaction_info={:?}", &transaction_info);
                         inc_new_counter_info!("send_transaction_service-recv-tx", 1);
                         let addresses = leader_info.as_ref().map(|leader_info| {
                             leader_info.get_leader_tpus(config.leader_forward_count)
@@ -157,6 +159,7 @@ impl SendTransactionService {
                             })
                             .unwrap_or_else(|| vec![&tpu_address]);
                         for address in addresses {
+                            error!("> calling send_transaction {:?}", &address);
                             Self::send_transaction(
                                 &send_socket,
                                 address,
@@ -185,6 +188,11 @@ impl SendTransactionService {
                                 bank_forks.working_bank().clone(),
                             )
                         };
+
+                        error!(
+                            "calling process_transaction: transactions={:?}",
+                            &transactions,
+                        );
 
                         let _result = Self::process_transactions(
                             &working_bank,
@@ -223,12 +231,14 @@ impl SendTransactionService {
             if transaction_info.durable_nonce_info.is_some() {
                 inc_new_counter_info!("send_transaction_service-nonced", 1);
             }
+            error!("line {}", line!());
             if root_bank.has_signature(signature) {
                 info!("Transaction is rooted: {}", signature);
                 result.rooted += 1;
                 inc_new_counter_info!("send_transaction_service-rooted", 1);
                 return false;
             }
+            error!("line {}", line!());
             if let Some((nonce_pubkey, durable_nonce)) = transaction_info.durable_nonce_info {
                 let nonce_account = working_bank.get_account(&nonce_pubkey).unwrap_or_default();
                 if !nonce_account::verify_nonce_account(&nonce_account, &durable_nonce)
@@ -240,12 +250,14 @@ impl SendTransactionService {
                     return false;
                 }
             }
+            error!("line {}", line!());
             if transaction_info.last_valid_block_height < root_bank.block_height() {
                 info!("Dropping expired transaction: {}", signature);
                 result.expired += 1;
                 inc_new_counter_info!("send_transaction_service-expired", 1);
                 return false;
             }
+            error!("line {}", line!());
 
             let max_retries = transaction_info
                 .max_retries
@@ -260,6 +272,7 @@ impl SendTransactionService {
                     return false;
                 }
             }
+            error!("line {}", line!());
 
             match working_bank.get_signature_status_slot(signature) {
                 None => {
@@ -282,6 +295,7 @@ impl SendTransactionService {
                         })
                         .unwrap_or_else(|| vec![tpu_address]);
                     for address in addresses {
+                        error!("calling send transaction address={:?}", &address);
                         Self::send_transaction(
                             send_socket,
                             address,
@@ -292,11 +306,15 @@ impl SendTransactionService {
                 }
                 Some((_slot, status)) => {
                     if status.is_err() {
+                        error!("line {}", line!());
+
                         info!("Dropping failed transaction: {}", signature);
                         result.failed += 1;
                         inc_new_counter_info!("send_transaction_service-failed", 1);
                         false
                     } else {
+                        error!("line {}", line!());
+
                         result.retained += 1;
                         true
                     }

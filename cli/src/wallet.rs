@@ -654,6 +654,14 @@ pub fn process_transfer(
     let from = config.signers[from];
     let mut from_pubkey = from.pubkey();
 
+    println!(
+        "process transfer: to={:?} amount={:?} memo={:?} commitment={:?}",
+        to,
+        &amount,
+        &memo,
+        config.commitment,
+    );
+
     let recent_blockhash = blockhash_query.get_blockhash(rpc_client, config.commitment)?;
 
     if !sign_only && !allow_unfunded_recipient {

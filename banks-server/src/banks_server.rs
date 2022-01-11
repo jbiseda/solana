@@ -47,6 +47,7 @@ use {
     tokio::time::sleep,
     tokio_serde::formats::Bincode,
 };
+//use log::error;
 
 #[derive(Clone)]
 struct BanksServer {
@@ -86,6 +87,9 @@ impl BanksServer {
                 .map(|info| deserialize(&info.wire_transaction).unwrap())
                 .collect();
             let bank = bank_forks.read().unwrap().working_bank();
+
+            //error!("BanksServer::run transactions={:?}", &transactions);
+
             let _ = bank.try_process_transactions(transactions.iter());
         }
     }

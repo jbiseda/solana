@@ -1207,6 +1207,8 @@ impl BankingStage {
 
         let tx_len = transactions.len();
 
+        //error!("banking process tx line={}", line!());
+
         let mut process_tx_time = Measure::start("process_tx_time");
         let (processed, unprocessed_tx_indexes) = Self::process_transactions(
             bank,
