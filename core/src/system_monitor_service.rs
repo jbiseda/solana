@@ -118,10 +118,7 @@ pub fn verify_udp_stats_access() -> Result<(), String> {
 }
 
 impl SystemMonitorService {
-    pub fn new(
-        exit: Arc<AtomicBool>,
-        report_os_network_stats: bool,
-    ) -> Self {
+    pub fn new(exit: Arc<AtomicBool>, report_os_network_stats: bool) -> Self {
         info!("Starting SystemMonitorService");
         let thread_hdl = Builder::new()
             .name("system-monitor".to_string())
@@ -151,7 +148,9 @@ impl SystemMonitorService {
     }
 
     #[cfg(target_os = "linux")]
-    fn linux_get_current_network_limits(recommended_limits: &HashMap<&'static str, i64>) -> HashMap<&'static str, i64> {
+    fn linux_get_current_network_limits(
+        recommended_limits: &HashMap<&'static str, i64>,
+    ) -> HashMap<&'static str, i64> {
         use sysctl::Sysctl;
 
         fn sysctl_read(name: &str) -> Result<String, sysctl::SysctlError> {
