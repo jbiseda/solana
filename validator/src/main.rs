@@ -1127,6 +1127,7 @@ pub fn main() {
         .arg(
             Arg::with_name("rpc_pubsub_enable_block_subscription")
                 .long("rpc-pubsub-enable-block-subscription")
+                .requires("enable_rpc_transaction_history")
                 .takes_value(false)
                 .help("Enable the unstable RPC PubSub `blockSubscribe` subscription"),
         )

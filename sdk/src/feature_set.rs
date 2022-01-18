@@ -303,6 +303,14 @@ pub mod filter_votes_outside_slot_hashes {
     solana_sdk::declare_id!("3gtZPqvPpsbXZVCx6hceMfWxtsmrjMzmg8C7PLKSxS2d");
 }
 
+pub mod update_syscall_base_costs {
+    solana_sdk::declare_id!("2h63t332mGCCsWK2nqqqHhN4U9ayyqhLVFvczznHDoTZ");
+}
+
+pub mod vote_withdraw_authority_may_change_authorized_voter {
+    solana_sdk::declare_id!("AVZS3ZsN4gi6Rkx2QUibYuSJG3S6QHib7xCYhG6vGJxU");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -373,6 +381,8 @@ lazy_static! {
         (max_tx_account_locks::id(), "enforce max number of locked accounts per transaction"),
         (require_rent_exempt_accounts::id(), "require all new transaction accounts with data to be rent-exempt"),
         (filter_votes_outside_slot_hashes::id(), "filter vote slots older than the slot hashes history"),
+        (update_syscall_base_costs::id(), "Update syscall base costs"),
+        (vote_withdraw_authority_may_change_authorized_voter::id(), "vote account withdraw authority may change the authorized voter #22521"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()
