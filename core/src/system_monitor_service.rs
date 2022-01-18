@@ -130,8 +130,8 @@ impl SystemMonitorService {
         Self { thread_hdl }
     }
 
-    #[cfg(target_os = "linux")]
-    fn linux_get_recommended_network_limits() -> HashMap<&str, i64> {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn linux_get_recommended_network_limits() -> HashMap<&'static str, i64> {
         // Reference: https://medium.com/@CameronSparr/increase-os-udp-buffers-to-improve-performance-51d167bb1360
         let mut recommended_limits: HashMap<&str, i64> = HashMap::default();
         recommended_limits.insert("net.core.rmem_max", 134217728);
@@ -173,14 +173,14 @@ impl SystemMonitorService {
         current_limits
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn linux_report_network_limits(
         current_limits: &HashMap<&str, i64>,
-        recommended_limts: &HashMap<&str, i64>,
+        recommended_limits: &HashMap<&'static str, i64>,
     ) -> bool {
         let mut check_failed = false;
         for (key, recommended_val) in recommended_limits.iter() {
-            let current_val = *current_limits.get(key).unwrap_or(-1);
+            let current_val = *current_limits.get(key).unwrap_or(&-1);
             if current_val < *recommended_val {
                 datapoint_warn!("os-config", (key, current_val, i64));
                 warn!(
@@ -208,9 +208,9 @@ impl SystemMonitorService {
     #[cfg(target_os = "linux")]
     pub fn check_os_network_limits() -> bool {
         datapoint_info!("os-config", ("platform", platform_id(), String));
-        let recommended_limits = get_recommended_linux_network_limits();
-        let current_limits = get_current_linux_network_limits(&recommended_limits);
-        report_linux_network_limits(&current_limits, &recommended_limts)
+        let recommended_limits = linux_get_recommended_network_limits();
+        let current_limits = linux_get_current_network_limits(&recommended_limits);
+        linux_report_network_limits(&current_limits, &recommended_limts)
     }
 
     #[cfg(target_os = "linux")]
