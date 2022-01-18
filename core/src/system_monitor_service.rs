@@ -18,7 +18,8 @@ const MS_PER_S: u64 = 1_000;
 const MS_PER_M: u64 = MS_PER_S * 60;
 const MS_PER_H: u64 = MS_PER_M * 60;
 const SAMPLE_INTERVAL_UDP_MS: u64 = 2 * MS_PER_S;
-const SAMPLE_INTERVAL_OS_NETWORK_LIMITS_MS: u64 = MS_PER_H;
+//const SAMPLE_INTERVAL_OS_NETWORK_LIMITS_MS: u64 = MS_PER_H;
+const SAMPLE_INTERVAL_OS_NETWORK_LIMITS_MS: u64 = MS_PER_M; // TODO remove
 const SAMPLE_INTERVAL_MEM_MS: u64 = MS_PER_S;
 const SLEEP_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -196,13 +197,6 @@ impl SystemMonitorService {
                 );
             }
         }
-        if check_failed {
-            datapoint_warn!("os-config", ("network_limit_test_failed", 1, i64));
-            warn!("OS network limit test failed. solana-sys-tuner may be used to configure OS network limits. Bypass check with --no-os-network-limits-test.");
-        } else {
-            info!("OS network limits test passed.");
-        }
-
         !check_failed
     }
 

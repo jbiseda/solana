@@ -2437,7 +2437,12 @@ pub fn main() {
     });
 
     if !matches.is_present("no_os_network_limits_test") {
-        SystemMonitorService::check_os_network_limits();
+        if !SystemMonitorService::check_os_network_limits() {
+            eprintln!("OS network limit test failed. solana-sys-tuner may be used to configure OS network limits. Bypass check with --no-os-network-limits-test.");
+            exit(1); // TODO remove
+        } else {
+            info!("OS network limits test passed.");
+        }
     }
 
     let mut ledger_lock = ledger_lockfile(&ledger_path);
