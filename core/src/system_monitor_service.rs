@@ -208,9 +208,9 @@ impl SystemMonitorService {
     #[cfg(target_os = "linux")]
     pub fn check_os_network_limits() -> bool {
         datapoint_info!("os-config", ("platform", platform_id(), String));
-        let recommended_limits = linux_get_recommended_network_limits();
-        let current_limits = linux_get_current_network_limits(&recommended_limits);
-        linux_report_network_limits(&current_limits, &recommended_limts)
+        let recommended_limits = Self::linux_get_recommended_network_limits();
+        let current_limits = Self::linux_get_current_network_limits(&recommended_limits);
+        Self::linux_report_network_limits(&current_limits, &recommended_limts)
     }
 
     #[cfg(target_os = "linux")]
