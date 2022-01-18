@@ -2441,7 +2441,6 @@ pub fn main() {
             info!("OS network limits test passed.");
         } else {
             eprintln!("OS network limit test failed. solana-sys-tuner may be used to configure OS network limits. Bypass check with --no-os-network-limits-test.");
-            exit(1); // TODO remove
         }
     }
 
