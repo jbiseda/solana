@@ -972,6 +972,7 @@ impl RpcClient {
     /// # Ok::<(), ClientError>(())
     /// ```
     pub fn confirm_transaction(&self, signature: &Signature) -> ClientResult<bool> {
+        error!("confirm_transaction signature={:?}", signature);
         Ok(self
             .confirm_transaction_with_commitment(signature, self.commitment())?
             .value)
@@ -1037,6 +1038,8 @@ impl RpcClient {
         commitment_config: CommitmentConfig,
     ) -> RpcResult<bool> {
         let Response { context, value } = self.get_signature_statuses(&[*signature])?;
+
+        error!("confirm_transaction_with_commitment commitment_config={:?}", &commitment_config);
 
         Ok(Response {
             context,

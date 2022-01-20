@@ -42,6 +42,10 @@ pub struct SlotMeta {
     pub is_connected: bool,
     // Shreds indices which are marked data complete.
     pub completed_data_indexes: BTreeSet<u32>,
+
+    // TODO MARK new value
+    // True if this slot contains shreds fetched using repair.
+    pub repaired: bool,
 }
 
 // Serde implementation of serialize and deserialize for Option<u64>

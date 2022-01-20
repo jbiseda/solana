@@ -825,6 +825,8 @@ impl Blockstore {
     where
         F: Fn(Shred),
     {
+        // TODO MARK track is_repaired to see if turbine only
+
         assert_eq!(shreds.len(), is_repaired.len());
         let mut total_start = Measure::start("Total elapsed");
         let mut start = Measure::start("Blockstore lock");
@@ -1552,6 +1554,13 @@ impl Blockstore {
             &shred.payload[..shred.data_header.size as usize],
         )?;
         data_index.insert(index);
+
+        // TODO MARK
+        if shred_source == ShredSource::Repaired {
+            error!("Setting slot meta repaired for slot={}", slot_meta.slot);
+            slot_meta.repaired = true;
+        }
+
         let newly_completed_data_sets = update_slot_meta(
             last_in_slot,
             last_in_data,

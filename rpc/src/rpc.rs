@@ -132,6 +132,17 @@ fn is_finalized(
     blockstore: &Blockstore,
     slot: Slot,
 ) -> bool {
+    let highest_root = block_commitment_cache.highest_confirmed_root();
+    let is_root = blockstore.is_root(slot);
+    let is_in_ancestors = bank.status_cache_ancestors().contains(&slot);
+    error!(
+        "is_finalized() slot={:?} highest_root={:?} is_root={:?} is_in_ancestors={:?}",
+        slot,
+        highest_root,
+        is_root,
+        is_in_ancestors,
+    );
+
     slot <= block_commitment_cache.highest_confirmed_root()
         && (blockstore.is_root(slot) || bank.status_cache_ancestors().contains(&slot))
 }
@@ -181,7 +192,23 @@ impl JsonRpcRequestProcessor {
     fn bank(&self, commitment: Option<CommitmentConfig>) -> Arc<Bank> {
         debug!("RPC commitment_config: {:?}", commitment);
 
+        /*
+        error!(
+            ">> bank() before unwrap commitment={:?}",
+            &commitment,
+        );
+        */
+
         let commitment = commitment.unwrap_or_default();
+
+        /*
+        error!(
+            ">> bank() after unwrap commitment={:?}",
+            &commitment,
+        );
+        */
+
+        // MARK some other conf?
 
         if commitment.is_confirmed() {
             let bank = self
@@ -199,6 +226,14 @@ impl JsonRpcRequestProcessor {
             .read()
             .unwrap()
             .slot_with_commitment(commitment.commitment);
+
+
+        /*
+        error!(
+            ">> bank() using block_commitment_cache slot={:?}",
+            &slot,
+        );
+        */    
 
         match commitment.commitment {
             // Recent variant is deprecated
@@ -627,6 +662,7 @@ impl JsonRpcRequestProcessor {
         signature: &Signature,
         commitment: Option<CommitmentConfig>,
     ) -> RpcResponse<bool> {
+        error!("rpc> confirm_transaction signature={:?} commitment={:?}", signature, &commitment);
         let bank = self.bank(commitment);
         let status = bank.get_signature_status(signature);
         match status {
@@ -1277,14 +1313,22 @@ impl JsonRpcRequestProcessor {
             .unwrap_or(false);
         let bank = self.bank(Some(CommitmentConfig::processed()));
 
+        error!(
+            "> async get_signature_status search={} {:?}",
+            search_transaction_history,
+            &signatures,
+        );
+
         if search_transaction_history && !self.config.enable_rpc_transaction_history {
             return Err(RpcCustomError::TransactionHistoryNotAvailable.into());
         }
 
         for signature in signatures {
             let status = if let Some(status) = self.get_transaction_status(signature, &bank) {
+                error!("> asnyc status={:?}", status);
                 Some(status)
             } else if self.config.enable_rpc_transaction_history && search_transaction_history {
+                error!("> searching blockstore for {:?}", &signature);
                 if let Some(status) = self
                     .blockstore
                     .get_rooted_transaction_status(signature)
@@ -1309,6 +1353,7 @@ impl JsonRpcRequestProcessor {
                 {
                     Some(status)
                 } else if let Some(bigtable_ledger_storage) = &self.bigtable_ledger_storage {
+                    error!("> search bigtable");
                     bigtable_ledger_storage
                         .get_signature_status(&signature)
                         .await
@@ -1333,15 +1378,29 @@ impl JsonRpcRequestProcessor {
         let (slot, status) = bank.get_signature_status_slot(&signature)?;
         let r_block_commitment_cache = self.block_commitment_cache.read().unwrap();
 
+        // TODO MARK bank(some other conf)
         let optimistically_confirmed_bank = self.bank(Some(CommitmentConfig::confirmed()));
         let optimistically_confirmed =
             optimistically_confirmed_bank.get_signature_status_slot(&signature);
 
+        error!(
+            ">> slot={:?} status={:?} optimistically_confirmed={:?}",
+            slot,
+            &status,
+            optimistically_confirmed,
+        );
+
         let confirmations = if r_block_commitment_cache.root() >= slot
             && is_finalized(&r_block_commitment_cache, bank, &self.blockstore, slot)
         {
+            error!(
+                ">> is_finalized root={:?} slot={:?}",
+                r_block_commitment_cache.root(),
+                slot,
+            );
             None
         } else {
+            error!(">> checking commitment cache");
             r_block_commitment_cache
                 .get_confirmation_count(slot)
                 .or(Some(0))
@@ -3349,6 +3408,9 @@ pub mod rpc_full {
             signature_strs: Vec<String>,
             config: Option<RpcSignatureStatusConfig>,
         ) -> BoxFuture<Result<RpcResponse<Vec<Option<TransactionStatus>>>>> {
+            error!(
+                "rpc> get statuses"
+            );
             debug!(
                 "get_signature_statuses rpc request received: {:?}",
                 signature_strs.len()
