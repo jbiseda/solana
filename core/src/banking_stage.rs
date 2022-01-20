@@ -2,8 +2,9 @@
 //! to contruct a software pipeline. The stage uses all available CPU cores and
 //! can do its processing in parallel with signature verification on the GPU.
 use {
-    crate::{packet_deduper::PacketDeduper, qos_service::QosService},
+    crate::qos_service::QosService,
     crossbeam_channel::{Receiver as CrossbeamReceiver, RecvTimeoutError},
+    histogram::Histogram,
     itertools::Itertools,
     retain_mut::RetainMut,
     solana_entry::entry::hash_transactions,
@@ -23,7 +24,7 @@ use {
         accounts_db::ErrorCounters,
         bank::{Bank, TransactionBalancesSet, TransactionCheckResult, TransactionExecutionResult},
         bank_utils,
-        cost_model::CostModel,
+        cost_model::{CostModel, TransactionCost},
         transaction_batch::TransactionBatch,
         vote_sender_types::ReplayVoteSender,
     },
@@ -95,6 +96,7 @@ pub struct BankingStageStats {
     current_buffered_packet_batches_count: AtomicUsize,
     rebuffered_packets_count: AtomicUsize,
     consumed_buffered_packets_count: AtomicUsize,
+    batch_packet_indexes_len: Histogram,
 
     // Timing
     consume_buffered_packets_elapsed: AtomicU64,
@@ -111,6 +113,10 @@ impl BankingStageStats {
     pub fn new(id: u32) -> Self {
         BankingStageStats {
             id,
+            batch_packet_indexes_len: Histogram::configure()
+                .max_value(PACKETS_PER_BATCH as u64)
+                .build()
+                .unwrap(),
             ..BankingStageStats::default()
         }
     }
@@ -147,9 +153,10 @@ impl BankingStageStats {
                 .unprocessed_packet_conversion_elapsed
                 .load(Ordering::Relaxed)
             + self.transaction_processing_elapsed.load(Ordering::Relaxed)
+            + self.batch_packet_indexes_len.entries()
     }
 
-    fn report(&self, report_interval_ms: u64) {
+    fn report(&mut self, report_interval_ms: u64) {
         // skip repoting metrics if stats is empty
         if self.is_empty() {
             return;
@@ -255,9 +262,38 @@ impl BankingStageStats {
                         .swap(0, Ordering::Relaxed) as i64,
                     i64
                 ),
+                (
+                    "packet_batch_indices_len_min",
+                    self.batch_packet_indexes_len.minimum().unwrap_or(0) as i64,
+                    i64
+                ),
+                (
+                    "packet_batch_indices_len_max",
+                    self.batch_packet_indexes_len.maximum().unwrap_or(0) as i64,
+                    i64
+                ),
+                (
+                    "packet_batch_indices_len_mean",
+                    self.batch_packet_indexes_len.mean().unwrap_or(0) as i64,
+                    i64
+                ),
+                (
+                    "packet_batch_indices_len_90pct",
+                    self.batch_packet_indexes_len.percentile(90.0).unwrap_or(0) as i64,
+                    i64
+                )
             );
+            self.batch_packet_indexes_len.clear();
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub struct BatchedTransactionCostDetails {
+    pub batched_signature_cost: u64,
+    pub batched_write_lock_cost: u64,
+    pub batched_data_bytes_cost: u64,
+    pub batched_execute_cost: u64,
 }
 
 /// Stores the stage's thread handle and output receiver.
@@ -292,7 +328,6 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         gossip_vote_sender: ReplayVoteSender,
         cost_model: Arc<RwLock<CostModel>>,
-        packet_deduper: PacketDeduper,
     ) -> Self {
         Self::new_num_threads(
             cluster_info,
@@ -304,7 +339,6 @@ impl BankingStage {
             transaction_status_sender,
             gossip_vote_sender,
             cost_model,
-            packet_deduper,
         )
     }
 
@@ -319,7 +353,6 @@ impl BankingStage {
         transaction_status_sender: Option<TransactionStatusSender>,
         gossip_vote_sender: ReplayVoteSender,
         cost_model: Arc<RwLock<CostModel>>,
-        packet_deduper: PacketDeduper,
     ) -> Self {
         let batch_limit = TOTAL_BUFFERED_PACKETS / ((num_threads - 1) as usize * PACKETS_PER_BATCH);
         // Single thread to generate entries from many banks.
@@ -348,7 +381,6 @@ impl BankingStage {
                 let mut recv_start = Instant::now();
                 let transaction_status_sender = transaction_status_sender.clone();
                 let gossip_vote_sender = gossip_vote_sender.clone();
-                let packet_deduper = packet_deduper.clone();
                 let data_budget = data_budget.clone();
                 let cost_model = cost_model.clone();
                 Builder::new()
@@ -364,7 +396,6 @@ impl BankingStage {
                             batch_limit,
                             transaction_status_sender,
                             gossip_vote_sender,
-                            &packet_deduper,
                             &data_budget,
                             cost_model,
                         );
@@ -719,14 +750,13 @@ impl BankingStage {
         batch_limit: usize,
         transaction_status_sender: Option<TransactionStatusSender>,
         gossip_vote_sender: ReplayVoteSender,
-        packet_deduper: &PacketDeduper,
         data_budget: &DataBudget,
         cost_model: Arc<RwLock<CostModel>>,
     ) {
         let recorder = poh_recorder.lock().unwrap().recorder();
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         let mut buffered_packet_batches = VecDeque::with_capacity(batch_limit);
-        let banking_stage_stats = BankingStageStats::new(id);
+        let mut banking_stage_stats = BankingStageStats::new(id);
         let qos_service = QosService::new(cost_model, id);
         loop {
             let my_pubkey = cluster_info.id();
@@ -771,8 +801,7 @@ impl BankingStage {
                 id,
                 batch_limit,
                 &mut buffered_packet_batches,
-                &banking_stage_stats,
-                packet_deduper,
+                &mut banking_stage_stats,
             ) {
                 Ok(()) | Err(RecvTimeoutError::Timeout) => (),
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -856,7 +885,7 @@ impl BankingStage {
         batch: &TransactionBatch,
         transaction_status_sender: Option<TransactionStatusSender>,
         gossip_vote_sender: &ReplayVoteSender,
-    ) -> (Result<usize, PohRecorderError>, Vec<usize>) {
+    ) -> (Result<usize, PohRecorderError>, Vec<usize>, ExecuteTimings) {
         let mut load_execute_time = Measure::start("load_execute_time");
         // Use a shorter maximum age when adding transactions into the pipeline.  This will reduce
         // the likelihood of any single thread getting starved and processing old ids.
@@ -906,7 +935,7 @@ impl BankingStage {
         );
         retryable_txs.extend(retryable_record_txs);
         if num_to_commit.is_err() {
-            return (num_to_commit, retryable_txs);
+            return (num_to_commit, retryable_txs, execute_timings);
         }
         record_time.stop();
 
@@ -956,7 +985,7 @@ impl BankingStage {
             execute_timings
         );
 
-        (Ok(num_to_commit), retryable_txs)
+        (Ok(num_to_commit), retryable_txs, execute_timings)
     }
 
     pub fn process_and_record_transactions(
@@ -973,6 +1002,13 @@ impl BankingStage {
         let transactions_qos_results =
             qos_service.select_transactions_per_cost(txs.iter(), tx_costs.iter(), bank);
 
+        qos_service.accumulate_estimated_transaction_costs(
+            &Self::accumulate_batched_transaction_costs(
+                tx_costs.iter(),
+                transactions_qos_results.iter(),
+            ),
+        );
+
         // Only lock accounts for those transactions are selected for the block;
         // Once accounts are locked, other threads cannot encode transactions that will modify the
         // same account state
@@ -982,20 +1018,26 @@ impl BankingStage {
         lock_time.stop();
 
         // retryable_txs includes AccountInUse, WouldExceedMaxBlockCostLimit
-        // WouldExceedMaxAccountCostLimit, and WouldExceedMaxAccountDataCostLimit
-        let (result, mut retryable_txs) = Self::process_and_record_transactions_locked(
-            bank,
-            poh,
-            &batch,
-            transaction_status_sender,
-            gossip_vote_sender,
-        );
+        // WouldExceedMaxAccountCostLimit, WouldExceedMaxVoteCostLimit
+        // and WouldExceedMaxAccountDataCostLimit
+        let (result, mut retryable_txs, execute_timings) =
+            Self::process_and_record_transactions_locked(
+                bank,
+                poh,
+                &batch,
+                transaction_status_sender,
+                gossip_vote_sender,
+            );
         retryable_txs.iter_mut().for_each(|x| *x += chunk_offset);
 
         let mut unlock_time = Measure::start("unlock_time");
         // Once the accounts are new transactions can enter the pipeline to process them
         drop(batch);
         unlock_time.stop();
+
+        let (cu, us) = Self::accumulate_execute_units_and_time(&execute_timings);
+        qos_service.accumulate_actual_execute_cu(cu);
+        qos_service.accumulate_actual_execute_time(us);
 
         // reports qos service stats for this batch
         qos_service.report_metrics(bank.clone());
@@ -1009,6 +1051,49 @@ impl BankingStage {
         );
 
         (result, retryable_txs)
+    }
+
+    // rollup transaction cost details, eg signature_cost, write_lock_cost, data_bytes_cost and
+    // execution_cost from the batch of transactions selected for block.
+    fn accumulate_batched_transaction_costs<'a>(
+        transactions_costs: impl Iterator<Item = &'a TransactionCost>,
+        transaction_results: impl Iterator<Item = &'a transaction::Result<()>>,
+    ) -> BatchedTransactionCostDetails {
+        let mut cost_details = BatchedTransactionCostDetails::default();
+        transactions_costs
+            .zip(transaction_results)
+            .for_each(|(cost, result)| {
+                if result.is_ok() {
+                    cost_details.batched_signature_cost = cost_details
+                        .batched_signature_cost
+                        .saturating_add(cost.signature_cost);
+                    cost_details.batched_write_lock_cost = cost_details
+                        .batched_write_lock_cost
+                        .saturating_add(cost.write_lock_cost);
+                    cost_details.batched_data_bytes_cost = cost_details
+                        .batched_data_bytes_cost
+                        .saturating_add(cost.data_bytes_cost);
+                    cost_details.batched_execute_cost = cost_details
+                        .batched_execute_cost
+                        .saturating_add(cost.execution_cost);
+                }
+            });
+        cost_details
+    }
+
+    fn accumulate_execute_units_and_time(execute_timings: &ExecuteTimings) -> (u64, u64) {
+        let (units, times): (Vec<_>, Vec<_>) = execute_timings
+            .details
+            .per_program_timings
+            .iter()
+            .map(|(_program_id, program_timings)| {
+                (
+                    program_timings.accumulated_units,
+                    program_timings.accumulated_us,
+                )
+            })
+            .unzip();
+        (units.iter().sum(), times.iter().sum())
     }
 
     /// Sends transactions to the bank.
@@ -1322,8 +1407,7 @@ impl BankingStage {
         id: u32,
         batch_limit: usize,
         buffered_packet_batches: &mut UnprocessedPacketBatches,
-        banking_stage_stats: &BankingStageStats,
-        packet_deduper: &PacketDeduper,
+        banking_stage_stats: &mut BankingStageStats,
     ) -> Result<(), RecvTimeoutError> {
         let mut recv_time = Measure::start("receive_and_buffer_packets_recv");
         let packet_batches = verified_receiver.recv_timeout(recv_timeout)?;
@@ -1354,7 +1438,6 @@ impl BankingStage {
                 &mut dropped_packets_count,
                 &mut newly_buffered_packets_count,
                 batch_limit,
-                packet_deduper,
                 banking_stage_stats,
             );
         }
@@ -1400,15 +1483,13 @@ impl BankingStage {
     fn push_unprocessed(
         unprocessed_packet_batches: &mut UnprocessedPacketBatches,
         packet_batch: PacketBatch,
-        mut packet_indexes: Vec<usize>,
+        packet_indexes: Vec<usize>,
         dropped_packet_batches_count: &mut usize,
         dropped_packets_count: &mut usize,
         newly_buffered_packets_count: &mut usize,
         batch_limit: usize,
-        packet_deduper: &PacketDeduper,
-        banking_stage_stats: &BankingStageStats,
+        banking_stage_stats: &mut BankingStageStats,
     ) {
-        packet_deduper.dedupe_packets(&packet_batch, &mut packet_indexes, banking_stage_stats);
         if Self::packet_has_more_unprocessed_transactions(&packet_indexes) {
             if unprocessed_packet_batches.len() >= batch_limit {
                 *dropped_packet_batches_count += 1;
@@ -1416,6 +1497,10 @@ impl BankingStage {
                     *dropped_packets_count += dropped_batch.1.len();
                 }
             }
+            let _ = banking_stage_stats
+                .batch_packet_indexes_len
+                .increment(packet_indexes.len() as u64);
+
             *newly_buffered_packets_count += packet_indexes.len();
             unprocessed_packet_batches.push_back((packet_batch, packet_indexes, false));
         }
@@ -1479,7 +1564,8 @@ mod tests {
         super::*,
         crossbeam_channel::{unbounded, Receiver},
         itertools::Itertools,
-        solana_entry::entry::{next_entry, Entry, EntrySlice},
+        solana_address_lookup_table_program::state::{AddressLookupTable, LookupTableMeta},
+        solana_entry::entry::{next_entry, next_versioned_entry, Entry, EntrySlice},
         solana_gossip::{cluster_info::Node, contact_info::ContactInfo},
         solana_ledger::{
             blockstore::{entries_to_test_shreds, Blockstore},
@@ -1492,11 +1578,14 @@ mod tests {
             poh_recorder::{create_test_recorder, Record, WorkingBankEntry},
             poh_service::PohService,
         },
+        solana_program_runtime::timings::ProgramTiming,
         solana_rpc::transaction_status_service::TransactionStatusService,
         solana_runtime::bank::TransactionExecutionDetails,
         solana_sdk::{
+            account::AccountSharedData,
             hash::Hash,
             instruction::InstructionError,
+            message::{v0, MessageHeader, VersionedMessage},
             poh_config::PohConfig,
             signature::{Keypair, Signer},
             system_instruction::SystemError,
@@ -1504,9 +1593,10 @@ mod tests {
             transaction::{Transaction, TransactionError},
         },
         solana_streamer::{recvmmsg::recv_mmsg, socket::SocketAddrSpace},
-        solana_transaction_status::TransactionWithStatusMeta,
+        solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
         solana_vote_program::vote_transaction,
         std::{
+            borrow::Cow,
             net::SocketAddr,
             path::Path,
             sync::atomic::{AtomicBool, Ordering},
@@ -1559,7 +1649,6 @@ mod tests {
                 None,
                 gossip_vote_sender,
                 Arc::new(RwLock::new(CostModel::default())),
-                PacketDeduper::default(),
             );
             drop(verified_sender);
             drop(gossip_verified_vote_sender);
@@ -1609,7 +1698,6 @@ mod tests {
                 None,
                 gossip_vote_sender,
                 Arc::new(RwLock::new(CostModel::default())),
-                PacketDeduper::default(),
             );
             trace!("sending bank");
             drop(verified_sender);
@@ -1685,7 +1773,6 @@ mod tests {
                 None,
                 gossip_vote_sender,
                 Arc::new(RwLock::new(CostModel::default())),
-                PacketDeduper::default(),
             );
 
             // fund another account so we can send 2 good transactions in a single batch.
@@ -1837,7 +1924,6 @@ mod tests {
                     None,
                     gossip_vote_sender,
                     Arc::new(RwLock::new(CostModel::default())),
-                    PacketDeduper::default(),
                 );
 
                 // wait for banking_stage to eat the packets
@@ -2427,30 +2513,47 @@ mod tests {
     fn test_write_persist_transaction_status() {
         solana_logger::setup();
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
-        } = create_slow_genesis_config(10_000);
+        } = create_slow_genesis_config(solana_sdk::native_token::sol_to_lamports(1000.0));
+        genesis_config.rent.lamports_per_byte_year = 50;
+        genesis_config.rent.exemption_threshold = 2.0;
         let bank = Arc::new(Bank::new_no_wallclock_throttle_for_tests(&genesis_config));
         let pubkey = solana_sdk::pubkey::new_rand();
         let pubkey1 = solana_sdk::pubkey::new_rand();
         let keypair1 = Keypair::new();
 
-        let success_tx =
-            system_transaction::transfer(&mint_keypair, &pubkey, 1, genesis_config.hash());
+        let rent_exempt_amount = bank.get_minimum_balance_for_rent_exemption(0);
+
+        let success_tx = system_transaction::transfer(
+            &mint_keypair,
+            &pubkey,
+            rent_exempt_amount,
+            genesis_config.hash(),
+        );
         let success_signature = success_tx.signatures[0];
         let entry_1 = next_entry(&genesis_config.hash(), 1, vec![success_tx.clone()]);
-        let ix_error_tx =
-            system_transaction::transfer(&keypair1, &pubkey1, 10, genesis_config.hash());
+        let ix_error_tx = system_transaction::transfer(
+            &keypair1,
+            &pubkey1,
+            2 * rent_exempt_amount,
+            genesis_config.hash(),
+        );
         let ix_error_signature = ix_error_tx.signatures[0];
         let entry_2 = next_entry(&entry_1.hash, 1, vec![ix_error_tx.clone()]);
-        let fail_tx =
-            system_transaction::transfer(&mint_keypair, &pubkey1, 1, genesis_config.hash());
+        let fail_tx = system_transaction::transfer(
+            &mint_keypair,
+            &pubkey1,
+            rent_exempt_amount,
+            genesis_config.hash(),
+        );
         let entry_3 = next_entry(&entry_2.hash, 1, vec![fail_tx.clone()]);
         let entries = vec![entry_1, entry_2, entry_3];
 
         let transactions = sanitize_transactions(vec![success_tx, ix_error_tx, fail_tx]);
-        bank.transfer(4, &mint_keypair, &keypair1.pubkey()).unwrap();
+        bank.transfer(rent_exempt_amount, &mint_keypair, &keypair1.pubkey())
+            .unwrap();
 
         let ledger_path = get_tmp_ledger_path!();
         {
@@ -2510,7 +2613,7 @@ mod tests {
             let confirmed_block = blockstore.get_rooted_block(bank.slot(), false).unwrap();
             assert_eq!(confirmed_block.transactions.len(), 3);
 
-            for TransactionWithStatusMeta { transaction, meta } in
+            for VersionedTransactionWithStatusMeta { transaction, meta } in
                 confirmed_block.transactions.into_iter()
             {
                 if transaction.signatures[0] == success_signature {
@@ -2530,6 +2633,165 @@ mod tests {
                 }
             }
 
+            poh_recorder
+                .lock()
+                .unwrap()
+                .is_exited
+                .store(true, Ordering::Relaxed);
+            let _ = poh_simulator.join();
+        }
+        Blockstore::destroy(&ledger_path).unwrap();
+    }
+
+    fn generate_new_address_lookup_table(
+        authority: Option<Pubkey>,
+        num_addresses: usize,
+    ) -> AddressLookupTable<'static> {
+        let mut addresses = Vec::with_capacity(num_addresses);
+        addresses.resize_with(num_addresses, Pubkey::new_unique);
+        AddressLookupTable {
+            meta: LookupTableMeta {
+                authority,
+                ..LookupTableMeta::default()
+            },
+            addresses: Cow::Owned(addresses),
+        }
+    }
+
+    fn store_address_lookup_table(
+        bank: &Bank,
+        account_address: Pubkey,
+        address_lookup_table: AddressLookupTable<'static>,
+    ) -> AccountSharedData {
+        let mut data = Vec::new();
+        address_lookup_table.serialize_for_tests(&mut data).unwrap();
+
+        let mut account =
+            AccountSharedData::new(1, data.len(), &solana_address_lookup_table_program::id());
+        account.set_data(data);
+        bank.store_account(&account_address, &account);
+
+        account
+    }
+
+    #[test]
+    fn test_write_persist_loaded_addresses() {
+        solana_logger::setup();
+        let GenesisConfigInfo {
+            genesis_config,
+            mint_keypair,
+            ..
+        } = create_slow_genesis_config(10_000);
+        let bank = Arc::new(Bank::new_no_wallclock_throttle_for_tests(&genesis_config));
+        let keypair = Keypair::new();
+
+        let address_table_key = Pubkey::new_unique();
+        let address_table_state = generate_new_address_lookup_table(None, 2);
+        store_address_lookup_table(&bank, address_table_key, address_table_state);
+
+        let bank = Arc::new(Bank::new_from_parent(&bank, &Pubkey::new_unique(), 1));
+        let message = VersionedMessage::V0(v0::Message {
+            header: MessageHeader {
+                num_required_signatures: 1,
+                num_readonly_signed_accounts: 0,
+                num_readonly_unsigned_accounts: 0,
+            },
+            recent_blockhash: genesis_config.hash(),
+            account_keys: vec![keypair.pubkey()],
+            address_table_lookups: vec![MessageAddressTableLookup {
+                account_key: address_table_key,
+                writable_indexes: vec![0],
+                readonly_indexes: vec![1],
+            }],
+            instructions: vec![],
+        });
+
+        let tx = VersionedTransaction::try_new(message, &[&keypair]).unwrap();
+        let message_hash = tx.message.hash();
+        let sanitized_tx =
+            SanitizedTransaction::try_create(tx.clone(), message_hash, Some(false), |lookups| {
+                Ok(bank.load_lookup_table_addresses(lookups).unwrap())
+            })
+            .unwrap();
+
+        let entry = next_versioned_entry(&genesis_config.hash(), 1, vec![tx]);
+        let entries = vec![entry];
+
+        // todo: check if sig fees are needed
+        bank.transfer(1, &mint_keypair, &keypair.pubkey()).unwrap();
+
+        let ledger_path = get_tmp_ledger_path!();
+        {
+            let blockstore = Blockstore::open(&ledger_path)
+                .expect("Expected to be able to open database ledger");
+            let blockstore = Arc::new(blockstore);
+            let (poh_recorder, _entry_receiver, record_receiver) = PohRecorder::new(
+                bank.tick_height(),
+                bank.last_blockhash(),
+                bank.clone(),
+                Some((4, 4)),
+                bank.ticks_per_slot(),
+                &Pubkey::new_unique(),
+                &blockstore,
+                &Arc::new(LeaderScheduleCache::new_from_bank(&bank)),
+                &Arc::new(PohConfig::default()),
+                Arc::new(AtomicBool::default()),
+            );
+            let recorder = poh_recorder.recorder();
+            let poh_recorder = Arc::new(Mutex::new(poh_recorder));
+
+            let poh_simulator = simulate_poh(record_receiver, &poh_recorder);
+
+            poh_recorder.lock().unwrap().set_bank(&bank);
+
+            let shreds = entries_to_test_shreds(&entries, bank.slot(), 0, true, 0);
+            blockstore.insert_shreds(shreds, None, false).unwrap();
+            blockstore.set_roots(std::iter::once(&bank.slot())).unwrap();
+
+            let (transaction_status_sender, transaction_status_receiver) = unbounded();
+            let transaction_status_service = TransactionStatusService::new(
+                transaction_status_receiver,
+                Arc::new(AtomicU64::default()),
+                true,
+                None,
+                blockstore.clone(),
+                &Arc::new(AtomicBool::new(false)),
+            );
+
+            let (gossip_vote_sender, _gossip_vote_receiver) = unbounded();
+
+            let _ = BankingStage::process_and_record_transactions(
+                &bank,
+                &[sanitized_tx.clone()],
+                &recorder,
+                0,
+                Some(TransactionStatusSender {
+                    sender: transaction_status_sender,
+                    enable_cpi_and_log_storage: false,
+                }),
+                &gossip_vote_sender,
+                &QosService::new(Arc::new(RwLock::new(CostModel::default())), 1),
+            );
+
+            transaction_status_service.join().unwrap();
+
+            let mut confirmed_block = blockstore.get_rooted_block(bank.slot(), false).unwrap();
+            assert_eq!(confirmed_block.transactions.len(), 1);
+
+            let recorded_meta = confirmed_block.transactions.pop().unwrap().meta;
+            assert_eq!(
+                recorded_meta,
+                Some(TransactionStatusMeta {
+                    status: Ok(()),
+                    pre_balances: vec![1, 0, 0],
+                    post_balances: vec![1, 0, 0],
+                    pre_token_balances: Some(vec![]),
+                    post_token_balances: Some(vec![]),
+                    rewards: Some(vec![]),
+                    loaded_addresses: sanitized_tx.get_loaded_addresses(),
+                    ..TransactionStatusMeta::default()
+                })
+            );
             poh_recorder
                 .lock()
                 .unwrap()
@@ -2962,11 +3224,10 @@ mod tests {
         let new_packet_batch = PacketBatch::new(vec![Packet::default()]);
         let packet_indexes = vec![];
 
-        let packet_deduper = PacketDeduper::default();
         let mut dropped_packet_batches_count = 0;
         let mut dropped_packets_count = 0;
         let mut newly_buffered_packets_count = 0;
-        let banking_stage_stats = BankingStageStats::default();
+        let mut banking_stage_stats = BankingStageStats::default();
         // Because the set of unprocessed `packet_indexes` is empty, the
         // packets are not added to the unprocessed queue
         BankingStage::push_unprocessed(
@@ -2977,8 +3238,7 @@ mod tests {
             &mut dropped_packets_count,
             &mut newly_buffered_packets_count,
             batch_limit,
-            &packet_deduper,
-            &banking_stage_stats,
+            &mut banking_stage_stats,
         );
         assert_eq!(unprocessed_packets.len(), 1);
         assert_eq!(dropped_packet_batches_count, 0);
@@ -2996,8 +3256,7 @@ mod tests {
             &mut dropped_packets_count,
             &mut newly_buffered_packets_count,
             batch_limit,
-            &packet_deduper,
-            &banking_stage_stats,
+            &mut banking_stage_stats,
         );
         assert_eq!(unprocessed_packets.len(), 2);
         assert_eq!(dropped_packet_batches_count, 0);
@@ -3015,34 +3274,12 @@ mod tests {
         BankingStage::push_unprocessed(
             &mut unprocessed_packets,
             new_packet_batch.clone(),
-            packet_indexes.clone(),
-            &mut dropped_packet_batches_count,
-            &mut dropped_packets_count,
-            &mut newly_buffered_packets_count,
-            batch_limit,
-            &packet_deduper,
-            &banking_stage_stats,
-        );
-        assert_eq!(unprocessed_packets.len(), 2);
-        assert_eq!(
-            unprocessed_packets[1].0.packets[0],
-            new_packet_batch.packets[0]
-        );
-        assert_eq!(dropped_packet_batches_count, 1);
-        assert_eq!(dropped_packets_count, 2);
-        assert_eq!(newly_buffered_packets_count, 2);
-
-        // Check duplicates are dropped (newly buffered shouldn't change)
-        BankingStage::push_unprocessed(
-            &mut unprocessed_packets,
-            new_packet_batch.clone(),
             packet_indexes,
             &mut dropped_packet_batches_count,
             &mut dropped_packets_count,
             &mut newly_buffered_packets_count,
-            3,
-            &packet_deduper,
-            &banking_stage_stats,
+            batch_limit,
+            &mut banking_stage_stats,
         );
         assert_eq!(unprocessed_packets.len(), 2);
         assert_eq!(
@@ -3192,5 +3429,75 @@ mod tests {
             assert_eq!(3, txs.len());
             assert_eq!(vec![0, 1, 2], tx_packet_index);
         }
+    }
+
+    #[test]
+    fn test_accumulate_batched_transaction_costs() {
+        let tx_costs = vec![
+            TransactionCost {
+                signature_cost: 1,
+                write_lock_cost: 2,
+                data_bytes_cost: 3,
+                execution_cost: 10,
+                ..TransactionCost::default()
+            },
+            TransactionCost {
+                signature_cost: 4,
+                write_lock_cost: 5,
+                data_bytes_cost: 6,
+                execution_cost: 20,
+                ..TransactionCost::default()
+            },
+            TransactionCost {
+                signature_cost: 7,
+                write_lock_cost: 8,
+                data_bytes_cost: 9,
+                execution_cost: 40,
+                ..TransactionCost::default()
+            },
+        ];
+        let tx_results = vec![
+            Ok(()),
+            Ok(()),
+            Err(TransactionError::WouldExceedMaxBlockCostLimit),
+        ];
+        // should only accumulate first two cost that are OK
+        let expected_signatures = 5;
+        let expected_write_locks = 7;
+        let expected_data_bytes = 9;
+        let expected_executions = 30;
+        let cost_details =
+            BankingStage::accumulate_batched_transaction_costs(tx_costs.iter(), tx_results.iter());
+        assert_eq!(expected_signatures, cost_details.batched_signature_cost);
+        assert_eq!(expected_write_locks, cost_details.batched_write_lock_cost);
+        assert_eq!(expected_data_bytes, cost_details.batched_data_bytes_cost);
+        assert_eq!(expected_executions, cost_details.batched_execute_cost);
+    }
+
+    #[test]
+    fn test_accumulate_execute_units_and_time() {
+        let mut execute_timings = ExecuteTimings::default();
+        let mut expected_units = 0;
+        let mut expected_us = 0;
+
+        for n in 0..10 {
+            execute_timings.details.per_program_timings.insert(
+                Pubkey::new_unique(),
+                ProgramTiming {
+                    accumulated_us: n * 100,
+                    accumulated_units: n * 1000,
+                    count: n as u32,
+                    errored_txs_compute_consumed: vec![],
+                    total_errored_units: 0,
+                },
+            );
+            expected_us += n * 100;
+            expected_units += n * 1000;
+        }
+
+        let (units, us) = BankingStage::accumulate_execute_units_and_time(&execute_timings);
+
+        assert_eq!(expected_units, units);
+        assert_eq!(expected_us, us);
     }
 }

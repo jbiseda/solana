@@ -51,6 +51,7 @@ use {
         bank::{Bank, NewBankOptions},
         bank_forks::BankForks,
         commitment::BlockCommitmentCache,
+        transaction_cost_metrics_sender::TransactionCostMetricsSender,
         vote_sender_types::ReplayVoteSender,
     },
     solana_sdk::{
@@ -58,6 +59,7 @@ use {
         genesis_config::ClusterType,
         hash::Hash,
         pubkey::Pubkey,
+        saturating_add_assign,
         signature::{Keypair, Signature, Signer},
         timing::timestamp,
         transaction::Transaction,
@@ -164,6 +166,10 @@ pub struct ReplayTiming {
     process_unfrozen_gossip_verified_vote_hashes_elapsed: u64,
     repair_correct_slots_elapsed: u64,
     retransmit_not_propagated_elapsed: u64,
+    generate_new_bank_forks_read_lock_us: u64,
+    generate_new_bank_forks_get_slots_since_us: u64,
+    generate_new_bank_forks_loop_us: u64,
+    generate_new_bank_forks_write_lock_us: u64,
 }
 impl ReplayTiming {
     #[allow(clippy::too_many_arguments)]
@@ -303,8 +309,27 @@ impl ReplayTiming {
                     self.retransmit_not_propagated_elapsed as i64,
                     i64
                 ),
+                (
+                    "generate_new_bank_forks_read_lock_us",
+                    self.generate_new_bank_forks_read_lock_us as i64,
+                    i64
+                ),
+                (
+                    "generate_new_bank_forks_get_slots_since_us",
+                    self.generate_new_bank_forks_get_slots_since_us as i64,
+                    i64
+                ),
+                (
+                    "generate_new_bank_forks_loop_us",
+                    self.generate_new_bank_forks_loop_us as i64,
+                    i64
+                ),
+                (
+                    "generate_new_bank_forks_write_lock_us",
+                    self.generate_new_bank_forks_write_lock_us as i64,
+                    i64
+                ),
             );
-
             *self = ReplayTiming::default();
             self.last_print = now;
         }
@@ -339,6 +364,7 @@ impl ReplayStage {
         voting_sender: Sender<VoteOp>,
         drop_bank_sender: Sender<Vec<Arc<Bank>>>,
         block_metadata_notifier: Option<BlockMetadataNotifierLock>,
+        transaction_cost_metrics_sender: Option<TransactionCostMetricsSender>,
     ) -> Self {
         let ReplayStageConfig {
             vote_account,
@@ -413,6 +439,7 @@ impl ReplayStage {
                         &leader_schedule_cache,
                         &rpc_subscriptions,
                         &mut progress,
+                        &mut replay_timing,
                     );
                     generate_new_bank_forks_time.stop();
 
@@ -445,6 +472,7 @@ impl ReplayStage {
                         &mut duplicate_slots_to_repair,
                         &ancestor_hashes_replay_update_sender,
                         block_metadata_notifier.clone(),
+                        transaction_cost_metrics_sender.as_ref(),
                     );
                     replay_active_banks_time.stop();
 
@@ -1570,6 +1598,7 @@ impl ReplayStage {
         bank_progress: &mut ForkProgress,
         transaction_status_sender: Option<&TransactionStatusSender>,
         replay_vote_sender: &ReplayVoteSender,
+        transaction_cost_metrics_sender: Option<&TransactionCostMetricsSender>,
         verify_recyclers: &VerifyRecyclers,
     ) -> result::Result<usize, BlockstoreProcessorError> {
         let tx_count_before = bank_progress.replay_progress.num_txs;
@@ -1581,6 +1610,7 @@ impl ReplayStage {
             false,
             transaction_status_sender,
             Some(replay_vote_sender),
+            transaction_cost_metrics_sender,
             None,
             verify_recyclers,
             false,
@@ -2070,6 +2100,7 @@ impl ReplayStage {
         duplicate_slots_to_repair: &mut DuplicateSlotsToRepair,
         ancestor_hashes_replay_update_sender: &AncestorHashesReplayUpdateSender,
         block_metadata_notifier: Option<BlockMetadataNotifierLock>,
+        transaction_cost_metrics_sender: Option<&TransactionCostMetricsSender>,
     ) -> bool {
         let mut did_complete_bank = false;
         let mut tx_count = 0;
@@ -2119,6 +2150,7 @@ impl ReplayStage {
                     bank_progress,
                     transaction_status_sender,
                     replay_vote_sender,
+                    transaction_cost_metrics_sender,
                     verify_recyclers,
                 );
                 match replay_result {
@@ -2852,24 +2884,34 @@ impl ReplayStage {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
         rpc_subscriptions: &Arc<RpcSubscriptions>,
         progress: &mut ProgressMap,
+        replay_timing: &mut ReplayTiming,
     ) {
         // Find the next slot that chains to the old slot
+        let mut generate_new_bank_forks_read_lock =
+            Measure::start("generate_new_bank_forks_read_lock");
         let forks = bank_forks.read().unwrap();
+        generate_new_bank_forks_read_lock.stop();
+
         let frozen_banks = forks.frozen_banks();
         let frozen_bank_slots: Vec<u64> = frozen_banks
             .keys()
             .cloned()
             .filter(|s| *s >= forks.root())
             .collect();
+        let mut generate_new_bank_forks_get_slots_since =
+            Measure::start("generate_new_bank_forks_get_slots_since");
         let next_slots = blockstore
             .get_slots_since(&frozen_bank_slots)
             .expect("Db error");
+        generate_new_bank_forks_get_slots_since.stop();
+
         // Filter out what we've already seen
         trace!("generate new forks {:?}", {
             let mut next_slots = next_slots.iter().collect::<Vec<_>>();
             next_slots.sort();
             next_slots
         });
+        let mut generate_new_bank_forks_loop = Measure::start("generate_new_bank_forks_loop");
         let mut new_banks = HashMap::new();
         for (parent_slot, children) in next_slots {
             let parent_bank = frozen_banks
@@ -2910,11 +2952,31 @@ impl ReplayStage {
             }
         }
         drop(forks);
+        generate_new_bank_forks_loop.stop();
 
+        let mut generate_new_bank_forks_write_lock =
+            Measure::start("generate_new_bank_forks_write_lock");
         let mut forks = bank_forks.write().unwrap();
         for (_, bank) in new_banks {
             forks.insert(bank);
         }
+        generate_new_bank_forks_write_lock.stop();
+        saturating_add_assign!(
+            replay_timing.generate_new_bank_forks_read_lock_us,
+            generate_new_bank_forks_read_lock.as_us()
+        );
+        saturating_add_assign!(
+            replay_timing.generate_new_bank_forks_get_slots_since_us,
+            generate_new_bank_forks_get_slots_since.as_us()
+        );
+        saturating_add_assign!(
+            replay_timing.generate_new_bank_forks_loop_us,
+            generate_new_bank_forks_loop.as_us()
+        );
+        saturating_add_assign!(
+            replay_timing.generate_new_bank_forks_write_lock_us,
+            generate_new_bank_forks_write_lock.as_us()
+        );
     }
 
     fn new_bank_from_parent_with_notify(
@@ -3003,7 +3065,7 @@ pub mod tests {
             transaction::TransactionError,
         },
         solana_streamer::socket::SocketAddrSpace,
-        solana_transaction_status::TransactionWithStatusMeta,
+        solana_transaction_status::VersionedTransactionWithStatusMeta,
         solana_vote_program::{
             vote_state::{VoteState, VoteStateVersions},
             vote_transaction,
@@ -3189,12 +3251,14 @@ pub mod tests {
             .unwrap()
             .get(NUM_CONSECUTIVE_LEADER_SLOTS)
             .is_none());
+        let mut replay_timing = ReplayTiming::default();
         ReplayStage::generate_new_bank_forks(
             &blockstore,
             &bank_forks,
             &leader_schedule_cache,
             &rpc_subscriptions,
             &mut progress,
+            &mut replay_timing,
         );
         assert!(bank_forks
             .read()
@@ -3217,6 +3281,7 @@ pub mod tests {
             &leader_schedule_cache,
             &rpc_subscriptions,
             &mut progress,
+            &mut replay_timing,
         );
         assert!(bank_forks
             .read()
@@ -3652,6 +3717,7 @@ pub mod tests {
                 bank1_progress,
                 None,
                 &replay_vote_sender,
+                None,
                 &VerifyRecyclers::default(),
             );
             let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -3821,10 +3887,12 @@ pub mod tests {
     #[test]
     fn test_write_persist_transaction_status() {
         let GenesisConfigInfo {
-            genesis_config,
+            mut genesis_config,
             mint_keypair,
             ..
-        } = create_genesis_config(1000);
+        } = create_genesis_config(solana_sdk::native_token::sol_to_lamports(1000.0));
+        genesis_config.rent.lamports_per_byte_year = 50;
+        genesis_config.rent.exemption_threshold = 2.0;
         let (ledger_path, _) = create_new_tmp_ledger!(&genesis_config);
         {
             let blockstore = Blockstore::open(&ledger_path)
@@ -3837,7 +3905,11 @@ pub mod tests {
 
             let bank0 = Arc::new(Bank::new_for_tests(&genesis_config));
             bank0
-                .transfer(4, &mint_keypair, &keypair2.pubkey())
+                .transfer(
+                    bank0.get_minimum_balance_for_rent_exemption(0),
+                    &mint_keypair,
+                    &keypair2.pubkey(),
+                )
                 .unwrap();
 
             let bank1 = Arc::new(Bank::new_from_parent(&bank0, &Pubkey::default(), 1));
@@ -3854,7 +3926,7 @@ pub mod tests {
             let confirmed_block = blockstore.get_rooted_block(slot, false).unwrap();
             assert_eq!(confirmed_block.transactions.len(), 3);
 
-            for TransactionWithStatusMeta { transaction, meta } in
+            for VersionedTransactionWithStatusMeta { transaction, meta } in
                 confirmed_block.transactions.into_iter()
             {
                 if transaction.signatures[0] == signatures[0] {

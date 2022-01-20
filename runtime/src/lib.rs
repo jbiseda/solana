@@ -1,6 +1,7 @@
 #![cfg_attr(RUSTC_WITH_SPECIALIZATION, feature(min_specialization))]
 #![allow(clippy::integer_arithmetic)]
 pub mod account_info;
+pub mod account_rent_state;
 pub mod accounts;
 pub mod accounts_background_service;
 pub mod accounts_cache;
@@ -17,7 +18,6 @@ pub mod bank_forks;
 pub mod bank_utils;
 pub mod block_cost_limits;
 pub mod blockhash_queue;
-pub mod bloom;
 pub mod bucket_map_holder;
 pub mod bucket_map_holder_stats;
 pub mod builtins;
@@ -56,8 +56,11 @@ pub mod stakes;
 pub mod status_cache;
 mod system_instruction_processor;
 pub mod transaction_batch;
+pub mod transaction_cost_metrics_sender;
 pub mod vote_account;
+pub mod vote_parser;
 pub mod vote_sender_types;
+pub mod vote_transaction;
 pub mod waitable_condvar;
 
 #[macro_use]

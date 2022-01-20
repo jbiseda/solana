@@ -142,9 +142,9 @@ checksum = "eab1c04a571841102f5345a8fc0f6bb3d31c315dec879b5c6e42e40ce7ffa34e"
 
 [[package]]
 name = "assert_cmd"
-version = "2.0.2"
+version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e996dc7940838b7ef1096b882e29ec30a3149a3a443cdc8dba19ed382eca1fe2"
+checksum = "93ae1ddd39efd67689deb1979d80bad3bf7f2b09c6e6117c8d1f2443b5e2f83e"
 dependencies = [
  "bstr",
  "doc-comment",
@@ -980,16 +980,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crypto-mac"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1d1a86f49236c215f271d40892d5fc950490551400b02ef360692c29815c714"
-dependencies = [
- "generic-array 0.14.5",
- "subtle",
-]
-
-[[package]]
 name = "csv"
 version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1059,13 +1049,12 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "5.0.0"
+version = "4.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b799062aaf67eb976af3bdca031ee6f846d2f0a5710ddbb0d2efee33f3cc4760"
+checksum = "e77a43b28d0668df09411cb0bc9a8c2adc40f9a048afe863e05fd43251e8e39c"
 dependencies = [
  "cfg-if 1.0.0",
  "num_cpus",
- "parking_lot 0.11.2",
  "rayon",
 ]
 
@@ -1400,12 +1389,6 @@ dependencies = [
  "syn 1.0.81",
  "synstructure",
 ]
-
-[[package]]
-name = "fallible-iterator"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
 
 [[package]]
 name = "fast-math"
@@ -1886,16 +1869,6 @@ dependencies = [
 
 [[package]]
 name = "hmac"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a2a2320eb7ec0ebe8da8f744d7812d9fc4cb4d09344ac01898dbcb6a20ae69b"
-dependencies = [
- "crypto-mac 0.11.1",
- "digest 0.9.0",
-]
-
-[[package]]
-name = "hmac"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddca131f3e7f2ce2df364b57949a9d47915cfbd35e46cfee355ccebbf794d6a2"
@@ -2064,6 +2037,12 @@ name = "ieee754"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9007da9cacbd3e6343da136e98b0d2df013f553d35bdec8b518f07bea768e19c"
+
+[[package]]
+name = "index_list"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a9d968042a4902e08810946fc7cd5851eb75e80301342305af755ca06cb82ce"
 
 [[package]]
 name = "indexmap"
@@ -2480,17 +2459,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
 
 [[package]]
-name = "md-5"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b5a279bb9607f9f53c22d496eade00d138d1bdcccd07d74650387cf94942a15"
-dependencies = [
- "block-buffer 0.9.0",
- "digest 0.9.0",
- "opaque-debug",
-]
-
-[[package]]
 name = "memchr"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2507,9 +2475,9 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.5.1"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e8b95e4fb3de48d767d3537f161168d3a7b0d4c5dfbe26431ea3acf98432675"
+checksum = "fe3179b85e1fd8b14447cbebadb75e45a1002f541b925f0bfec366d56a81c56d"
 dependencies = [
  "libc",
 ]
@@ -2617,6 +2585,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9f1c5b025cda876f66ef43a113f91ebc9f4ccef34843000e0adf6ebbab84e21"
 dependencies = [
  "winapi 0.3.9",
+]
+
+[[package]]
+name = "modular-bitfield"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a53d79ba8304ac1c4f9eb3b9d281f21f7be9d4626f72ce7df4ad8fbde4f38a74"
+dependencies = [
+ "modular-bitfield-impl",
+ "static_assertions",
+]
+
+[[package]]
+name = "modular-bitfield-impl"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a7d5f7076603ebc68de2dc6a650ec331a062a13abaa346975be747bbfa4b789"
+dependencies = [
+ "proc-macro2 1.0.32",
+ "quote 1.0.10",
+ "syn 1.0.81",
 ]
 
 [[package]]
@@ -3013,24 +3002,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "phf"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9fc3db1018c4b59d7d582a739436478b6035138b6aecbce989fc91c3e98409f"
-dependencies = [
- "phf_shared",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6796ad771acdc0123d2a88dc428b5e38ef24456743ddb1744ed628f9815c096"
-dependencies = [
- "siphasher",
-]
-
-[[package]]
 name = "pickledb"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3097,62 +3068,6 @@ dependencies = [
  "cpufeatures",
  "opaque-debug",
  "universal-hash",
-]
-
-[[package]]
-name = "postgres"
-version = "0.19.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb76d6535496f633fa799bb872ffb4790e9cbdedda9d35564ca0252f930c0dd5"
-dependencies = [
- "bytes 1.1.0",
- "fallible-iterator",
- "futures 0.3.19",
- "log 0.4.14",
- "tokio",
- "tokio-postgres",
-]
-
-[[package]]
-name = "postgres-derive"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c857dd221cb0e7d8414b894a0ce29eae44d453dda0baa132447878e75e701477"
-dependencies = [
- "proc-macro2 1.0.32",
- "quote 1.0.10",
- "syn 1.0.81",
-]
-
-[[package]]
-name = "postgres-protocol"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b145e6a4ed52cb316a27787fc20fe8a25221cb476479f61e4e0327c15b98d91a"
-dependencies = [
- "base64 0.13.0",
- "byteorder",
- "bytes 1.1.0",
- "fallible-iterator",
- "hmac 0.11.0",
- "md-5",
- "memchr",
- "rand 0.8.4",
- "sha2 0.9.8",
- "stringprep",
-]
-
-[[package]]
-name = "postgres-types"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04619f94ba0cc80999f4fc7073607cb825bc739a883cb6d20900fc5e009d6b0d"
-dependencies = [
- "bytes 1.1.0",
- "chrono",
- "fallible-iterator",
- "postgres-derive",
- "postgres-protocol",
 ]
 
 [[package]]
@@ -4236,12 +4151,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a30f10c911c0355f80f1c2faa8096efc4a58cdf8590b954d5b395efa071c711"
 
 [[package]]
-name = "siphasher"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "533494a8f9b724d33625ab53c6c4800f7cc445895924a8ef649222dcb76e938b"
-
-[[package]]
 name = "slab"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4397,31 +4306,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solana-accountsdb-plugin-postgres"
-version = "1.10.0"
-dependencies = [
- "bs58 0.4.0",
- "chrono",
- "crossbeam-channel",
- "log 0.4.14",
- "postgres",
- "postgres-types",
- "serde",
- "serde_derive",
- "serde_json",
- "solana-account-decoder",
- "solana-accountsdb-plugin-interface",
- "solana-logger 1.10.0",
- "solana-measure",
- "solana-metrics",
- "solana-runtime",
- "solana-sdk",
- "solana-transaction-status",
- "thiserror",
- "tokio-postgres",
-]
-
-[[package]]
 name = "solana-address-lookup-table-program"
 version = "1.10.0"
 dependencies = [
@@ -4554,6 +4438,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-bloom"
+version = "1.10.0"
+dependencies = [
+ "bv",
+ "fnv",
+ "log 0.4.14",
+ "rand 0.7.3",
+ "rayon",
+ "rustc_version 0.4.0",
+ "serde",
+ "serde_derive",
+ "solana-frozen-abi 1.10.0",
+ "solana-frozen-abi-macro 1.10.0",
+ "solana-sdk",
+]
+
+[[package]]
 name = "solana-bpf-loader-program"
 version = "1.10.0"
 dependencies = [
@@ -4578,7 +4479,8 @@ version = "1.10.0"
 dependencies = [
  "fs_extra",
  "log 0.4.14",
- "memmap2 0.5.1",
+ "memmap2 0.5.2",
+ "modular-bitfield",
  "rand 0.7.3",
  "rayon",
  "solana-logger 1.10.0",
@@ -4821,6 +4723,8 @@ dependencies = [
  "serde_json",
  "serial_test",
  "solana-accountsdb-plugin-manager",
+ "solana-address-lookup-table-program",
+ "solana-bloom",
  "solana-client",
  "solana-entry",
  "solana-frozen-abi 1.10.0",
@@ -4847,6 +4751,7 @@ dependencies = [
  "solana-vote-program",
  "static_assertions",
  "sys-info",
+ "sysctl",
  "systemstat",
  "tempfile",
  "thiserror",
@@ -4957,7 +4862,7 @@ dependencies = [
  "bv",
  "generic-array 0.14.5",
  "log 0.4.14",
- "memmap2 0.5.1",
+ "memmap2 0.5.2",
  "rustc_version 0.4.0",
  "serde",
  "serde_derive",
@@ -5044,6 +4949,7 @@ dependencies = [
  "serde_bytes",
  "serde_derive",
  "serial_test",
+ "solana-bloom",
  "solana-clap-utils",
  "solana-client",
  "solana-entry",
@@ -5355,10 +5261,12 @@ name = "solana-perf"
 version = "1.10.0"
 dependencies = [
  "bincode",
+ "bv",
  "caps",
  "curve25519-dalek 3.2.0",
  "dlopen",
  "dlopen_derive",
+ "fnv",
  "lazy_static",
  "libc",
  "log 0.4.14",
@@ -5367,6 +5275,7 @@ dependencies = [
  "rand 0.7.3",
  "rayon",
  "serde",
+ "solana-bloom",
  "solana-logger 1.10.0",
  "solana-metrics",
  "solana-rayon-threadlimit",
@@ -5508,6 +5417,8 @@ dependencies = [
  "num-traits",
  "rustc_version 0.4.0",
  "serde",
+ "solana-frozen-abi 1.10.0",
+ "solana-frozen-abi-macro 1.10.0",
  "solana-logger 1.10.0",
  "solana-measure",
  "solana-sdk",
@@ -5701,24 +5612,28 @@ dependencies = [
  "dashmap",
  "dir-diff",
  "ed25519-dalek",
+ "enum-iterator",
  "flate2",
  "fnv",
+ "index_list",
  "itertools 0.10.3",
  "lazy_static",
  "libsecp256k1 0.6.0",
  "log 0.4.14",
- "memmap2 0.5.1",
+ "memmap2 0.5.2",
  "num-derive",
  "num-traits",
  "num_cpus",
  "ouroboros",
  "rand 0.7.3",
+ "rand_chacha 0.2.2",
  "rayon",
  "regex",
  "rustc_version 0.4.0",
  "serde",
  "serde_derive",
  "solana-address-lookup-table-program",
+ "solana-bloom",
  "solana-bucket-map",
  "solana-compute-budget-program",
  "solana-config-program",
@@ -5766,7 +5681,7 @@ dependencies = [
  "lazy_static",
  "libsecp256k1 0.6.0",
  "log 0.4.14",
- "memmap2 0.5.1",
+ "memmap2 0.5.2",
  "num-derive",
  "num-traits",
  "pbkdf2 0.10.0",
@@ -6109,7 +6024,6 @@ dependencies = [
  "solana-version",
  "solana-vote-program",
  "symlink",
- "sysctl",
  "tikv-jemallocator",
 ]
 
@@ -6349,16 +6263,6 @@ dependencies = [
  "futures-core",
  "pin-project",
  "tokio",
-]
-
-[[package]]
-name = "stringprep"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ee348cb74b87454fff4b551cbf727025810a004f88aeacae7f85b87f4e9a1c1"
-dependencies = [
- "unicode-bidi",
- "unicode-normalization",
 ]
 
 [[package]]
@@ -6792,29 +6696,6 @@ checksum = "f7d995660bd2b7f8c1568414c1126076c13fbb725c40112dc0120b78eb9b717b"
 dependencies = [
  "native-tls",
  "tokio",
-]
-
-[[package]]
-name = "tokio-postgres"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b6c8b33df661b548dcd8f9bf87debb8c56c05657ed291122e1188698c2ece95"
-dependencies = [
- "async-trait",
- "byteorder",
- "bytes 1.1.0",
- "fallible-iterator",
- "futures 0.3.19",
- "log 0.4.14",
- "parking_lot 0.11.2",
- "percent-encoding 2.1.0",
- "phf",
- "pin-project-lite",
- "postgres-protocol",
- "postgres-types",
- "socket2",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]

@@ -10,7 +10,6 @@ use {
     rayon::prelude::*,
     solana_core::{
         banking_stage::{BankingStage, BankingStageStats},
-        packet_deduper::PacketDeduper,
         qos_service::QosService,
     },
     solana_entry::entry::{next_hash, Entry},
@@ -169,13 +168,13 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
     let (vote_sender, vote_receiver) = unbounded();
     let mut bank = Bank::new_for_benches(&genesis_config);
     // Allow arbitrary transaction processing time for the purposes of this bench
-    bank.ns_per_slot = std::u128::MAX;
-    let bank = Arc::new(Bank::new_for_benches(&genesis_config));
+    bank.ns_per_slot = u128::MAX;
+    let bank = Arc::new(bank);
 
     // set cost tracker limits to MAX so it will not filter out TXs
     bank.write_cost_tracker()
         .unwrap()
-        .set_limits(std::u64::MAX, std::u64::MAX);
+        .set_limits(std::u64::MAX, std::u64::MAX, std::u64::MAX);
 
     debug!("threads: {} txs: {}", num_threads, txes);
 
@@ -222,7 +221,6 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
         );
         let cluster_info = Arc::new(cluster_info);
         let (s, _r) = unbounded();
-        let packet_deduper = PacketDeduper::default();
         let _banking_stage = BankingStage::new(
             &cluster_info,
             &poh_recorder,
@@ -232,7 +230,6 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
             None,
             s,
             Arc::new(RwLock::new(CostModel::default())),
-            packet_deduper.clone(),
         );
         poh_recorder.lock().unwrap().set_bank(&bank);
 
@@ -267,7 +264,6 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
             // in this chunk, but since we rotate between CHUNKS then
             // we should clear them by the time we come around again to re-use that chunk.
             bank.clear_signatures();
-            packet_deduper.reset();
             trace!(
                 "time: {} checked: {} sent: {}",
                 duration_as_us(&now.elapsed()),
