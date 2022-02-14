@@ -125,6 +125,7 @@ impl ClusterNodes<BroadcastStage> {
         if !enable_turbine_peers_shuffle_patch(shred.slot(), root_bank) {
             if let Some(node) = self.get_broadcast_peer(shred_seed) {
                 if socket_addr_space.check(&node.tvu) {
+                    error!("> using old broadcast shred slot {}", shred.slot());
                     return vec![node.tvu];
                 }
             }
@@ -142,6 +143,7 @@ impl ClusterNodes<BroadcastStage> {
             if age < MAX_CONTACT_INFO_AGE
                 && ContactInfo::is_valid_address(&node.tvu, socket_addr_space)
             {
+                error!("> using single broadcast addr {:?}", &node.tvu);
                 return vec![node.tvu];
             }
         }

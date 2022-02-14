@@ -135,6 +135,7 @@ pub struct CompletedDataSetInfo {
     pub slot: Slot,
     pub start_index: u32,
     pub end_index: u32,
+    //pub repaired: bool, MARKMARK
 }
 
 pub struct BlockstoreSignals {
@@ -1031,12 +1032,21 @@ impl Blockstore {
         start.stop();
         metrics.write_batch_elapsed += start.as_us();
 
+        if !newly_completed_slots.is_empty() {
+            error!(">>> found newly completed slots");
+        }
+
         send_signals(
             &self.new_shreds_signals,
             &self.completed_slots_senders,
             should_signal,
             newly_completed_slots,
         );
+
+
+
+        // MARKMARK
+        //send_distributed_signals
 
         total_start.stop();
 
@@ -1590,10 +1600,13 @@ impl Blockstore {
         data_index.insert(index);
 
         // TODO MARK
+        error!(">>> repaired slot {}", slot_meta.slot);
+        /*
         if shred_source == ShredSource::Repaired {
             error!("Setting slot meta repaired for slot={}", slot_meta.slot);
             slot_meta.repaired = true;
         }
+        */
 
         let newly_completed_data_sets = update_slot_meta(
             last_in_slot,
@@ -1635,6 +1648,9 @@ impl Blockstore {
                     (0, 0)
                 }
             };
+            if num_repaired > 0 {
+
+            }
             datapoint_info!(
                 "shred_insert_is_full",
                 (
@@ -3420,6 +3436,8 @@ fn send_signals(
         let mut slots: Vec<_> = (0..completed_slots_senders.len() - 1)
             .map(|_| newly_completed_slots.clone())
             .collect();
+
+        error!(">>> newly completed slots: {:?}", &newly_completed_slots);
 
         slots.push(newly_completed_slots);
 

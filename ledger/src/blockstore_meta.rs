@@ -45,7 +45,7 @@ pub struct SlotMeta {
 
     // TODO MARK new value
     // True if this slot contains shreds fetched using repair.
-    pub repaired: bool,
+    //pub repaired: bool,
 }
 
 // Serde implementation of serialize and deserialize for Option<u64>

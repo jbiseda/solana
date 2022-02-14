@@ -20,6 +20,7 @@ impl RpcCompletedSlotsService {
             .spawn(move || {
                 for slots in completed_slots_receiver.iter() {
                     for slot in slots {
+                        error!(">>> completed slot {}", slot);
                         rpc_subscriptions.notify_slot_update(SlotUpdate::Completed {
                             slot,
                             timestamp: timestamp(),
