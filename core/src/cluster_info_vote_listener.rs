@@ -100,12 +100,6 @@ pub struct VoteTracker {
 }
 
 impl VoteTracker {
-    pub(crate) fn new(root_bank: &Bank) -> Self {
-        let vote_tracker = VoteTracker::default();
-        vote_tracker.progress_with_new_root_bank(root_bank);
-        vote_tracker
-    }
-
     fn get_or_insert_slot_tracker(&self, slot: Slot) -> Arc<RwLock<SlotVoteTracker>> {
         if let Some(slot_vote_tracker) = self.slot_vote_trackers.read().unwrap().get(&slot) {
             return slot_vote_tracker.clone();
@@ -297,7 +291,11 @@ impl ClusterInfoVoteListener {
         let mut packet_batches = packet::to_packet_batches(&votes, 1);
 
         // Votes should already be filtered by this point.
-        sigverify::ed25519_verify_cpu(&mut packet_batches, /*reject_non_vote=*/ false);
+        sigverify::ed25519_verify_cpu(
+            &mut packet_batches,
+            /*reject_non_vote=*/ false,
+            votes.len(),
+        );
         let root_bank = bank_forks.read().unwrap().root_bank();
         let epoch_schedule = root_bank.epoch_schedule();
         votes
@@ -536,17 +534,14 @@ impl ClusterInfoVoteListener {
         let mut sel = Select::new();
         sel.recv(gossip_vote_txs_receiver);
         sel.recv(replay_votes_receiver);
-        let mut remaining_wait_time = 200;
-        loop {
-            if remaining_wait_time == 0 {
-                break;
-            }
+        let mut remaining_wait_time = Duration::from_millis(200);
+        while remaining_wait_time > Duration::ZERO {
             let start = Instant::now();
             // Wait for one of the receivers to be ready. `ready_timeout`
             // will return if channels either have something, or are
             // disconnected. `ready_timeout` can wake up spuriously,
             // hence the loop
-            let _ = sel.ready_timeout(Duration::from_millis(remaining_wait_time))?;
+            let _ = sel.ready_timeout(remaining_wait_time)?;
 
             // Should not early return from this point onwards until `process_votes()`
             // returns below to avoid missing any potential `optimistic_confirmed_slots`
@@ -564,10 +559,8 @@ impl ClusterInfoVoteListener {
                     bank_notification_sender,
                     cluster_confirmed_slot_sender,
                 ));
-            } else {
-                remaining_wait_time = remaining_wait_time
-                    .saturating_sub(std::cmp::max(start.elapsed().as_millis() as u64, 1));
             }
+            remaining_wait_time = remaining_wait_time.saturating_sub(start.elapsed());
         }
         Ok(vec![])
     }
@@ -684,7 +677,7 @@ impl ClusterInfoVoteListener {
         }
 
         if is_new_vote {
-            subscriptions.notify_vote(vote);
+            subscriptions.notify_vote(*vote_pubkey, vote);
             let _ = verified_vote_sender.send((*vote_pubkey, vote_slots));
         }
     }
@@ -1370,7 +1363,7 @@ mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let bank_forks = Arc::new(RwLock::new(BankForks::new(bank)));
         let bank = bank_forks.read().unwrap().get(0).unwrap().clone();
-        let vote_tracker = VoteTracker::new(&bank);
+        let vote_tracker = VoteTracker::default();
         let optimistically_confirmed_bank =
             OptimisticallyConfirmedBank::locked_from_bank_forks_root(&bank_forks);
         let max_complete_transaction_status_slot = Arc::new(AtomicU64::default());
@@ -1477,7 +1470,7 @@ mod tests {
                 vec![100; validator_voting_keypairs.len()],
             );
         let bank = Bank::new_for_tests(&genesis_config);
-        let vote_tracker = VoteTracker::new(&bank);
+        let vote_tracker = VoteTracker::default();
         let exit = Arc::new(AtomicBool::new(false));
         let bank_forks = Arc::new(RwLock::new(BankForks::new(bank)));
         let bank = bank_forks.read().unwrap().get(0).unwrap().clone();

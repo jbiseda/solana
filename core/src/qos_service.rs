@@ -117,22 +117,25 @@ impl QosService {
         txs_costs
     }
 
-    // Given a list of transactions and their costs, this function returns a corresponding
-    // list of Results that indicate if a transaction is selected to be included in the current block,
+    /// Given a list of transactions and their costs, this function returns a corresponding
+    /// list of Results that indicate if a transaction is selected to be included in the current block,
+    /// and a count of the number of transactions that would fit in the block
     pub fn select_transactions_per_cost<'a>(
         &self,
         transactions: impl Iterator<Item = &'a SanitizedTransaction>,
         transactions_costs: impl Iterator<Item = &'a TransactionCost>,
         bank: &Arc<Bank>,
-    ) -> Vec<transaction::Result<()>> {
+    ) -> (Vec<transaction::Result<()>>, usize) {
         let mut cost_tracking_time = Measure::start("cost_tracking_time");
         let mut cost_tracker = bank.write_cost_tracker().unwrap();
+        let mut num_included = 0;
         let select_results = transactions
             .zip(transactions_costs)
             .map(|(tx, cost)| match cost_tracker.try_add(tx, cost) {
                 Ok(current_block_cost) => {
                     debug!("slot {:?}, transaction {:?}, cost {:?}, fit into current block, current block cost {}", bank.slot(), tx, cost, current_block_cost);
                     self.metrics.selected_txs_count.fetch_add(1, Ordering::Relaxed);
+                    num_included += 1;
                     Ok(())
                 },
                 Err(e) => {
@@ -162,7 +165,7 @@ impl QosService {
         self.metrics
             .cost_tracking_time
             .fetch_add(cost_tracking_time.as_us(), Ordering::Relaxed);
-        select_results
+        (select_results, num_included)
     }
 
     // metrics are reported by bank slot
@@ -170,37 +173,6 @@ impl QosService {
         self.report_sender
             .send(QosMetrics::BlockBatchUpdate { bank })
             .unwrap_or_else(|err| warn!("qos service report metrics failed: {:?}", err));
-    }
-
-    // metrics accumulating apis
-    pub fn accumulate_tpu_ingested_packets_count(&self, count: u64) {
-        self.metrics
-            .tpu_ingested_packets_count
-            .fetch_add(count, Ordering::Relaxed);
-    }
-
-    pub fn accumulate_tpu_buffered_packets_count(&self, count: u64) {
-        self.metrics
-            .tpu_buffered_packets_count
-            .fetch_add(count, Ordering::Relaxed);
-    }
-
-    pub fn accumulated_verified_txs_count(&self, count: u64) {
-        self.metrics
-            .verified_txs_count
-            .fetch_add(count, Ordering::Relaxed);
-    }
-
-    pub fn accumulated_processed_txs_count(&self, count: u64) {
-        self.metrics
-            .processed_txs_count
-            .fetch_add(count, Ordering::Relaxed);
-    }
-
-    pub fn accumulated_retryable_txs_count(&self, count: u64) {
-        self.metrics
-            .retryable_txs_count
-            .fetch_add(count, Ordering::Relaxed);
     }
 
     pub fn accumulate_estimated_transaction_costs(
@@ -260,24 +232,6 @@ struct QosServiceMetrics {
 
     // aggregate metrics per slot
     slot: AtomicU64,
-
-    // accumulated number of live packets TPU received from verified receiver for processing.
-    tpu_ingested_packets_count: AtomicU64,
-
-    // accumulated number of live packets TPU put into buffer due to no active bank.
-    tpu_buffered_packets_count: AtomicU64,
-
-    // accumulated number of verified txs, which excludes unsanitized transactions and
-    // non-vote transactions when in vote-only mode from ingested packets
-    verified_txs_count: AtomicU64,
-
-    // accumulated number of transactions been processed, includes those landed and those to be
-    // returned (due to AccountInUse, and other QoS related reasons)
-    processed_txs_count: AtomicU64,
-
-    // accumulated number of transactions buffered for retry, often due to AccountInUse and QoS
-    // reasons, includes retried_txs_per_block_limit_count and retried_txs_per_account_limit_count
-    retryable_txs_count: AtomicU64,
 
     // accumulated time in micro-sec spent in computing transaction cost. It is the main performance
     // overhead introduced by cost_model
@@ -340,31 +294,6 @@ impl QosServiceMetrics {
                 "qos-service-stats",
                 ("id", self.id as i64, i64),
                 ("bank_slot", bank_slot as i64, i64),
-                (
-                    "tpu_ingested_packets_count",
-                    self.tpu_ingested_packets_count.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                ),
-                (
-                    "tpu_buffered_packets_count",
-                    self.tpu_buffered_packets_count.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                ),
-                (
-                    "verified_txs_count",
-                    self.verified_txs_count.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                ),
-                (
-                    "processed_txs_count",
-                    self.processed_txs_count.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                ),
-                (
-                    "retryable_txs_count",
-                    self.retryable_txs_count.swap(0, Ordering::Relaxed) as i64,
-                    i64
-                ),
                 (
                     "compute_cost_time",
                     self.compute_cost_time.swap(0, Ordering::Relaxed) as i64,
@@ -542,7 +471,9 @@ mod tests {
         bank.write_cost_tracker()
             .unwrap()
             .set_limits(cost_limit, cost_limit, cost_limit);
-        let results = qos_service.select_transactions_per_cost(txs.iter(), txs_costs.iter(), &bank);
+        let (results, num_selected) =
+            qos_service.select_transactions_per_cost(txs.iter(), txs_costs.iter(), &bank);
+        assert_eq!(num_selected, 2);
 
         // verify that first transfer tx and first vote are allowed
         assert_eq!(results.len(), txs.len());

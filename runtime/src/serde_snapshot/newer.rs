@@ -1,16 +1,22 @@
 use {
     super::{
-        common::UnusedAccounts,
         storage::SerializableAccountStorageEntry,
         utils::{serialize_iter_as_map, serialize_iter_as_seq},
         *,
     },
     crate::{ancestors::AncestorsForSerialization, stakes::StakesCache},
     solana_measure::measure::Measure,
-    std::{cell::RefCell, sync::RwLock},
+    std::{cell::RefCell, collections::HashSet, sync::RwLock},
 };
 
 type AccountsDbFields = super::AccountsDbFields<SerializableAccountStorageEntry>;
+
+#[derive(Default, Clone, PartialEq, Debug, Deserialize, Serialize, AbiExample)]
+struct UnusedAccounts {
+    unused1: HashSet<Pubkey>,
+    unused2: HashSet<Pubkey>,
+    unused3: HashMap<Pubkey, u64>,
+}
 
 // Deserializable version of Bank which need not be serializable,
 // because it's handled by SerializableVersionedBank.
@@ -33,6 +39,7 @@ struct DeserializableVersionedBank {
     ns_per_slot: u128,
     genesis_creation_time: UnixTimestamp,
     slots_per_year: f64,
+    #[allow(dead_code)]
     unused: u64,
     slot: Slot,
     epoch: Epoch,
@@ -71,7 +78,6 @@ impl From<DeserializableVersionedBank> for BankFieldsToDeserialize {
             ns_per_slot: dvb.ns_per_slot,
             genesis_creation_time: dvb.genesis_creation_time,
             slots_per_year: dvb.slots_per_year,
-            unused: dvb.unused,
             slot: dvb.slot,
             epoch: dvb.epoch,
             block_height: dvb.block_height,
@@ -130,9 +136,6 @@ struct SerializableVersionedBank<'a> {
 
 impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedBank<'a> {
     fn from(rhs: crate::bank::BankFieldsToSerialize<'a>) -> Self {
-        fn new<T: Default>() -> T {
-            T::default()
-        }
         Self {
             blockhash_queue: rhs.blockhash_queue,
             ancestors: rhs.ancestors,
@@ -150,7 +153,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             ns_per_slot: rhs.ns_per_slot,
             genesis_creation_time: rhs.genesis_creation_time,
             slots_per_year: rhs.slots_per_year,
-            unused: rhs.unused,
+            unused: u64::default(),
             slot: rhs.slot,
             epoch: rhs.epoch,
             block_height: rhs.block_height,
@@ -163,7 +166,7 @@ impl<'a> From<crate::bank::BankFieldsToSerialize<'a>> for SerializableVersionedB
             epoch_schedule: rhs.epoch_schedule,
             inflation: rhs.inflation,
             stakes: rhs.stakes,
-            unused_accounts: new(),
+            unused_accounts: UnusedAccounts::default(),
             epoch_stakes: rhs.epoch_stakes,
             is_delta: rhs.is_delta,
         }

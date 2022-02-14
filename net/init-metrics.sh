@@ -30,9 +30,9 @@ useEnv=false
 delete=false
 createWithoutConfig=false
 host="https://internal-metrics.solana.com:8086"
-while getopts "hdec:" opt; do
+while getopts ":hdec:" opt; do
   case $opt in
-  h|\?)
+  h)
     usage
     exit 0
     ;;
@@ -47,7 +47,7 @@ while getopts "hdec:" opt; do
     useEnv=true
     ;;
   *)
-    usage "unhandled option: $opt"
+    usage "unhandled option: $OPTARG"
     ;;
   esac
 done
@@ -58,14 +58,12 @@ if $useEnv; then
     usage "SOLANA_METRICS_CONFIG is not defined in the environment"
 else
   username=$1
-  echo "username innet/init-metrics is : $username"
   [[ -n "$username" ]] || usage "username not specified"
 
   read -rs -p "InfluxDB password for $username: " password
   [[ -n $password ]] || { echo "Password not specified"; exit 1; }
   echo
 
-  echo "password is : $password"
   password="$(urlencode "$password")"
 
   if ! $createWithoutConfig; then
@@ -79,10 +77,7 @@ else
       "$host/query?u=${username}&p=${password}" \
       --data-urlencode "q=$*"
   }
-  
-  echo "username innet/init-metrics is : $username"
-  echo "password is : $password"
-  echo "netBasename is : $netBasename"
+
   query "DROP DATABASE \"$netBasename\""
   ! $delete || exit 0
   query "CREATE DATABASE \"$netBasename\""

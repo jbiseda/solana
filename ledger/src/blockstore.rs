@@ -42,8 +42,8 @@ use {
     },
     solana_storage_proto::{StoredExtendedRewards, StoredTransactionStatusMeta},
     solana_transaction_status::{
-        ConfirmedTransactionStatusWithSignature, Rewards, TransactionStatusMeta,
-        VersionedConfirmedBlock, VersionedConfirmedTransactionWithStatusMeta,
+        ConfirmedTransactionStatusWithSignature, ConfirmedTransactionWithStatusMeta, Rewards,
+        TransactionStatusMeta, TransactionWithStatusMeta, VersionedConfirmedBlock,
         VersionedTransactionWithStatusMeta,
     },
     std::{
@@ -104,9 +104,16 @@ pub struct SignatureInfosForAddress {
 }
 
 #[derive(Clone, Copy)]
+/// Controls how `blockstore::purge_slots` purges the data.
 pub enum PurgeType {
+    /// A slower but more accurate way to purge slots by also ensuring higher
+    /// level of consistency between data during the clean up process.
     Exact,
+    /// A faster approximation of `Exact` where the purge process only takes
+    /// care of the primary index and does not update the associated entries.
     PrimaryIndex,
+    /// The fastest purge mode that relies on the slot-id based TTL
+    /// compaction filter to do the cleanup.
     CompactionFilter,
 }
 
@@ -195,11 +202,18 @@ pub struct IndexMetaWorkingSetEntry {
     did_insert_occur: bool,
 }
 
+/// The in-memory data structure for updating entries in the column family
+/// [`cf::SlotMeta`].
 pub struct SlotMetaWorkingSetEntry {
+    /// The dirty version of the `SlotMeta` which might not be persisted
+    /// to the blockstore yet.
     new_slot_meta: Rc<RefCell<SlotMeta>>,
+    /// The latest version of the `SlotMeta` that was persisted in the
+    /// blockstore.  If None, it means the current slot is new to the
+    /// blockstore.
     old_slot_meta: Option<SlotMeta>,
-    // True only if at least one shred for this SlotMeta was inserted since the time this
-    // struct was created.
+    /// True only if at least one shred for this SlotMeta was inserted since
+    /// this struct was created.
     did_insert_occur: bool,
 }
 
@@ -239,6 +253,8 @@ pub struct BlockstoreInsertionMetrics {
 }
 
 impl SlotMetaWorkingSetEntry {
+    /// Construct a new SlotMetaWorkingSetEntry with the specified `new_slot_meta`
+    /// and `old_slot_meta`.  `did_insert_occur` is set to false.
     fn new(new_slot_meta: Rc<RefCell<SlotMeta>>, old_slot_meta: Option<SlotMeta>) -> Self {
         Self {
             new_slot_meta,
@@ -516,10 +532,19 @@ impl Blockstore {
         }
     }
 
+    /// Whether to disable compaction in [`compact_storage`], which is used
+    /// by the ledger cleanup service and [`backup_and_clear_blockstore`].
+    ///
+    /// Note that this setting is not related to the RocksDB's background
+    /// compaction.
+    ///
+    /// To disable RocksDB's background compaction, open the Blockstore
+    /// with AccessType::PrimaryOnlyForMaintenance.
     pub fn set_no_compaction(&mut self, no_compaction: bool) {
         self.no_compaction = no_compaction;
     }
 
+    /// Deletes the blockstore at the specified path.
     pub fn destroy(ledger_path: &Path) -> Result<()> {
         // Database::destroy() fails if the path doesn't exist
         fs::create_dir_all(ledger_path)?;
@@ -527,10 +552,12 @@ impl Blockstore {
         Database::destroy(&blockstore_path)
     }
 
+    /// Returns the SlotMeta of the specified slot.
     pub fn meta(&self, slot: Slot) -> Result<Option<SlotMeta>> {
         self.meta_cf.get(slot)
     }
 
+    /// Returns true if the specified slot is full.
     pub fn is_full(&self, slot: Slot) -> bool {
         if let Ok(Some(meta)) = self.meta_cf.get(slot) {
             return meta.is_full();
@@ -542,11 +569,17 @@ impl Blockstore {
         self.erasure_meta_cf.get(erasure_set.store_key())
     }
 
+    /// Check whether the specified slot is an orphan slot which does not
+    /// have a parent slot.
+    ///
+    /// Returns true if the specified slot does not have a parent slot.
+    /// For other return values, it means either the slot is not in the
+    /// blockstore or the slot isn't an orphan slot.
     pub fn orphan(&self, slot: Slot) -> Result<Option<bool>> {
         self.orphans_cf.get(slot)
     }
 
-    // Get max root or 0 if it doesn't exist
+    /// Returns the max root or 0 if it does not exist.
     pub fn max_root(&self) -> Slot {
         self.db
             .iter::<cf::Root>(IteratorMode::End)
@@ -1232,7 +1265,7 @@ impl Blockstore {
     /// - `index_meta_time`: the time spent on loading or creating the
     ///     index meta entry from the db.
     /// - `is_trusted`: if false, this function will check whether the
-    ///     input shred is dupliate.
+    ///     input shred is duplicate.
     /// - `handle_duplicate`: the function that handles duplication.
     /// - `leader_schedule`: the leader schedule will be used to check
     ///     whether it is okay to insert the input shred.
@@ -1899,10 +1932,7 @@ impl Blockstore {
     }
 
     pub fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
-        datapoint_info!(
-            "blockstore-rpc-api",
-            ("method", "get_block_time".to_string(), String)
-        );
+        datapoint_info!("blockstore-rpc-api", ("method", "get_block_time", String));
         let _lock = self.check_lowest_cleanup_slot(slot)?;
         self.blocktime_cf.get(slot)
     }
@@ -1912,10 +1942,7 @@ impl Blockstore {
     }
 
     pub fn get_block_height(&self, slot: Slot) -> Result<Option<u64>> {
-        datapoint_info!(
-            "blockstore-rpc-api",
-            ("method", "get_block_height".to_string(), String)
-        );
+        datapoint_info!("blockstore-rpc-api", ("method", "get_block_height", String));
         let _lock = self.check_lowest_cleanup_slot(slot)?;
         self.block_height_cf.get(slot)
     }
@@ -1934,10 +1961,7 @@ impl Blockstore {
         slot: Slot,
         require_previous_blockhash: bool,
     ) -> Result<VersionedConfirmedBlock> {
-        datapoint_info!(
-            "blockstore-rpc-api",
-            ("method", "get_rooted_block".to_string(), String)
-        );
+        datapoint_info!("blockstore-rpc-api", ("method", "get_rooted_block", String));
         let _lock = self.check_lowest_cleanup_slot(slot)?;
 
         if self.is_root(slot) {
@@ -2037,9 +2061,8 @@ impl Blockstore {
                 Ok(VersionedTransactionWithStatusMeta {
                     transaction,
                     meta: self
-                        .read_transaction_status((signature, slot))
-                        .ok()
-                        .flatten(),
+                        .read_transaction_status((signature, slot))?
+                        .ok_or(BlockstoreError::MissingTransactionMetadata)?,
                 })
             })
             .collect()
@@ -2265,11 +2288,7 @@ impl Blockstore {
     ) -> Result<Option<(Slot, TransactionStatusMeta)>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            (
-                "method",
-                "get_rooted_transaction_status".to_string(),
-                String
-            )
+            ("method", "get_rooted_transaction_status", String)
         );
         self.get_transaction_status(signature, &[])
     }
@@ -2282,7 +2301,7 @@ impl Blockstore {
     ) -> Result<Option<(Slot, TransactionStatusMeta)>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_transaction_status".to_string(), String)
+            ("method", "get_transaction_status", String)
         );
         self.get_transaction_status_with_counter(signature, confirmed_unrooted_slots)
             .map(|(status, _)| status)
@@ -2292,10 +2311,10 @@ impl Blockstore {
     pub fn get_rooted_transaction(
         &self,
         signature: Signature,
-    ) -> Result<Option<VersionedConfirmedTransactionWithStatusMeta>> {
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_rooted_transaction".to_string(), String)
+            ("method", "get_rooted_transaction", String)
         );
         self.get_transaction_with_status(signature, &[])
     }
@@ -2305,10 +2324,10 @@ impl Blockstore {
         &self,
         signature: Signature,
         highest_confirmed_slot: Slot,
-    ) -> Result<Option<VersionedConfirmedTransactionWithStatusMeta>> {
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            ("method", "get_complete_transaction".to_string(), String)
+            ("method", "get_complete_transaction", String)
         );
         let last_root = self.last_root();
         let confirmed_unrooted_slots: Vec<_> =
@@ -2322,8 +2341,8 @@ impl Blockstore {
         &self,
         signature: Signature,
         confirmed_unrooted_slots: &[Slot],
-    ) -> Result<Option<VersionedConfirmedTransactionWithStatusMeta>> {
-        if let Some((slot, status)) =
+    ) -> Result<Option<ConfirmedTransactionWithStatusMeta>> {
+        if let Some((slot, meta)) =
             self.get_transaction_status(signature, confirmed_unrooted_slots)?
         {
             let transaction = self
@@ -2331,12 +2350,11 @@ impl Blockstore {
                 .ok_or(BlockstoreError::TransactionStatusSlotMismatch)?; // Should not happen
 
             let block_time = self.get_block_time(slot)?;
-            Ok(Some(VersionedConfirmedTransactionWithStatusMeta {
+            Ok(Some(ConfirmedTransactionWithStatusMeta {
                 slot,
-                tx_with_meta: VersionedTransactionWithStatusMeta {
-                    transaction,
-                    meta: Some(status),
-                },
+                tx_with_meta: TransactionWithStatusMeta::Complete(
+                    VersionedTransactionWithStatusMeta { transaction, meta },
+                ),
                 block_time,
             }))
         } else {
@@ -2451,11 +2469,7 @@ impl Blockstore {
     ) -> Result<Vec<Signature>> {
         datapoint_info!(
             "blockstore-rpc-api",
-            (
-                "method",
-                "get_confirmed_signatures_for_address".to_string(),
-                String
-            )
+            ("method", "get_confirmed_signatures_for_address", String)
         );
         self.find_address_signatures(pubkey, start_slot, end_slot)
             .map(|signatures| signatures.iter().map(|(_, signature)| *signature).collect())
@@ -2500,11 +2514,7 @@ impl Blockstore {
     ) -> Result<SignatureInfosForAddress> {
         datapoint_info!(
             "blockstore-rpc-api",
-            (
-                "method",
-                "get_confirmed_signatures_for_address2".to_string(),
-                String
-            )
+            ("method", "get_confirmed_signatures_for_address2", String)
         );
         let last_root = self.last_root();
         let confirmed_unrooted_slots: Vec<_> = AncestorIterator::new_inclusive(highest_slot, self)
@@ -3420,7 +3430,7 @@ fn send_signals(
                     "blockstore_error",
                     (
                         "error",
-                        "Unable to send newly completed slot because channel is full".to_string(),
+                        "Unable to send newly completed slot because channel is full",
                         String
                     ),
                 );
@@ -3474,10 +3484,16 @@ fn commit_slot_meta_working_set(
     Ok((should_signal, newly_completed_slots))
 }
 
-// 1) Find the slot metadata in the cache of dirty slot metadata we've previously touched,
-// else:
-// 2) Search the database for that slot metadata. If still no luck, then:
-// 3) Create a dummy orphan slot in the database
+/// Returns the `SlotMeta` with the specified `slot_index`.  The resulting
+/// `SlotMeta` could be either from the cache or from the DB.  Specifically,
+/// the function:
+///
+/// 1) Finds the slot metadata in the cache of dirty slot metadata we've
+///    previously touched, otherwise:
+/// 2) Searches the database for that slot metadata. If still no luck, then:
+/// 3) Create a dummy orphan slot in the database.
+///
+/// Also see [`find_slot_meta_in_cached_state`] and [`find_slot_meta_in_db_else_create`].
 fn find_slot_meta_else_create<'a>(
     db: &Database,
     working_set: &'a HashMap<u64, SlotMetaWorkingSetEntry>,
@@ -3492,8 +3508,11 @@ fn find_slot_meta_else_create<'a>(
     }
 }
 
-// Search the database for that slot metadata. If still no luck, then
-// create a dummy orphan slot in the database
+/// A helper function to [`find_slot_meta_else_create`] that searches the
+/// `SlotMeta` based on the specified `slot` in `db` and updates `insert_map`.
+///
+/// If the specified `db` does not contain a matched entry, then it will create
+/// a dummy orphan slot in the database.
 fn find_slot_meta_in_db_else_create(
     db: &Database,
     slot: Slot,
@@ -3510,7 +3529,9 @@ fn find_slot_meta_in_db_else_create(
     Ok(insert_map.get(&slot).unwrap().clone())
 }
 
-// Find the slot metadata in the cache of dirty slot metadata we've previously touched
+/// Returns the `SlotMeta` of the specified `slot` from the two cached states:
+/// `working_set` and `chained_slots`.  If both contain the `SlotMeta`, then
+/// the latest one from the `working_set` will be returned.
 fn find_slot_meta_in_cached_state<'a>(
     working_set: &'a HashMap<u64, SlotMetaWorkingSetEntry>,
     chained_slots: &'a HashMap<u64, Rc<RefCell<SlotMeta>>>,
@@ -3682,7 +3703,7 @@ fn handle_chaining_for_slot(
 /// `slot_meta`: the SlotMeta of the above `slot`.
 /// `working_set`: a slot-id to SlotMetaWorkingSetEntry map which is used
 ///   to traverse the graph.
-/// `passed_visisted_slots`: all the traversed slots which have passed the
+/// `passed_visited_slots`: all the traversed slots which have passed the
 ///   slot_function.  This may also include the input `slot`.
 /// `slot_function`: a function which updates the SlotMeta of the visisted
 ///   slots and determine whether to further traverse the children slots of
@@ -3776,6 +3797,7 @@ pub fn create_new_ledger(
             access_type,
             recovery_mode: None,
             enforce_ulimit_nofile: false,
+            ..BlockstoreOptions::default()
         },
     )?;
     let ticks_per_slot = genesis_config.ticks_per_slot;
@@ -6264,7 +6286,7 @@ pub mod tests {
             .map(|transaction| {
                 let mut pre_balances: Vec<u64> = vec![];
                 let mut post_balances: Vec<u64> = vec![];
-                for i in 0..transaction.message.total_account_keys_len() {
+                for i in 0..transaction.message.static_account_keys().len() {
                     pre_balances.push(i as u64 * 10);
                     post_balances.push(i as u64 * 11);
                 }
@@ -6322,7 +6344,7 @@ pub mod tests {
                     .unwrap();
                 VersionedTransactionWithStatusMeta {
                     transaction,
-                    meta: Some(TransactionStatusMeta {
+                    meta: TransactionStatusMeta {
                         status: Ok(()),
                         fee: 42,
                         pre_balances,
@@ -6333,21 +6355,22 @@ pub mod tests {
                         post_token_balances: Some(vec![]),
                         rewards: Some(vec![]),
                         loaded_addresses: LoadedAddresses::default(),
-                    }),
+                    },
                 }
             })
             .collect();
 
         // Even if marked as root, a slot that is empty of entries should return an error
-        let confirmed_block_err = blockstore.get_rooted_block(slot - 1, true).unwrap_err();
-        assert_matches!(confirmed_block_err, BlockstoreError::SlotUnavailable);
+        assert_matches!(
+            blockstore.get_rooted_block(slot - 1, true),
+            Err(BlockstoreError::SlotUnavailable)
+        );
 
         // The previous_blockhash of `expected_block` is default because its parent slot is a root,
         // but empty of entries (eg. snapshot root slots). This now returns an error.
-        let confirmed_block_err = blockstore.get_rooted_block(slot, true).unwrap_err();
         assert_matches!(
-            confirmed_block_err,
-            BlockstoreError::ParentEntriesUnavailable
+            blockstore.get_rooted_block(slot, true),
+            Err(BlockstoreError::ParentEntriesUnavailable)
         );
 
         // Test if require_previous_blockhash is false
@@ -7131,7 +7154,7 @@ pub mod tests {
             .map(|transaction| {
                 let mut pre_balances: Vec<u64> = vec![];
                 let mut post_balances: Vec<u64> = vec![];
-                for i in 0..transaction.message.total_account_keys_len() {
+                for i in 0..transaction.message.static_account_keys().len() {
                     pre_balances.push(i as u64 * 10);
                     post_balances.push(i as u64 * 11);
                 }
@@ -7163,7 +7186,7 @@ pub mod tests {
                     .unwrap();
                 VersionedTransactionWithStatusMeta {
                     transaction,
-                    meta: Some(TransactionStatusMeta {
+                    meta: TransactionStatusMeta {
                         status: Ok(()),
                         fee: 42,
                         pre_balances,
@@ -7174,7 +7197,7 @@ pub mod tests {
                         post_token_balances,
                         rewards,
                         loaded_addresses: LoadedAddresses::default(),
-                    }),
+                    },
                 }
             })
             .collect();
@@ -7183,9 +7206,9 @@ pub mod tests {
             let signature = tx_with_meta.transaction.signatures[0];
             assert_eq!(
                 blockstore.get_rooted_transaction(signature).unwrap(),
-                Some(VersionedConfirmedTransactionWithStatusMeta {
+                Some(ConfirmedTransactionWithStatusMeta {
                     slot,
-                    tx_with_meta: tx_with_meta.clone(),
+                    tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta.clone()),
                     block_time: None
                 })
             );
@@ -7193,9 +7216,9 @@ pub mod tests {
                 blockstore
                     .get_complete_transaction(signature, slot + 1)
                     .unwrap(),
-                Some(VersionedConfirmedTransactionWithStatusMeta {
+                Some(ConfirmedTransactionWithStatusMeta {
                     slot,
-                    tx_with_meta,
+                    tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta),
                     block_time: None
                 })
             );
@@ -7233,7 +7256,7 @@ pub mod tests {
             .map(|transaction| {
                 let mut pre_balances: Vec<u64> = vec![];
                 let mut post_balances: Vec<u64> = vec![];
-                for i in 0..transaction.message.total_account_keys_len() {
+                for i in 0..transaction.message.static_account_keys().len() {
                     pre_balances.push(i as u64 * 10);
                     post_balances.push(i as u64 * 11);
                 }
@@ -7265,7 +7288,7 @@ pub mod tests {
                     .unwrap();
                 VersionedTransactionWithStatusMeta {
                     transaction,
-                    meta: Some(TransactionStatusMeta {
+                    meta: TransactionStatusMeta {
                         status: Ok(()),
                         fee: 42,
                         pre_balances,
@@ -7276,7 +7299,7 @@ pub mod tests {
                         post_token_balances,
                         rewards,
                         loaded_addresses: LoadedAddresses::default(),
-                    }),
+                    },
                 }
             })
             .collect();
@@ -7287,9 +7310,9 @@ pub mod tests {
                 blockstore
                     .get_complete_transaction(signature, slot)
                     .unwrap(),
-                Some(VersionedConfirmedTransactionWithStatusMeta {
+                Some(ConfirmedTransactionWithStatusMeta {
                     slot,
-                    tx_with_meta,
+                    tx_with_meta: TransactionWithStatusMeta::Complete(tx_with_meta),
                     block_time: None
                 })
             );
@@ -7592,7 +7615,7 @@ pub mod tests {
                         .write_transaction_status(
                             slot,
                             transaction.signatures[0],
-                            transaction.message.static_account_keys_iter().collect(),
+                            transaction.message.static_account_keys().iter().collect(),
                             vec![],
                             TransactionStatusMeta::default(),
                         )
@@ -7616,7 +7639,7 @@ pub mod tests {
                         .write_transaction_status(
                             slot,
                             transaction.signatures[0],
-                            transaction.message.static_account_keys_iter().collect(),
+                            transaction.message.static_account_keys().iter().collect(),
                             vec![],
                             TransactionStatusMeta::default(),
                         )
@@ -8047,6 +8070,16 @@ pub mod tests {
                 .unwrap();
             transactions.push(transaction.into());
         }
+
+        let map_result =
+            blockstore.map_transactions_to_statuses(slot, transactions.clone().into_iter());
+        assert!(map_result.is_ok());
+        let map = map_result.unwrap();
+        assert_eq!(map.len(), 4);
+        for (x, m) in map.iter().enumerate() {
+            assert_eq!(m.meta.fee, x as u64);
+        }
+
         // Push transaction that will not have matching status, as a test case
         transactions.push(
             Transaction::new_with_compiled_instructions(
@@ -8059,14 +8092,9 @@ pub mod tests {
             .into(),
         );
 
-        let map_result = blockstore.map_transactions_to_statuses(slot, transactions.into_iter());
-        assert!(map_result.is_ok());
-        let map = map_result.unwrap();
-        assert_eq!(map.len(), 5);
-        for (x, m) in map.iter().take(4).enumerate() {
-            assert_eq!(m.meta.as_ref().unwrap().fee, x as u64);
-        }
-        assert_eq!(map[4].meta, None);
+        let map_result =
+            blockstore.map_transactions_to_statuses(slot, transactions.clone().into_iter());
+        assert_matches!(map_result, Err(BlockstoreError::MissingTransactionMetadata));
     }
 
     #[test]
