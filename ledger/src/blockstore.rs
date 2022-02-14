@@ -1034,6 +1034,12 @@ impl Blockstore {
 
         if !newly_completed_slots.is_empty() {
             error!(">>> found newly completed slots");
+
+            // for each slot
+            //   get shreds
+            //   for each shred
+            //     get shred seed
+            //     
         }
 
         send_signals(
@@ -1600,7 +1606,9 @@ impl Blockstore {
         data_index.insert(index);
 
         // TODO MARK
-        error!(">>> repaired slot {}", slot_meta.slot);
+        if shred_source == ShredSource::Repaired {
+            error!(">>> repaired slot {}", slot_meta.slot);
+        }
         /*
         if shred_source == ShredSource::Repaired {
             error!("Setting slot meta repaired for slot={}", slot_meta.slot);
