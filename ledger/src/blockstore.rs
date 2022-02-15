@@ -1605,10 +1605,6 @@ impl Blockstore {
         )?;
         data_index.insert(index);
 
-        // TODO MARK
-        if shred_source == ShredSource::Repaired {
-            error!(">>> repaired slot {}", slot_meta.slot);
-        }
         /*
         if shred_source == ShredSource::Repaired {
             error!("Setting slot meta repaired for slot={}", slot_meta.slot);

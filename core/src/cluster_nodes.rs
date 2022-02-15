@@ -234,6 +234,7 @@ impl ClusterNodes<RetransmitStage> {
     ) {
         let shred_seed = shred.seed(slot_leader, root_bank);
         if !enable_turbine_peers_shuffle_patch(shred.slot(), root_bank) {
+            error!("> retransmit with peers_compat shred.slot={}", shred.slot());
             return self.get_retransmit_peers_compat(shred_seed, fanout, slot_leader);
         }
         let mut weighted_shuffle = self.weighted_shuffle.clone();
