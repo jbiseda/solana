@@ -1653,9 +1653,12 @@ impl Blockstore {
                     (0, 0)
                 }
             };
+
+            warn!("> full slot={} repaired={} recovered={}", slot_meta.slot, num_repaired, num_recovered);
             if num_repaired == 0 {
-                warn!("> not repaired slot {}", slot_meta.slot);
+                error!(">>> !!! no repairs {} !!!", slot_meta.slot);
             }
+
             datapoint_info!(
                 "shred_insert_is_full",
                 (
