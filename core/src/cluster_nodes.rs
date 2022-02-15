@@ -467,6 +467,7 @@ mod tests {
     use {
         super::*,
         rand::{seq::SliceRandom, Rng},
+        solana_entry::entry::Entry,
         solana_gossip::{
             crds::GossipRoute,
             crds_value::{CrdsData, CrdsValue},
@@ -475,7 +476,15 @@ mod tests {
                 sorted_stakes_with_index,
             },
         },
-        solana_sdk::{signature::Keypair, timing::timestamp},
+        solana_ledger::shred::Shredder,
+        solana_sdk::{
+            feature_set::FeatureSet,
+            genesis_config::create_genesis_config,
+            hash::Hash,
+            signature::{Keypair, Signer},
+            system_transaction,
+            timing::timestamp,
+        },
         solana_streamer::socket::SocketAddrSpace,
         std::{iter::repeat_with, sync::Arc},
     };
@@ -674,5 +683,61 @@ mod tests {
             let peer = cluster_nodes.get_broadcast_peer(shred_seed).unwrap();
             assert_eq!(*peer, peers[index]);
         }
+    }
+
+    fn make_test_shreds() -> (Vec<Shred>, Vec<Shred>) {
+        let keypair = Arc::new(Keypair::new());
+        let slot = 1;
+        let parent_slot = 0;
+        let shredder = Shredder::new(slot, parent_slot, 0, 0).unwrap();
+        let entries: Vec<_> = (0..5)
+            .map(|_| {
+                let keypair0 = Keypair::new();
+                let keypair1 = Keypair::new();
+                let tx0 =
+                    system_transaction::transfer(&keypair0, &keypair1.pubkey(), 1, Hash::default());
+                Entry::new(&Hash::default(), 1, vec![tx0])
+            })
+            .collect();
+
+        shredder.entries_to_shreds(
+            &keypair, &entries, true, // is_last_in_slot
+            0,    // next_shred_index
+            0,    // next_code_index
+        )
+    }
+
+    #[test]
+    fn test_cluster_nodes_broadcast2() {
+        let mut rng = rand::thread_rng();
+        let (nodes, stakes, cluster_info) = make_cluster(&mut rng);
+
+        let cluster_nodes = ClusterNodes::<BroadcastStage>::new(&cluster_info, &stakes);
+
+        let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+
+        let mut root_bank = Bank::new_for_tests(&genesis_config);
+
+        root_bank.activate_feature(&feature_set::turbine_peers_shuffle::id());
+
+        let (data_shreds, _coding_shreds) = make_test_shreds();
+
+        let socket_addr_space = cluster_info.socket_addr_space();
+
+        let addrs = cluster_nodes.get_broadcast_addrs(
+            &data_shreds[0],
+            &root_bank,
+            10, // fanout
+            &socket_addr_space,
+        );
+
+        /*
+        cluster_nodes.get_retransmit_peers(
+            cluster_info.my_contact_info().id,
+            &shred,
+            &root_bank,
+            10, // fanout
+        );
+        */
     }
 }
