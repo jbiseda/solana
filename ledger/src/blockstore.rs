@@ -1642,6 +1642,7 @@ impl Blockstore {
                 e.num_recovered += 1;
             }
         }
+
         if slot_meta.is_full() {
             let (num_repaired, num_recovered) = {
                 let mut slots_stats = self.slots_stats.lock().unwrap();
@@ -1656,8 +1657,8 @@ impl Blockstore {
                     (0, 0)
                 }
             };
-            if num_repaired > 0 {
-
+            if num_repaired == 0 {
+                error!("> not repaired slot {}", slot_meta.slot);
             }
             datapoint_info!(
                 "shred_insert_is_full",
