@@ -1670,8 +1670,19 @@ impl Blockstore {
                 if num_repaired == 0 {
                     misc.no_repairs_slots += 1;
                 }
-                warn!("> full slot={} repaired={} recovered={}", slot_meta.slot, num_repaired, num_recovered);
-                warn!("> completed_slots={} no_repairs_slots={}", misc.completed_slots, misc.no_repairs_slots);
+                warn!(
+                    "> full slot={} repaired={} recovered={} consumed={} ptc={}",
+                    slot_meta.slot,
+                    num_repaired,
+                    num_recovered,
+                    slot_meta.consumed,
+                    (slot_meta.consumed - num_repaired as u64) as f32 / slot_meta.consumed as f32,
+                );
+                warn!(
+                    "> completed_slots={} no_repairs_slots={}",
+                    misc.completed_slots,
+                    misc.no_repairs_slots
+                );
             }
 
             datapoint_info!(
