@@ -32,6 +32,7 @@ use {
 };
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Clone, Debug, PartialEq)]
 enum NodeId {
     // TVU node obtained through gossip (staked or not).
     ContactInfo(ContactInfo),
@@ -39,6 +40,7 @@ enum NodeId {
     Pubkey(Pubkey),
 }
 
+#[derive(Clone, Debug, PartialEq)]
 struct Node {
     node: NodeId,
     stake: u64,
@@ -756,7 +758,10 @@ mod tests {
             cluster_info.my_contact_info().id,
             &data_shreds[0],
             &root_bank,
-            10, // fanout
+            3, // fanout
         );
+
+//        assert_eq!(neighbors, Vec::<&Node>::default());
+        assert_eq!(neighbors.len(), 3);
     }
 }
