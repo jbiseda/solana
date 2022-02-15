@@ -174,6 +174,14 @@ pub struct Blockstore {
     pub lowest_cleanup_slot: Arc<RwLock<Slot>>,
     no_compaction: bool,
     slots_stats: Arc<Mutex<SlotsStats>>,
+
+    misc: Mutex<Misc>,
+}
+
+#[derive(Default)]
+struct Misc {
+    completed_slots: u64,
+    no_repairs_slots: u64,
 }
 
 struct SlotsStats {
@@ -461,6 +469,8 @@ impl Blockstore {
             lowest_cleanup_slot: Arc::new(RwLock::new(0)),
             no_compaction: false,
             slots_stats: Arc::new(Mutex::new(SlotsStats::default())),
+
+            misc: Mutex::new(Misc::default()),
         };
         if initialize_transaction_status_index {
             blockstore.initialize_transaction_status_index()?;
@@ -1654,9 +1664,14 @@ impl Blockstore {
                 }
             };
 
-            warn!("> full slot={} repaired={} recovered={}", slot_meta.slot, num_repaired, num_recovered);
-            if num_repaired == 0 {
-                error!(">>> !!! no repairs {} !!!", slot_meta.slot);
+            {
+                let mut misc = self.misc.lock().unwrap();
+                misc.completed_slots += 1;
+                if num_repaired == 0 {
+                    misc.no_repairs_slots += 1;
+                }
+                warn!("> full slot={} repaired={} recovered={}", slot_meta.slot, num_repaired, num_recovered);
+                warn!("> completed_slots={} no_repairs_slots={}", misc.completed_slots, misc.no_repairs_slots);
             }
 
             datapoint_info!(
