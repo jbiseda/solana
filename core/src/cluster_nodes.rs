@@ -188,6 +188,10 @@ impl ClusterNodes<BroadcastStage> {
 }
 
 impl ClusterNodes<RetransmitStage> {
+    pub fn new(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
+        new_cluster_nodes(cluster_info, stakes)
+    }
+
     pub(crate) fn get_retransmit_addrs(
         &self,
         slot_leader: Pubkey,
@@ -478,7 +482,6 @@ mod tests {
         },
         solana_ledger::shred::Shredder,
         solana_sdk::{
-            feature_set::FeatureSet,
             genesis_config::create_genesis_config,
             hash::Hash,
             signature::{Keypair, Signer},
@@ -710,11 +713,11 @@ mod tests {
     #[test]
     fn test_cluster_nodes_broadcast2() {
         let mut rng = rand::thread_rng();
-        let (nodes, stakes, cluster_info) = make_cluster(&mut rng);
+        let (_nodes, stakes, cluster_info) = make_cluster(&mut rng);
 
         let cluster_nodes = ClusterNodes::<BroadcastStage>::new(&cluster_info, &stakes);
 
-        let (mut genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
 
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
@@ -730,14 +733,30 @@ mod tests {
             10, // fanout
             &socket_addr_space,
         );
+    }
 
-        /*
-        cluster_nodes.get_retransmit_peers(
+    #[test]
+    fn test_cluster_nodes_retransmit2() {
+        let mut rng = rand::thread_rng();
+        let (_nodes, stakes, cluster_info) = make_cluster(&mut rng);
+
+        let cluster_nodes = ClusterNodes::<RetransmitStage>::new(&cluster_info, &stakes);
+
+        let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000);
+
+        let mut root_bank = Bank::new_for_tests(&genesis_config);
+
+        root_bank.activate_feature(&feature_set::turbine_peers_shuffle::id());
+
+        let (data_shreds, _coding_shreds) = make_test_shreds();
+
+        let socket_addr_space = cluster_info.socket_addr_space();
+
+        let (neighbors, children) = cluster_nodes.get_retransmit_peers(
             cluster_info.my_contact_info().id,
-            &shred,
+            &data_shreds[0],
             &root_bank,
             10, // fanout
         );
-        */
     }
 }
