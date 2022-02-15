@@ -1654,7 +1654,7 @@ impl Blockstore {
                 }
             };
             if num_repaired == 0 {
-                error!("> not repaired slot {}", slot_meta.slot);
+                warn!("> not repaired slot {}", slot_meta.slot);
             }
             datapoint_info!(
                 "shred_insert_is_full",
