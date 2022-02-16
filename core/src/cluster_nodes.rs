@@ -10,7 +10,10 @@ use {
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         weighted_shuffle::{weighted_best, weighted_shuffle, WeightedShuffle},
     },
-    solana_ledger::shred::Shred,
+    solana_ledger::{
+        leader_schedule_cache::LeaderScheduleCache,
+        shred::Shred,
+    },
     solana_runtime::bank::Bank,
     solana_sdk::{
         clock::{Epoch, Slot},
@@ -260,6 +263,41 @@ impl ClusterNodes<RetransmitStage> {
         // the right offset.
         debug_assert_eq!(neighbors[self_index % fanout].pubkey(), self.pubkey);
         (neighbors, children)
+    }
+
+    fn trace_my_position(
+        &self,
+        shred: &Shred,
+        root_bank: &Bank,
+        fanout: usize,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+        socket_addr_space: &SocketAddrSpace,
+    ) -> u64 {
+        let leader_pubkey = leader_schedule_cache.slot_leader_at(shred.slot(), Some(root_bank)).unwrap();
+        let shred_seed = shred.seed(leader_pubkey, root_bank);
+
+        let my_pubkey = self.pubkey;
+
+        let mut rng = ChaChaRng::from_seed(shred_seed);
+        let index = match self.weighted_shuffle.first(&mut rng) {
+            None => return 0, // TODO
+            Some(index) => index,
+        };
+
+        let (neighbors, children) = self.get_retransmit_peers(
+            leader_pubkey,
+            shred,
+            root_bank,
+            fanout,
+        );
+
+
+
+
+        // starting from leader for shred slot, find turbine path to my node
+        // calculate peers stakes along path
+
+        0
     }
 
     fn get_retransmit_peers_compat(
@@ -724,6 +762,7 @@ mod tests {
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
         root_bank.activate_feature(&feature_set::turbine_peers_shuffle::id());
+        root_bank.activate_feature(&feature_set::deterministic_shred_seed_enabled::id());
 
         let (data_shreds, _coding_shreds) = make_test_shreds();
 
@@ -749,6 +788,8 @@ mod tests {
         let mut root_bank = Bank::new_for_tests(&genesis_config);
 
         root_bank.activate_feature(&feature_set::turbine_peers_shuffle::id());
+        root_bank.activate_feature(&feature_set::deterministic_shred_seed_enabled::id());
+
 
         let (data_shreds, _coding_shreds) = make_test_shreds();
 
@@ -763,5 +804,29 @@ mod tests {
 
 //        assert_eq!(neighbors, Vec::<&Node>::default());
         assert_eq!(neighbors.len(), 3);
+    }
+
+    #[test]
+    fn test_trace_my_position() {
+//        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+
+    }
+
+    #[test]
+    fn test_fanout() {
+        let mut nodes = [0; 5000];
+        for i in 0..nodes.len() {
+            nodes[i] = i;
+        }
+
+        let fanout = 200;
+        let index = 250;
+
+        let (neighbors, children) = compute_retransmit_peers(fanout, index, &nodes);
+
+        println!("neighbors: {:?}", &neighbors);
+        println!("children: {:?}", &children);
+
+
     }
 }
