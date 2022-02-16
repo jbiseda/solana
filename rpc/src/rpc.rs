@@ -3542,8 +3542,7 @@ pub mod rpc_full {
             let preflight_commitment = config
                 .preflight_commitment
                 .map(|commitment| CommitmentConfig { commitment });
-
-            let preflight_bank = &*meta.bank(preflight_commitment);
+            let preflight_bank = meta.bank(preflight_commitment);
             let transaction = sanitize_transaction(unsanitized_tx)?;
             let signature = *transaction.signature();
 
@@ -3661,7 +3660,7 @@ pub mod rpc_full {
             let (_, mut unsanitized_tx) =
                 decode_and_deserialize::<VersionedTransaction>(data, encoding)?;
 
-            let bank = &*meta.bank(config.commitment);
+            let bank = meta.bank(config.commitment);
             if config.replace_recent_blockhash {
                 if config.sig_verify {
                     return Err(Error::invalid_params(
@@ -3729,7 +3728,7 @@ pub mod rpc_full {
             };
 
             Ok(new_response(
-                bank,
+                &bank,
                 RpcSimulateTransactionResult {
                     err: result.err(),
                     logs: Some(logs),
