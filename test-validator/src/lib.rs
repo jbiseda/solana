@@ -16,7 +16,7 @@ use {
     solana_net_utils::PortRange,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
     solana_runtime::{
-        genesis_utils::create_genesis_config_with_leader_ex,
+        bank_forks::BankForks, genesis_utils::create_genesis_config_with_leader_ex,
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE, snapshot_config::SnapshotConfig,
     },
     solana_sdk::{
@@ -117,10 +117,7 @@ impl Default for TestValidatorGenesis {
             ledger_path: Option::<PathBuf>::default(),
             tower_storage: Option::<Arc<dyn TowerStorage>>::default(),
             rent: Rent::default(),
-            rpc_config: JsonRpcConfig {
-                full_api: true,
-                ..JsonRpcConfig::default()
-            },
+            rpc_config: JsonRpcConfig::default_for_test(),
             pubsub_config: PubSubConfig::default(),
             rpc_ports: Option::<(u16, u16)>::default(),
             warp_slot: Option::<Slot>::default(),
@@ -832,6 +829,10 @@ impl TestValidator {
 
     pub fn cluster_info(&self) -> Arc<ClusterInfo> {
         self.validator.as_ref().unwrap().cluster_info.clone()
+    }
+
+    pub fn bank_forks(&self) -> Arc<RwLock<BankForks>> {
+        self.validator.as_ref().unwrap().bank_forks.clone()
     }
 }
 
