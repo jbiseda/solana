@@ -346,9 +346,11 @@ impl ClusterNodes<RetransmitStage> {
         fanout: usize,
         leader_schedule_cache: &LeaderScheduleCache,
     ) -> ShredDistributionStakes {
+        /* TODO
         if !enable_turbine_peers_shuffle_patch(shred.slot(), root_bank) {
             return ShredDistributionStakes::default();
         }
+        */
 
         let leader_pubkey = leader_schedule_cache
             .slot_leader_at(shred.slot(), Some(root_bank))
