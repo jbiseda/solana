@@ -10,10 +10,7 @@ use {
         crds_gossip_pull::CRDS_GOSSIP_PULL_CRDS_TIMEOUT_MS,
         weighted_shuffle::{weighted_best, weighted_shuffle, WeightedShuffle},
     },
-    solana_ledger::{
-        leader_schedule_cache::LeaderScheduleCache,
-        shred::Shred,
-    },
+    solana_ledger::{leader_schedule_cache::LeaderScheduleCache, shred::Shred},
     solana_runtime::bank::Bank,
     solana_sdk::{
         clock::{Epoch, Slot},
@@ -80,10 +77,7 @@ pub struct ClusterNodesCache<T> {
     ttl: Duration, // Time to live.
 }
 
-fn get_parent_index(
-    index: usize,
-    fanout: usize,
-) -> Option<usize> {
+fn get_parent_index(index: usize, fanout: usize) -> Option<usize> {
     if index < fanout {
         return None;
     }
@@ -96,11 +90,7 @@ fn get_parent_index(
     Some(parent_index)
 }
 
-fn get_neighborhood_stake(
-    index: usize,
-    fanout: usize,
-    nodes: &Vec<&Node>,
-) -> u64 {
+fn get_neighborhood_stake(index: usize, fanout: usize, nodes: &Vec<&Node>) -> u64 {
     let offset = index % fanout;
     let anchor = index - offset;
     (anchor..)
@@ -360,7 +350,9 @@ impl ClusterNodes<RetransmitStage> {
             return ShredDistributionStakes::default();
         }
 
-        let leader_pubkey = leader_schedule_cache.slot_leader_at(shred.slot(), Some(root_bank)).unwrap();
+        let leader_pubkey = leader_schedule_cache
+            .slot_leader_at(shred.slot(), Some(root_bank))
+            .unwrap();
 
         if leader_pubkey == self.pubkey {
             // TODO error?
@@ -397,7 +389,12 @@ impl ClusterNodes<RetransmitStage> {
         leader_schedule_cache: &Arc<LeaderScheduleCache>,
     ) -> f64 {
         if shreds.len() == 0 || root_bank.total_epoch_stake() == 0 {
-            debug_assert!(false, "shreds.len={} total_epoch_stake={}", shreds.len(), root_bank.total_epoch_stake());
+            debug_assert!(
+                false,
+                "shreds.len={} total_epoch_stake={}",
+                shreds.len(),
+                root_bank.total_epoch_stake()
+            );
             return 0.0;
         }
         let mut stakes: u64 = 0;
@@ -866,7 +863,6 @@ mod tests {
         root_bank.activate_feature(&feature_set::turbine_peers_shuffle::id());
         root_bank.activate_feature(&feature_set::deterministic_shred_seed_enabled::id());
 
-
         let (data_shreds, _coding_shreds) = make_test_shreds();
 
         let socket_addr_space = cluster_info.socket_addr_space();
@@ -878,7 +874,7 @@ mod tests {
             3, // fanout
         );
 
-//        assert_eq!(neighbors, Vec::<&Node>::default());
+        //        assert_eq!(neighbors, Vec::<&Node>::default());
         assert_eq!(neighbors.len(), 3);
     }
 
@@ -888,8 +884,9 @@ mod tests {
         let mut genesis_config = solana_ledger::genesis_utils::create_genesis_config_with_leader(
             42,
             &pubkey,
-            solana_ledger::genesis_utils::bootstrap_validator_stake_lamports()
-        ).genesis_config;
+            solana_ledger::genesis_utils::bootstrap_validator_stake_lamports(),
+        )
+        .genesis_config;
         genesis_config.epoch_schedule.warmup = false;
 
         let mut bank = Bank::new_for_tests(&genesis_config);
@@ -918,7 +915,7 @@ mod tests {
                 10, //fanout
                 &leader_schedule_cache,
             );
-    
+
             println!("shred.index(): {} stakes: {:?}", shred.index(), &shred_stakes);
             println!("total {}", shred_stakes.total());
         }
@@ -957,7 +954,5 @@ mod tests {
 
         println!("neighbors: {:?}", &neighbors);
         println!("children: {:?}", &children);
-
-
     }
 }
