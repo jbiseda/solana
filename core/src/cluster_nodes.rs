@@ -49,6 +49,13 @@ struct Node {
     stake: u64,
 }
 
+#[derive(Debug, Default)]
+struct ShredDistributionStakes {
+    neighborhood: u64,
+    parent: u64,
+    parent_neighborhood: u64,
+}
+
 pub struct ClusterNodes<T> {
     pubkey: Pubkey, // The local node itself.
     // All staked nodes + other known tvu-peers + the node itself;
@@ -73,6 +80,37 @@ pub struct ClusterNodesCache<T> {
     ttl: Duration, // Time to live.
 }
 
+fn get_parent_index(
+    index: usize,
+    fanout: usize,
+) -> Option<usize> {
+    if index < fanout {
+        return None;
+    }
+    let offset = index % fanout;
+    let anchor = index - offset;
+    let neighborhood = anchor / fanout - 1;
+    let neighborhood_offset = neighborhood % fanout;
+    let parent_anchor = neighborhood - neighborhood_offset;
+    let parent_index = parent_anchor + offset;
+    Some(parent_index)
+}
+
+fn get_neighborhood_stake(
+    index: usize,
+    fanout: usize,
+    nodes: &Vec<&Node>,
+) -> u64 {
+    let offset = index % fanout;
+    let anchor = index - offset;
+    (anchor..)
+        .take(fanout)
+        .map(|i| nodes.get(i))
+        .while_some()
+        .map(|n| n.stake)
+        .sum()
+}
+
 impl Node {
     #[inline]
     fn pubkey(&self) -> Pubkey {
@@ -88,6 +126,12 @@ impl Node {
             NodeId::Pubkey(_) => None,
             NodeId::ContactInfo(node) => Some(node),
         }
+    }
+}
+
+impl ShredDistributionStakes {
+    fn total(&self) -> u64 {
+        self.neighborhood + self.parent + self.parent_neighborhood
     }
 }
 
@@ -265,41 +309,6 @@ impl ClusterNodes<RetransmitStage> {
         (neighbors, children)
     }
 
-    fn trace_my_position(
-        &self,
-        shred: &Shred,
-        root_bank: &Bank,
-        fanout: usize,
-        leader_schedule_cache: Arc<LeaderScheduleCache>,
-        socket_addr_space: &SocketAddrSpace,
-    ) -> u64 {
-        let leader_pubkey = leader_schedule_cache.slot_leader_at(shred.slot(), Some(root_bank)).unwrap();
-        let shred_seed = shred.seed(leader_pubkey, root_bank);
-
-        let my_pubkey = self.pubkey;
-
-        let mut rng = ChaChaRng::from_seed(shred_seed);
-        let index = match self.weighted_shuffle.first(&mut rng) {
-            None => return 0, // TODO
-            Some(index) => index,
-        };
-
-        let (neighbors, children) = self.get_retransmit_peers(
-            leader_pubkey,
-            shred,
-            root_bank,
-            fanout,
-        );
-
-
-
-
-        // starting from leader for shred slot, find turbine path to my node
-        // calculate peers stakes along path
-
-        0
-    }
-
     fn get_retransmit_peers_compat(
         &self,
         shred_seed: [u8; 32],
@@ -338,6 +347,72 @@ impl ClusterNodes<RetransmitStage> {
         let neighbors = neighbors.into_iter().map(|i| &self.nodes[i]).collect();
         let children = children.into_iter().map(|i| &self.nodes[i]).collect();
         (neighbors, children)
+    }
+
+    fn get_shred_distribution_stakes(
+        &self,
+        shred: &Shred,
+        root_bank: &Bank,
+        fanout: usize,
+        leader_schedule_cache: &Arc<LeaderScheduleCache>,
+    ) -> ShredDistributionStakes {
+        if !enable_turbine_peers_shuffle_patch(shred.slot(), root_bank) {
+            return ShredDistributionStakes::default();
+        }
+
+        let leader_pubkey = leader_schedule_cache.slot_leader_at(shred.slot(), Some(root_bank)).unwrap();
+
+        if leader_pubkey == self.pubkey {
+            // TODO error?
+        }
+
+        let mut weighted_shuffle = self.weighted_shuffle.clone();
+        let shred_seed = shred.seed(leader_pubkey, root_bank);
+        let mut rng = ChaChaRng::from_seed(shred_seed);
+
+        let nodes: Vec<_> = weighted_shuffle
+            .shuffle(&mut rng)
+            .map(|index| &self.nodes[index])
+            .collect();
+        let self_index = nodes
+            .iter()
+            .position(|node| node.pubkey() == self.pubkey)
+            .unwrap();
+
+        let mut stakes = ShredDistributionStakes::default();
+        stakes.neighborhood = get_neighborhood_stake(self_index, fanout, &nodes);
+        if let Some(parent_index) = get_parent_index(self_index, fanout) {
+            stakes.parent = nodes.get(parent_index).map(|n| n.stake).unwrap_or(0);
+            stakes.parent_neighborhood = get_neighborhood_stake(parent_index, fanout, &nodes);
+        }
+
+        stakes
+    }
+
+    fn get_shred_distribution_states_pct(
+        &self,
+        shreds: &Vec<Shred>,
+        root_bank: &Bank,
+        fanout: usize,
+        leader_schedule_cache: &Arc<LeaderScheduleCache>,
+    ) -> f64 {
+        if shreds.len() == 0 || root_bank.total_epoch_stake() == 0 {
+            debug_assert!(false, "shreds.len={} total_epoch_stake={}", shreds.len(), root_bank.total_epoch_stake());
+            return 0.0;
+        }
+        let mut stakes: u64 = 0;
+        for shred in shreds {
+            let shred_stakes = self.get_shred_distribution_stakes(
+                &shred,
+                root_bank,
+                fanout,
+                leader_schedule_cache,
+            );
+            stakes += shred_stakes.total();
+
+            println!("idx {} state {}", shred.index(), shred_stakes.total());
+        }
+        stakes as f64 / shreds.len() as f64 / root_bank.total_epoch_stake() as f64
     }
 }
 
@@ -421,6 +496,7 @@ fn enable_turbine_peers_shuffle_patch(shred_slot: Slot, root_bank: &Bank) -> boo
         .activated_slot(&feature_set::turbine_peers_shuffle::id());
     match feature_slot {
         None => false,
+        Some(0) => true,
         Some(feature_slot) => {
             let epoch_schedule = root_bank.epoch_schedule();
             let feature_epoch = epoch_schedule.get_epoch(feature_slot);
@@ -807,20 +883,75 @@ mod tests {
     }
 
     #[test]
-    fn test_trace_my_position() {
-//        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+    fn test_get_shred_distribution_stakes() {
+        let pubkey = solana_sdk::pubkey::new_rand();
+        let mut genesis_config = solana_ledger::genesis_utils::create_genesis_config_with_leader(
+            42,
+            &pubkey,
+            solana_ledger::genesis_utils::bootstrap_validator_stake_lamports()
+        ).genesis_config;
+        genesis_config.epoch_schedule.warmup = false;
 
+        let mut bank = Bank::new_for_tests(&genesis_config);
+        bank.activate_feature(&feature_set::turbine_peers_shuffle::id());
+        bank.activate_feature(&feature_set::deterministic_shred_seed_enabled::id());
+        let bank = Arc::new(bank);
+
+        let leader_schedule_cache = Arc::new(LeaderScheduleCache::new_from_bank(&bank));
+
+        let mut rng = rand::thread_rng();
+        let (_nodes, stakes, cluster_info) = make_cluster(&mut rng);
+
+        let total_stake: u64 = stakes.values().sum();
+
+        println!("total_stake {}", total_stake);
+
+        let cluster_nodes = ClusterNodes::<RetransmitStage>::new(&cluster_info, &stakes);
+
+        let (data_shreds, _coding_shreds) = make_test_shreds();
+
+        /*
+        for shred in _coding_shreds {
+            let shred_stakes = cluster_nodes.get_shred_distribution_stakes(
+                &shred,
+                &bank,
+                10, //fanout
+                &leader_schedule_cache,
+            );
+    
+            println!("shred.index(): {} stakes: {:?}", shred.index(), &shred_stakes);
+            println!("total {}", shred_stakes.total());
+        }
+        */
+
+        let avg = cluster_nodes.get_shred_distribution_states_pct(
+            &data_shreds,
+            &bank,
+            10,
+            &leader_schedule_cache,
+        );
+
+        println!("avg {}", avg);
+
+        let avg = cluster_nodes.get_shred_distribution_states_pct(
+            &_coding_shreds,
+            &bank,
+            200,
+            &leader_schedule_cache,
+        );
+
+        println!("avg {}", avg);
     }
 
     #[test]
     fn test_fanout() {
-        let mut nodes = [0; 5000];
+        let mut nodes = [0; 100_000];
         for i in 0..nodes.len() {
             nodes[i] = i;
         }
 
-        let fanout = 200;
-        let index = 250;
+        let fanout = 10;
+        let index = 27;
 
         let (neighbors, children) = compute_retransmit_peers(fanout, index, &nodes);
 
