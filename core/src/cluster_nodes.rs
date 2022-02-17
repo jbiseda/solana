@@ -47,7 +47,7 @@ struct Node {
 }
 
 #[derive(Debug, Default)]
-struct ShredDistributionStakes {
+pub struct ShredDistributionStakes {
     neighborhood: u64,
     parent: u64,
     parent_neighborhood: u64,
@@ -121,7 +121,7 @@ impl Node {
 
 impl ShredDistributionStakes {
     fn total(&self) -> u64 {
-        self.neighborhood + self.parent + self.parent_neighborhood
+        self.neighborhood + self.parent_neighborhood
     }
 }
 
@@ -339,12 +339,12 @@ impl ClusterNodes<RetransmitStage> {
         (neighbors, children)
     }
 
-    fn get_shred_distribution_stakes(
+    pub fn get_shred_distribution_stakes(
         &self,
         shred: &Shred,
         root_bank: &Bank,
         fanout: usize,
-        leader_schedule_cache: &Arc<LeaderScheduleCache>,
+        leader_schedule_cache: &LeaderScheduleCache,
     ) -> ShredDistributionStakes {
         if !enable_turbine_peers_shuffle_patch(shred.slot(), root_bank) {
             return ShredDistributionStakes::default();
@@ -358,7 +358,7 @@ impl ClusterNodes<RetransmitStage> {
             // TODO error?
         }
 
-        let mut weighted_shuffle = self.weighted_shuffle.clone();
+        let weighted_shuffle = self.weighted_shuffle.clone();
         let shred_seed = shred.seed(leader_pubkey, root_bank);
         let mut rng = ChaChaRng::from_seed(shred_seed);
 
@@ -381,12 +381,12 @@ impl ClusterNodes<RetransmitStage> {
         stakes
     }
 
-    fn get_shred_distribution_states_pct(
+    pub fn get_shred_distribution_states_pct(
         &self,
         shreds: &Vec<Shred>,
         root_bank: &Bank,
         fanout: usize,
-        leader_schedule_cache: &Arc<LeaderScheduleCache>,
+        leader_schedule_cache: &LeaderScheduleCache,
     ) -> f64 {
         if shreds.len() == 0 || root_bank.total_epoch_stake() == 0 {
             debug_assert!(
