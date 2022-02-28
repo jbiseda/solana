@@ -418,7 +418,7 @@ impl ClusterNodes<RetransmitStage> {
             return 0.0;
         }
 
-        let indices: Vec<_> = slot_stats.turbine_index_set.iter().map(|idx| *idx).collect();
+        let indices: Vec<_> = slot_stats.turbine_index_set.iter().copied().collect();
         let stakes: u64 = PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 indices
