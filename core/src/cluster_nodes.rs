@@ -419,11 +419,11 @@ impl ClusterNodes<RetransmitStage> {
         }
 
         let indices: Vec<_> = slot_stats.turbine_index_set.iter().map(|idx| *idx).collect();
-        let res: Vec<_> = PAR_THREAD_POOL.with(|thread_pool| {
+        let stakes: u64 = PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 indices
                     .into_par_iter()
-                    .with_min_len(8)
+                    .with_min_len(64)
                     .map(|index| {
                         let shred_stakes = self
                             .get_deterministic_shred_distribution_stakes_by_slot_and_index(
@@ -435,25 +435,10 @@ impl ClusterNodes<RetransmitStage> {
                             );
                         shred_stakes.total()
                     })
-                    .collect()
+                    .sum()
             })
         });
 
-        let stakes: u64 = res.iter().sum();
-
-        /*
-        let mut stakes: u64 = 0;
-        for index in slot_stats.turbine_index_set.iter() {
-            let shred_stakes = self.get_deterministic_shred_distribution_stakes_by_slot_and_index(
-                slot,
-                *index,
-                root_bank,
-                fanout,
-                leader_schedule_cache,
-            );
-            stakes += shred_stakes.total();
-        }
-        */
         stakes as f64 / slot_stats.num_shreds as f64 / root_bank.total_epoch_stake() as f64 * 100.0
     }
 
