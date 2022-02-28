@@ -418,11 +418,12 @@ impl ClusterNodes<RetransmitStage> {
             return 0.0;
         }
 
-        let indices: Vec<_> = slot_stats.turbine_index_set.iter().copied().collect();
+        let indices: Vec<_> = slot_stats.turbine_index_set.into_iter().collect();
         let stakes: u64 = PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 indices
                     .into_par_iter()
+                    .with_min_len(32)
                     .map(|index| {
                         let shred_stakes = self
                             .get_deterministic_shred_distribution_stakes_by_slot_and_index(
