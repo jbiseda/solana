@@ -423,7 +423,6 @@ impl ClusterNodes<RetransmitStage> {
             thread_pool.borrow().install(|| {
                 indices
                     .into_par_iter()
-                    .with_min_len(64)
                     .map(|index| {
                         let shred_stakes = self
                             .get_deterministic_shred_distribution_stakes_by_slot_and_index(
