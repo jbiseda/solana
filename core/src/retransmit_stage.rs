@@ -464,6 +464,7 @@ fn notify_shred_stake_info(
     let num_repaired = slot_stats.num_repaired;
     let num_recovered = slot_stats.num_recovered;
 
+
     let mut start = Measure::start("notify shred stake info");
 
     /*
@@ -485,7 +486,7 @@ fn notify_shred_stake_info(
         leader_schedule_cache,
     );
     */
-    let (pct, hist) = cluster_nodes
+    let (pct, mut stakes) = cluster_nodes
         .get_deterministic_shred_distribution_stakes_pct_by_slot_and_index(
             slot,
             slot_stats,
@@ -496,6 +497,31 @@ fn notify_shred_stake_info(
 
     start.stop();
 
+    stakes.sort();
+
+    let (
+        stake_min,
+        stake_max,
+        stake_10pct,
+        stake_50pct,
+        stake_90pct,
+        stake_mean,
+        stake_sum,
+    ) = if stakes.len() > 0 {
+        let stake_sum: u64 = stakes.iter().sum();
+        (
+            stakes[0],
+            stakes[stakes.len() - 1],
+            stakes[(stakes.len() as f32 * 0.1) as usize],
+            stakes[(stakes.len() as f32 * 0.5) as usize],
+            stakes[(stakes.len() as f32 * 0.9) as usize],
+            stake_sum / stakes.len() as u64,
+            stake_sum
+        )
+    } else {
+        (0, 0, 0, 0, 0, 0, 0)
+    };
+
     datapoint_info!(
         "notify_shred_stake_info",
         ("slot", slot, i64),
@@ -505,12 +531,13 @@ fn notify_shred_stake_info(
         ("num_recovered", num_recovered, i64),
         ("num_turbine", num_turbine, i64),
         ("distribution_pct", pct, f64),
-        ("stake_min", hist.minimum().unwrap_or(0), i64),
-        ("stake_max", hist.maximum().unwrap_or(0), i64),
-        ("stake_mean", hist.mean().unwrap_or(0), i64),
-        ("stake_50pct", hist.percentile(50.0).unwrap_or(0), i64),
-        ("stake_10pct", hist.percentile(10.0).unwrap_or(0), i64),
-        ("stake_90pct", hist.percentile(90.0).unwrap_or(0), i64),
+        ("stake_min", stake_min, i64),
+        ("stake_max", stake_max, i64),
+        ("stake_mean", stake_mean, i64),
+        ("stake_10pct", stake_10pct, i64),
+        ("stake_50pct", stake_50pct, i64),
+        ("stake_90pct", stake_90pct, i64),
+        ("stake_sum", stake_sum, i64),
     );
 
     Ok(())

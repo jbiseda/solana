@@ -424,18 +424,18 @@ impl ClusterNodes<RetransmitStage> {
         root_bank: &Bank,
         fanout: usize,
         leader_schedule_cache: &LeaderScheduleCache,
-    ) -> (f64, histogram::Histogram) {
+    ) -> (f64, Vec<u64>) {
         if slot_stats.turbine_index_set.is_empty() || root_bank.total_epoch_stake() == 0 {
             warn!(
                 "slot_stats.turbine_index_set.len()={} total_epoch_stake={}",
                 slot_stats.turbine_index_set.len(),
                 root_bank.total_epoch_stake()
             );
-            return (0.0, histogram::Histogram::default());
+            return (0.0, Vec::default());
         }
 
         let indices: Vec<_> = slot_stats.turbine_index_set.into_iter().collect();
-        let stakes: Vec<u64> = PAR_THREAD_POOL.with(|thread_pool| {
+        let stakes: Vec<_> = PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 indices
                     .into_par_iter()
@@ -451,28 +451,14 @@ impl ClusterNodes<RetransmitStage> {
                             );
                         shred_stakes.total()
                     })
-                    .collect()
-                //                    .sum()
+                    .collect() //.sum()
             })
         });
 
-//        let mut hist = histogram::Histogram::new();
-        let mut hist = histogram::Histogram::configure()
-            .max_value(u64::MAX)
-            .build()
-            .unwrap();
+        let stakes_sum: u64 = stakes.iter().sum();
+        let pct: f64 = stakes_sum as f64 / slot_stats.num_shreds as f64 / root_bank.total_epoch_stake() as f64 * 100.0;
 
-        for s in &stakes {
-            hist.increment(*s).unwrap();
-        }
-
-        let stakes: u64 = stakes.iter().sum();
-
-        let pct: f64 =
-            stakes as f64 / slot_stats.num_shreds as f64 / root_bank.total_epoch_stake() as f64
-                * 100.0;
-
-        (pct, hist)
+        (pct, stakes)
     }
 
     pub fn get_shred_distribution_stakes(
