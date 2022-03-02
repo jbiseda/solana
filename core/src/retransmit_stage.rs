@@ -460,6 +460,9 @@ fn notify_shred_stake_info(
     }
     let slot_stats = slot_stats.unwrap();
     let num_shreds = slot_stats.num_shreds;
+    let num_turbine = slot_stats.turbine_index_set.len();
+    let num_repaired = slot_stats.num_repaired;
+    let num_recovered = slot_stats.num_recovered;
 
     let mut start = Measure::start("notify shred stake info");
 
@@ -482,13 +485,14 @@ fn notify_shred_stake_info(
         leader_schedule_cache,
     );
     */
-    let pct = cluster_nodes.get_deterministic_shred_distribution_stakes_pct_by_slot_and_index(
-        slot,
-        slot_stats,
-        &root_bank,
-        DATA_PLANE_FANOUT,
-        leader_schedule_cache,
-    );
+    let (pct, hist) = cluster_nodes
+        .get_deterministic_shred_distribution_stakes_pct_by_slot_and_index(
+            slot,
+            slot_stats,
+            &root_bank,
+            DATA_PLANE_FANOUT,
+            leader_schedule_cache,
+        );
 
     start.stop();
 
@@ -497,7 +501,16 @@ fn notify_shred_stake_info(
         ("slot", slot, i64),
         ("total_time_us", start.as_us(), i64),
         ("num_shreds", num_shreds, i64),
+        ("num_repaired", num_repaired, i64),
+        ("num_recovered", num_recovered, i64),
+        ("num_turbine", num_turbine, i64),
         ("distribution_pct", pct, f64),
+        ("stake_min", hist.minimum().unwrap_or(0), i64),
+        ("stake_max", hist.maximum().unwrap_or(0), i64),
+        ("stake_mean", hist.mean().unwrap_or(0), i64),
+        ("stake_50pct", hist.percentile(50.0).unwrap_or(0), i64),
+        ("stake_10pct", hist.percentile(10.0).unwrap_or(0), i64),
+        ("stake_90pct", hist.percentile(90.0).unwrap_or(0), i64),
     );
 
     Ok(())
