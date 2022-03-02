@@ -456,7 +456,11 @@ impl ClusterNodes<RetransmitStage> {
             })
         });
 
-        let mut hist = histogram::Histogram::default();
+//        let mut hist = histogram::Histogram::new();
+        let mut hist = histogram::Histogram::configure()
+            .max_value(u64::MAX)
+            .build()
+            .unwrap();
 
         for s in &stakes {
             hist.increment(*s).unwrap();
