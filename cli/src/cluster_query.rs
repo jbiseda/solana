@@ -2023,7 +2023,7 @@ pub fn process_infer_shred_stake(
             Err(e) => {
                 println!("new failed: {:?}", e);
                 panic!("panic");
-            },
+            }
             Ok(x) => x,
         };
         let (mut slot_notifications, slot_unsubscribe) =
