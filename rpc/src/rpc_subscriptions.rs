@@ -725,6 +725,7 @@ impl RpcSubscriptions {
                     let TimestampedNotificationEntry { entry, queued_at } = notification_entry;
                     match entry {
                         NotificationEntry::Subscribed(params, id) => {
+                            error!("### Subscribed {:?}", &params);
                             subscriptions.subscribe(params.clone(), id, || {
                                 initial_last_notified_slot(
                                     &params,

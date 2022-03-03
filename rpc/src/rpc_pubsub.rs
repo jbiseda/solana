@@ -518,7 +518,9 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
         filter: RpcBlockSubscribeFilter,
         config: Option<RpcBlockSubscribeConfig>,
     ) -> Result<SubscriptionId> {
+        error!("### block subscribe");
         if !self.config.enable_block_subscription {
+            error!("### block subscription not enabled");
             return Err(Error::new(jsonrpc_core::ErrorCode::MethodNotFound));
         }
         let config = config.unwrap_or_default();
