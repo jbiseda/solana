@@ -110,6 +110,10 @@ pub enum CliCommand {
         keep_unstaked_delinquents: bool,
         delinquent_slot_distance: Option<Slot>,
     },
+    InferShredStake {
+        slot: Slot,
+        index: u32,
+    },
     Supply {
         print_accounts: bool,
     },
@@ -722,6 +726,7 @@ pub fn parse_command(
             parse_transaction_history(matches, wallet_manager)
         }
         ("validators", Some(matches)) => parse_show_validators(matches),
+        ("infer-shred-stake", Some(matches)) => parse_infer_shred_stake(matches),
         // Nonce Commands
         ("authorize-nonce-account", Some(matches)) => {
             parse_authorize_nonce_account(matches, default_signer, wallet_manager)
@@ -1023,6 +1028,9 @@ pub fn process_command(config: &CliConfig) -> ProcessResult {
             *keep_unstaked_delinquents,
             *delinquent_slot_distance,
         ),
+        CliCommand::InferShredStake { slot, index } => {
+            process_infer_shred_stake(&rpc_client, config, *slot, *index)
+        }
         CliCommand::Supply { print_accounts } => {
             process_supply(&rpc_client, config, *print_accounts)
         }

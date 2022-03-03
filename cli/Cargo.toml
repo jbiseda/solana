@@ -18,10 +18,13 @@ ctrlc = { version = "3.2.1", features = ["termination"] }
 console = "0.15.0"
 const_format = "0.2.22"
 crossbeam-channel = "0.5"
+futures-util = "0.3.21"
 log = "0.4.14"
 humantime = "2.0.1"
 num-traits = "0.2"
 pretty-hex = "0.2.1"
+rand = "0.7.0"
+rand_chacha = "0.2.2"
 reqwest = { version = "0.11.9", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 semver = "1.0.5"
 serde = "1.0.136"
@@ -46,6 +49,7 @@ solana-vote-program = { path = "../programs/vote", version = "=1.10.0" }
 spl-memo = { version = "=3.0.1", features = ["no-entrypoint"] }
 thiserror = "1.0.30"
 tiny-bip39 = "0.8.2"
+tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 solana-streamer = { path = "../streamer", version = "=1.10.0" }

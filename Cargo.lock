@@ -4792,10 +4792,13 @@ dependencies = [
  "criterion-stats",
  "crossbeam-channel",
  "ctrlc",
+ "futures-util",
  "humantime",
  "log 0.4.14",
  "num-traits",
  "pretty-hex",
+ "rand 0.7.3",
+ "rand_chacha 0.2.2",
  "reqwest",
  "semver 1.0.5",
  "serde",
@@ -4823,6 +4826,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tiny-bip39",
+ "tokio",
 ]
 
 [[package]]

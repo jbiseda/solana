@@ -6,6 +6,9 @@ use {
     clap::{value_t, value_t_or_exit, App, AppSettings, Arg, ArgMatches, SubCommand},
     console::style,
     crossbeam_channel::unbounded,
+    futures_util::StreamExt,
+    rand::SeedableRng,
+    rand_chacha::ChaChaRng,
     serde::{Deserialize, Serialize},
     solana_clap_utils::{
         input_parsers::*,
@@ -31,8 +34,9 @@ use {
         },
         rpc_filter,
         rpc_request::DELINQUENT_VALIDATOR_SLOT_DISTANCE,
-        rpc_response::SlotInfo,
+        rpc_response::{SlotInfo, SlotUpdate},
     },
+    solana_gossip::weighted_shuffle::{weighted_best, weighted_shuffle, WeightedShuffle},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_sdk::{
         account::from_account,
@@ -40,7 +44,7 @@ use {
         clock::{self, Clock, Slot},
         commitment_config::CommitmentConfig,
         epoch_schedule::Epoch,
-        hash::Hash,
+        hash::{hashv, Hash},
         message::Message,
         native_token::lamports_to_sol,
         nonce::State as NonceState,
@@ -72,6 +76,7 @@ use {
         thread::sleep,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
+    tokio::runtime::Runtime,
     thiserror::Error,
 };
 
@@ -396,6 +401,26 @@ impl ClusterQuerySubCommands for App<'_, '_> {
                 ),
         )
         .subcommand(
+            SubCommand::with_name("infer-shred-stake")
+                .about("Infer shred stake from turbine distribution")
+                .arg(
+                    Arg::with_name("slot")
+                        .long("slot")
+                        .takes_value(true)
+                        .value_name("SLOT")
+                        .validator(is_slot)
+                        .help("Slot to infer shred stake from"),
+                )
+                .arg(
+                    Arg::with_name("index")
+                        .long("index")
+                        .takes_value(true)
+                        .value_name("INDEX")
+                        .validator(is_parsable::<u32>)
+                        .help("Index to infer shred stake from"),
+                )
+        )
+        .subcommand(
             SubCommand::with_name("transaction-history")
                 .about("Show historical transactions affecting the given address \
                         from newest to oldest")
@@ -651,6 +676,16 @@ pub fn parse_show_validators(matches: &ArgMatches<'_>) -> Result<CliCommandInfo,
             keep_unstaked_delinquents,
             delinquent_slot_distance,
         },
+        signers: vec![],
+    })
+}
+
+pub fn parse_infer_shred_stake(matches: &ArgMatches<'_>) -> Result<CliCommandInfo, CliError> {
+    let slot = value_t_or_exit!(matches, "slot", Slot);
+    let index = value_t_or_exit!(matches, "index", u32);
+
+    Ok(CliCommandInfo {
+        command: CliCommand::InferShredStake { slot, index },
         signers: vec![],
     })
 }
@@ -1964,6 +1999,130 @@ pub fn process_show_validators(
         use_lamports_unit,
     };
     Ok(config.output_format.formatted_string(&cli_validators))
+}
+
+pub fn process_infer_shred_stake(
+    rpc_client: &RpcClient,
+    config: &CliConfig,
+    slot: Slot,
+    index: u32,
+) -> ProcessResult {
+    println!("INFER slot={} index={}", slot, index);
+
+
+    let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
+
+    let rt = Runtime::new().unwrap();
+
+    rt.spawn(async move {
+        let pubsub_client = solana_client::nonblocking::pubsub_client::PubsubClient::new(&"ws://api.testnet.solana.com".to_string()).await.unwrap();
+        let (mut slot_notifications, slot_unsubscribe) =
+            pubsub_client.slot_updates_subscribe().await.unwrap();
+
+        while let Some(slot_update) = slot_notifications.next().await {
+            update_sender.send(slot_update).unwrap();
+        }
+        slot_unsubscribe().await;
+    });
+
+    for i in 0..100 {
+        let resp = update_receiver.recv_timeout(Duration::from_millis(1_000));
+        println!("resp: {:?}", resp);
+    }
+
+    /*
+    let (mut client, receiver) = PubsubClient::slot_subscribe("ws://api.testnet.solana.com")?;
+    for i in 0..100 {
+        let resp = receiver.recv_timeout(Duration::from_millis(1_000));
+        println!("resp: {:?}", resp);
+    }
+    client.shutdown().unwrap();
+    */
+
+    // get pubkey of node in the distribution tree
+    // get list of validator (pubkey, stake)
+
+    // for testing
+    let epoch_info = rpc_client.get_epoch_info()?;
+    let epoch = epoch_info.epoch;
+    let epoch_schedule = rpc_client.get_epoch_schedule()?;
+    let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
+    let slot = first_slot_in_epoch; // TODO remove
+
+
+    let leader_schedule = match rpc_client.get_leader_schedule(Some(slot))? {
+        Some(schedule) => schedule,
+        None => {
+            return Err(format!("Unable to fetch leader schedule for slot {}", slot).into());
+        }
+    };
+
+    let mut slot_leader_str = None;
+
+    // find slot in the leader schedule and corresponding leader
+    for (leader_str, slot_offset_vec) in leader_schedule.iter() {
+        for slot_offset in slot_offset_vec.iter() {
+            if *slot_offset as u64 + first_slot_in_epoch == slot {
+                slot_leader_str = Some(leader_str);
+                break;
+            }
+        }
+        if slot_leader_str.is_some() {
+            break;
+        }
+    }
+    if slot_leader_str.is_none() {
+        return Err(format!("Unable to find leader for slot {}", slot).into());
+    }
+    let slot_leader_str = slot_leader_str.unwrap();
+    let leader_pubkey = Pubkey::from_str(&slot_leader_str).expect("pubkey");
+
+    println!("slot leader for slot {}: {}", slot, slot_leader_str);
+
+    let distributed_node_pubkey = Pubkey::from_str(&slot_leader_str); // TODO real rpc node id
+
+
+    let vote_accounts = rpc_client.get_vote_accounts_with_config(RpcGetVoteAccountsConfig {
+        keep_unstaked_delinquents: Some(false),
+        ..RpcGetVoteAccountsConfig::default()
+    })?;
+
+
+    /*
+    for vote_account_info in vote_accounts.current.iter() {
+        println!(
+            "vote={} node={} stake={} epoch_vote_account={}",
+            vote_account_info.vote_pubkey,
+            vote_account_info.node_pubkey,
+            vote_account_info.activated_stake,
+            vote_account_info.epoch_vote_account, // bool for staked during current epoch
+        );
+    }
+    */
+    println!("vote_accounts.current.len()={}", vote_accounts.current.len());
+
+    let stakes: Vec<u64> = vote_accounts.current.iter().map(|info| info.activated_stake).collect();
+
+    let mut weighted_shuffle = WeightedShuffle::new(&stakes).unwrap();
+
+    let shred_seed = hashv(&[
+        &slot.to_le_bytes(),
+        &index.to_le_bytes(),
+        &leader_pubkey.to_bytes(),
+    ])
+    .to_bytes();
+
+    let mut rng = ChaChaRng::from_seed(shred_seed);
+
+    let nodes: Vec<_> = weighted_shuffle
+        .shuffle(&mut rng)
+        .map(|index| &vote_accounts.current[index])
+        .collect();
+
+
+
+    let str = format!("slot={} index={}", slot, index);
+    Ok(str)
 }
 
 pub fn process_transaction_history(
