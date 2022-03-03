@@ -76,8 +76,8 @@ use {
         thread::sleep,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     },
-    tokio::runtime::Runtime,
     thiserror::Error,
+    tokio::runtime::Runtime,
 };
 
 pub trait ClusterQuerySubCommands {
@@ -2009,13 +2009,16 @@ pub fn process_infer_shred_stake(
 ) -> ProcessResult {
     println!("INFER slot={} index={}", slot, index);
 
-
     let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
 
     let rt = Runtime::new().unwrap();
 
     rt.spawn(async move {
-        let pubsub_client = solana_client::nonblocking::pubsub_client::PubsubClient::new(&"ws://api.testnet.solana.com".to_string()).await.unwrap();
+        let pubsub_client = solana_client::nonblocking::pubsub_client::PubsubClient::new(
+            &"ws://api.testnet.solana.com".to_string(),
+        )
+        .await
+        .unwrap();
         let (mut slot_notifications, slot_unsubscribe) =
             pubsub_client.slot_updates_subscribe().await.unwrap();
 
@@ -2049,7 +2052,6 @@ pub fn process_infer_shred_stake(
     let first_slot_in_epoch = epoch_schedule.get_first_slot_in_epoch(epoch);
     let slot = first_slot_in_epoch; // TODO remove
 
-
     let leader_schedule = match rpc_client.get_leader_schedule(Some(slot))? {
         Some(schedule) => schedule,
         None => {
@@ -2081,12 +2083,10 @@ pub fn process_infer_shred_stake(
 
     let distributed_node_pubkey = Pubkey::from_str(&slot_leader_str); // TODO real rpc node id
 
-
     let vote_accounts = rpc_client.get_vote_accounts_with_config(RpcGetVoteAccountsConfig {
         keep_unstaked_delinquents: Some(false),
         ..RpcGetVoteAccountsConfig::default()
     })?;
-
 
     /*
     for vote_account_info in vote_accounts.current.iter() {
@@ -2099,9 +2099,16 @@ pub fn process_infer_shred_stake(
         );
     }
     */
-    println!("vote_accounts.current.len()={}", vote_accounts.current.len());
+    println!(
+        "vote_accounts.current.len()={}",
+        vote_accounts.current.len()
+    );
 
-    let stakes: Vec<u64> = vote_accounts.current.iter().map(|info| info.activated_stake).collect();
+    let stakes: Vec<u64> = vote_accounts
+        .current
+        .iter()
+        .map(|info| info.activated_stake)
+        .collect();
 
     let mut weighted_shuffle = WeightedShuffle::new(&stakes).unwrap();
 
@@ -2118,8 +2125,6 @@ pub fn process_infer_shred_stake(
         .shuffle(&mut rng)
         .map(|index| &vote_accounts.current[index])
         .collect();
-
-
 
     let str = format!("slot={} index={}", slot, index);
     Ok(str)
