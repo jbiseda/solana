@@ -2016,7 +2016,7 @@ pub fn process_infer_shred_stake(
     rt.spawn(async move {
         let res = solana_client::nonblocking::pubsub_client::PubsubClient::new(
             //&"ws://api.testnet.solana.com".to_string(),
-            &"ws://35.197.110.19:8899".to_string(),
+            &"ws://35.197.110.19:8900".to_string(),
         )
         .await;
         let pubsub_client = match res {
@@ -2035,7 +2035,7 @@ pub fn process_infer_shred_stake(
         slot_unsubscribe().await;
     });
 
-    for i in 0..5 {
+    for i in 0..1_000 {
         let resp = update_receiver.recv_timeout(Duration::from_millis(1_000));
         println!("resp: {:?}", resp);
     }

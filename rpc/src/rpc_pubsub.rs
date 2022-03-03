@@ -506,6 +506,7 @@ impl RpcSolPubSubInternal for RpcSolPubSubImpl {
     }
 
     fn slots_updates_subscribe(&self) -> Result<SubscriptionId> {
+        error!("### slots updates subscribe");
         self.subscribe(SubscriptionParams::SlotsUpdates)
     }
 
