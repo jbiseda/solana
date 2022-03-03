@@ -26,6 +26,7 @@ impl RpcCompletedSlotsService {
                             num_recovered: stats.num_recovered as u64,
                             turbine_indices: stats.turbine_index_set.iter().copied().collect(),
                         });
+                        error!("### CompletedSlotsService slot {}, {:?}", slot, &stats);
                         rpc_subscriptions.notify_slot_update(SlotUpdate::Completed {
                             slot,
                             timestamp: timestamp(),

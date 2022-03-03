@@ -748,6 +748,7 @@ impl RpcSubscriptions {
                             }
                         }
                         NotificationEntry::SlotUpdate(slot_update) => {
+                            error!("process_notification {:?}", &slot_update);
                             if let Some(sub) = subscriptions
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::SlotsUpdates)

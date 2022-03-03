@@ -1679,12 +1679,12 @@ impl Blockstore {
             );
 
             // send notification for slot completed without repair
-            if num_repaired == 0 {
+//            if num_repaired == 0 {
                 // TODO reconcile with send_signals?
                 if let Some(sender) = dist_notify_sender {
                     sender.send((slot_meta.slot, slot_stats.clone())).unwrap();
                 }
-            }
+//            }
             slot_stats
         } else {
             None
