@@ -2009,13 +2009,15 @@ pub fn process_infer_shred_stake(
 ) -> ProcessResult {
     println!("INFER slot={} index={}", slot, index);
 
+    /*
     let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
 
     let rt = Runtime::new().unwrap();
 
     rt.spawn(async move {
         let pubsub_client = solana_client::nonblocking::pubsub_client::PubsubClient::new(
-            &"ws://api.testnet.solana.com".to_string(),
+            //&"ws://api.testnet.solana.com".to_string(),
+            &"ws://10.138.0.33:8899".to_string(),
         )
         .await
         .unwrap();
@@ -2032,6 +2034,7 @@ pub fn process_infer_shred_stake(
         let resp = update_receiver.recv_timeout(Duration::from_millis(1_000));
         println!("resp: {:?}", resp);
     }
+    */
 
     /*
     let (mut client, receiver) = PubsubClient::slot_subscribe("ws://api.testnet.solana.com")?;
