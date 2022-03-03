@@ -4812,6 +4812,7 @@ dependencies = [
  "solana-client",
  "solana-config-program",
  "solana-faucet",
+ "solana-gossip",
  "solana-logger 1.10.0",
  "solana-program-runtime",
  "solana-remote-wallet",
