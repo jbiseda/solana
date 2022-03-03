@@ -4,6 +4,7 @@ use {
     solana_ledger::blockstore::CompletedSlotsReceiver,
     solana_sdk::timing::timestamp,
     std::{
+        collections::HashMap,
         sync::Arc,
         thread::{Builder, JoinHandle},
     },
@@ -37,6 +38,22 @@ fn compute_range_vec(turbine_indices: &Vec<u32>) -> Vec<Vec<u32>> {
     turbine_ranges
 }
 
+fn compute_lengths_and_offsets(turbine_indices: &Vec<u32>) -> (Vec<u32>, Vec<Vec<u32>>) {
+    let turbine_ranges = compute_range_vec(turbine_indices);
+    let mut map: HashMap<u32, Vec<u32>> = HashMap::default();
+    for v in turbine_ranges {
+        let len: u32 = if v.len() == 1 {
+            1
+        } else {
+            //(v[1].saturating_sub(v[0])).try_into().unwrap()
+            v[1].saturating_sub(v[0])
+        };
+        let entry = map.entry(len).or_default();
+        entry.push(v[0]);
+    }
+    map.into_iter().unzip()
+}
+
 pub struct RpcCompletedSlotsService;
 impl RpcCompletedSlotsService {
     pub fn spawn(
@@ -49,8 +66,10 @@ impl RpcCompletedSlotsService {
                 for slots_and_stats in completed_slots_receiver.iter() {
                     for (slot, slot_stats) in slots_and_stats {
                         let stats = slot_stats.map(|stats| {
-                            let turbine_ranges = compute_range_vec(&stats.turbine_indices);
-                            error!("### RANGES {:?}", &turbine_ranges);
+                            let (lengths, offsets) =
+                                compute_lengths_and_offsets(&stats.turbine_indices);
+                            //error!("### RANGES {:?}", &turbine_ranges);
+                            error!("LENGTHS={:?}\nOFFSETS={:?}", lengths, offsets);
                             SlotShredStats {
                                 num_shreds: stats.num_shreds as u64,
                                 num_repaired: stats.num_repaired as u64,
