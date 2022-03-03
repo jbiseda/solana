@@ -198,7 +198,8 @@ pub struct SlotStats {
     pub num_repaired: usize,
     pub num_recovered: usize,
     pub num_shreds: usize,
-    pub turbine_index_set: HashSet<u32>, // TODO replace with roaring bitset?
+    //pub turbine_index_set: HashSet<u32>, // TODO replace with roaring bitset?
+    pub turbine_indices: Vec<u32>,
 }
 
 pub struct IndexMetaWorkingSetEntry {
@@ -1646,7 +1647,7 @@ impl Blockstore {
                 ShredSource::Repaired => e.num_repaired += 1,
                 ShredSource::Recovered => e.num_recovered += 1,
                 ShredSource::Turbine => {
-                    e.turbine_index_set.insert(shred.index());
+                    e.turbine_indices.push(shred.index());
                 }
             }
         }

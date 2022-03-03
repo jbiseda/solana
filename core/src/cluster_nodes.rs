@@ -425,16 +425,16 @@ impl ClusterNodes<RetransmitStage> {
         fanout: usize,
         leader_schedule_cache: &LeaderScheduleCache,
     ) -> (f64, Vec<u64>) {
-        if slot_stats.turbine_index_set.is_empty() || root_bank.total_epoch_stake() == 0 {
+        if slot_stats.turbine_indices.is_empty() || root_bank.total_epoch_stake() == 0 {
             warn!(
-                "slot_stats.turbine_index_set.len()={} total_epoch_stake={}",
-                slot_stats.turbine_index_set.len(),
+                "slot_stats.turbine_indices.len()={} total_epoch_stake={}",
+                slot_stats.turbine_indices.len(),
                 root_bank.total_epoch_stake()
             );
             return (0.0, Vec::default());
         }
 
-        let indices: Vec<_> = slot_stats.turbine_index_set.into_iter().collect();
+        let indices: Vec<_> = slot_stats.turbine_indices;
         let stakes: Vec<_> = PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 indices

@@ -460,7 +460,7 @@ fn notify_shred_stake_info(
     }
     let slot_stats = slot_stats.unwrap();
     let num_shreds = slot_stats.num_shreds;
-    let num_turbine = slot_stats.turbine_index_set.len();
+    let num_turbine = slot_stats.turbine_indices.len();
     let num_repaired = slot_stats.num_repaired;
     let num_recovered = slot_stats.num_recovered;
 

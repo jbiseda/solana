@@ -2035,7 +2035,7 @@ pub fn process_infer_shred_stake(
         slot_unsubscribe().await;
     });
 
-    for i in 0..1_000 {
+    for _ in 0..1_000 {
         let resp = update_receiver.recv_timeout(Duration::from_millis(1_000));
         println!("resp: {:?}", resp);
     }
