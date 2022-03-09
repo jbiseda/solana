@@ -31,7 +31,7 @@ use {
         any::TypeId,
         cell::RefCell,
         cmp::Reverse,
-        collections::HashMap,
+        collections::{HashMap, HashSet},
         iter::repeat_with,
         marker::PhantomData,
         net::SocketAddr,
@@ -115,6 +115,22 @@ fn get_neighborhood_stake(index: usize, fanout: usize, nodes: &[&Node]) -> u64 {
         .while_some()
         .map(|n| n.stake)
         .sum()
+}
+
+fn get_neighborhood_nodes<'a>(index: usize, fanout: usize, nodes: &'a [&Node]) -> HashSet<&'a Pubkey> {
+    let offset = index % fanout;
+    let anchor = index - offset;
+    (anchor..)
+        .take(fanout)
+        .map(|i| nodes.get(i))
+        .while_some()
+        .map(|n| {
+            match &n.node {
+                NodeId::Pubkey(p) => &p,
+                NodeId::ContactInfo(ci) => &ci.id,
+            }
+        })
+        .collect()
 }
 
 impl Node {
@@ -417,6 +433,73 @@ impl ClusterNodes<RetransmitStage> {
         stakes
     }
 
+    pub fn get_deterministic_shred_distribution_set(
+        &self,
+        slot: Slot,
+        shred_index: u32,
+        root_bank: &Bank,
+        fanout: usize,
+        leader_schedule_cache: &LeaderScheduleCache,
+    ) -> HashSet<&Pubkey> {
+        let leader_pubkey = leader_schedule_cache
+            .slot_leader_at(slot, Some(root_bank))
+            .unwrap();
+
+        if leader_pubkey == self.pubkey {
+            // TODO?
+        }
+
+        let weighted_shuffle = self.weighted_shuffle.clone();
+
+        // TODO dedup the shred seed calculation here
+        let shred_seed = hashv(&[
+            &slot.to_le_bytes(),
+            &shred_index.to_le_bytes(),
+            &leader_pubkey.to_bytes(),
+        ])
+        .to_bytes();
+
+        let mut rng = ChaChaRng::from_seed(shred_seed);
+
+        let nodes: Vec<_> = weighted_shuffle
+            .shuffle(&mut rng)
+            .map(|index| &self.nodes[index])
+            .collect();
+        let self_index = nodes
+            .iter()
+            .position(|node| node.pubkey() == self.pubkey)
+            .unwrap();
+
+        let mut inferred_recipients = get_neighborhood_nodes(self_index, fanout, &nodes);
+        if let Some(parent_index) = get_parent_index(self_index, fanout) {
+            if let Some(parent_node) = nodes.get(parent_index) {
+                let parent_pubkey = match &parent_node.node {
+                    NodeId::ContactInfo(ci) => &ci.id,
+                    NodeId::Pubkey(key) => &key,
+                };
+                inferred_recipients.insert(parent_pubkey);
+//                inferred_recipients.push(parent_node);
+            }
+        }
+
+        let mut sum_stake: u64 = 0;
+        for key in inferred_recipients.iter() {
+            let n = nodes.iter().find_map(|n| if &n.pubkey() == *key { Some(n) } else { None }).unwrap();
+            sum_stake += n.stake;
+        }
+
+        error!(
+            ">>> slot={} index={} inferred_cnt={} sum_stake={} pct={:.2}",
+            slot,
+            shred_index,
+            inferred_recipients.len(),
+            sum_stake,
+            sum_stake as f64 / root_bank.total_epoch_stake() as f64 * 100.0
+        );
+
+        HashSet::default()
+    }
+
     pub fn get_deterministic_shred_distribution_stakes_pct_by_slot_and_index(
         &self,
         slot: Slot,
@@ -441,6 +524,14 @@ impl ClusterNodes<RetransmitStage> {
                     .into_par_iter()
                     .with_min_len(32)
                     .map(|index| {
+                        let _ = self
+                            .get_deterministic_shred_distribution_set(
+                                slot,
+                                index,
+                                root_bank,
+                                fanout,
+                                leader_schedule_cache,
+                            );
                         let shred_stakes = self
                             .get_deterministic_shred_distribution_stakes_by_slot_and_index(
                                 slot,
