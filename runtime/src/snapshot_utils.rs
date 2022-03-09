@@ -43,7 +43,7 @@ use {
     thiserror::Error,
 };
 
-pub const SNAPSHOT_STATUS_CACHE_FILE_NAME: &str = "status_cache";
+pub const SNAPSHOT_STATUS_CACHE_FILENAME: &str = "status_cache";
 pub const DEFAULT_FULL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 25_000;
 pub const DEFAULT_INCREMENTAL_SNAPSHOT_ARCHIVE_INTERVAL_SLOTS: Slot = 100;
 const MAX_SNAPSHOT_DATA_FILE_SIZE: u64 = 32 * 1024 * 1024 * 1024; // 32 GiB
@@ -258,7 +258,7 @@ pub fn archive_snapshot_package(
         &snapshot_package
             .snapshot_links
             .path()
-            .join(SNAPSHOT_STATUS_CACHE_FILE_NAME),
+            .join(SNAPSHOT_STATUS_CACHE_FILENAME),
     )?;
 
     let mut timer = Measure::start("snapshot_package-package_snapshots");
@@ -847,7 +847,6 @@ pub fn bank_from_latest_snapshot_archives(
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 ) -> Result<(
     Bank,
-    BankFromArchiveTimings,
     FullSnapshotArchiveInfo,
     Option<IncrementalSnapshotArchiveInfo>,
 )> {
@@ -890,6 +889,30 @@ pub fn bank_from_latest_snapshot_archives(
         accounts_update_notifier,
     )?;
 
+    datapoint_info!(
+        "bank_from_snapshot_archives",
+        (
+            "full_snapshot_untar_us",
+            timings.full_snapshot_untar_us,
+            i64
+        ),
+        (
+            "incremental_snapshot_untar_us",
+            timings.incremental_snapshot_untar_us,
+            i64
+        ),
+        (
+            "rebuild_bank_from_snapshots_us",
+            timings.rebuild_bank_from_snapshots_us,
+            i64
+        ),
+        (
+            "verify_snapshot_bank_us",
+            timings.verify_snapshot_bank_us,
+            i64
+        ),
+    );
+
     verify_bank_against_expected_slot_hash(
         &bank,
         incremental_snapshot_archive_info.as_ref().map_or(
@@ -904,7 +927,6 @@ pub fn bank_from_latest_snapshot_archives(
 
     Ok((
         bank,
-        timings,
         full_snapshot_archive_info,
         incremental_snapshot_archive_info,
     ))
@@ -1074,7 +1096,7 @@ fn archive_format_from_str(archive_format: &str) -> Option<ArchiveFormat> {
 }
 
 /// Parse a full snapshot archive filename into its Slot, Hash, and Archive Format
-pub fn parse_full_snapshot_archive_filename(
+pub(crate) fn parse_full_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, Hash, ArchiveFormat)> {
     lazy_static! {
@@ -1105,7 +1127,7 @@ pub fn parse_full_snapshot_archive_filename(
 }
 
 /// Parse an incremental snapshot archive filename into its base Slot, actual Slot, Hash, and Archive Format
-pub fn parse_incremental_snapshot_archive_filename(
+pub(crate) fn parse_incremental_snapshot_archive_filename(
     archive_filename: &str,
 ) -> Result<(Slot, Slot, Hash, ArchiveFormat)> {
     lazy_static! {
@@ -1508,7 +1530,7 @@ fn rebuild_bank_from_snapshots(
                     .as_path()
             },
         )
-        .join(SNAPSHOT_STATUS_CACHE_FILE_NAME);
+        .join(SNAPSHOT_STATUS_CACHE_FILENAME);
     let slot_deltas = deserialize_snapshot_data_file(&status_cache_path, |stream| {
         info!(
             "Rebuilding status cache from {}",
@@ -2458,7 +2480,7 @@ mod tests {
             &expected_snapshots,
         );
 
-        // retaiing 2, expecting the 2 newest to be retained
+        // retaining 2, expecting the 2 newest to be retained
         let expected_snapshots = vec![&snap2_name, &snap3_name];
         common_test_purge_old_snapshot_archives(
             &snapshot_names,
