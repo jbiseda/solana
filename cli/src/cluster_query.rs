@@ -2032,36 +2032,40 @@ pub fn process_infer_shred_stake(
 ) -> ProcessResult {
     println!("INFER slot={} index={}", slot, index);
 
-    let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
+    /*
+    {
+        let (update_sender, update_receiver) = unbounded::<SlotUpdate>();
 
-    let rt = Runtime::new().unwrap();
+        let rt = Runtime::new().unwrap();
 
-    rt.spawn(async move {
-        let res = solana_client::nonblocking::pubsub_client::PubsubClient::new(
-            //&"ws://api.testnet.solana.com".to_string(),
-            &"ws://35.197.110.19:8900".to_string(),
-        )
-        .await;
-        let pubsub_client = match res {
-            Err(e) => {
-                println!("new failed: {:?}", e);
-                panic!("panic");
+        rt.spawn(async move {
+            let res = solana_client::nonblocking::pubsub_client::PubsubClient::new(
+                //&"ws://api.testnet.solana.com".to_string(),
+                &"ws://35.197.110.19:8900".to_string(),
+            )
+            .await;
+            let pubsub_client = match res {
+                Err(e) => {
+                    println!("new failed: {:?}", e);
+                    panic!("panic");
+                }
+                Ok(x) => x,
+            };
+            let (mut slot_notifications, slot_unsubscribe) =
+                pubsub_client.slot_updates_subscribe().await.unwrap();
+
+            while let Some(slot_update) = slot_notifications.next().await {
+                update_sender.send(slot_update).unwrap();
             }
-            Ok(x) => x,
-        };
-        let (mut slot_notifications, slot_unsubscribe) =
-            pubsub_client.slot_updates_subscribe().await.unwrap();
+            slot_unsubscribe().await;
+        });
 
-        while let Some(slot_update) = slot_notifications.next().await {
-            update_sender.send(slot_update).unwrap();
+        for _ in 0..1_000 {
+            let resp = update_receiver.recv_timeout(Duration::from_millis(1_000));
+            println!("resp: {:?}", resp);
         }
-        slot_unsubscribe().await;
-    });
-
-    for _ in 0..1_000 {
-        let resp = update_receiver.recv_timeout(Duration::from_millis(1_000));
-        println!("resp: {:?}", resp);
     }
+    */
 
     /*
     let (mut client, receiver) = PubsubClient::slot_subscribe("ws://api.testnet.solana.com")?;
@@ -2129,16 +2133,63 @@ pub fn process_infer_shred_stake(
         );
     }
     */
+
     println!(
         "vote_accounts.current.len()={}",
         vote_accounts.current.len()
     );
+
+    /*
+    for info in &vote_accounts.current {
+        println!(
+            "vote_pubkey={} node_pubkey={} activated_stake={} epoch_vote_account={}",
+            info.vote_pubkey,
+            info.node_pubkey,
+            info.activated_stake,
+            info.epoch_vote_account,
+        );
+    }
+    */
+
+    /*
+    println!("// BEGIN mainnet_beta dataset");
+    print!("let mainnet_beta = vec![");
+    for info in &vote_accounts.current {
+        println!(
+            "(\"{}\", \"{}\", {}, {})",
+            info.vote_pubkey,
+            info.node_pubkey,
+            info.activated_stake,
+            info.epoch_vote_account,
+        );
+    }
+    println!(";");
+    println!("// END mainnet_beta dataset");
+    */
+
+    let dataset: Vec<_> = vote_accounts
+        .current
+        .iter()
+        .map(|info| {
+            (
+                info.vote_pubkey.clone(),
+                info.node_pubkey.clone(),
+                info.activated_stake,
+                info.epoch_vote_account,
+            )
+        })
+        .collect();
+
+    println!("// BEGIN mainnet_beta dataset");
+    println!("let mainnet_beta = vec!{:?};", &dataset);
+    println!("// END mainnet_beta dataset");
 
     let stakes: Vec<u64> = vote_accounts
         .current
         .iter()
         .map(|info| info.activated_stake)
         .collect();
+    //println!("{:?}", &stakes);
 
     let mut weighted_shuffle = WeightedShuffle::new(&stakes).unwrap();
 
