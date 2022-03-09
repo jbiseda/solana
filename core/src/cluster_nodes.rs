@@ -483,6 +483,8 @@ impl ClusterNodes<RetransmitStage> {
             }
         }
 
+        let total_sum: u64 = nodes.iter().map(|n| n.stake).sum();
+
         let top_200: u64 = nodes.iter().take(200).map(|n| n.stake).sum();
 
         let mut sum_stake: u64 = 0;
@@ -498,7 +500,7 @@ impl ClusterNodes<RetransmitStage> {
         }
 
         error!(
-            ">>> slot={} shred_index={} myidx={} paridx={} inferred_cnt={} sum_stake={} pct={:.2} par_cnt={} parent_stake={} par_pct={:.2} top200pct={:.2}",
+            ">>> slot={} shred_index={} myidx={} paridx={} inferred_cnt={} sum_stake={} pct={:.2} par_cnt={} parent_stake={} par_pct={:.2} top200pct={:.2} all={:.2}",
             slot,
             shred_index,
             self_index,
@@ -510,6 +512,7 @@ impl ClusterNodes<RetransmitStage> {
             sum_parent_stake,
             sum_parent_stake as f64 / root_bank.total_epoch_stake() as f64 * 100.0,
             top_200 as f64 / root_bank.total_epoch_stake() as f64 * 100.0,
+            total_sum as f64 / root_bank.total_epoch_stake() as f64 * 100.0,
         );
 
         HashSet::default()
