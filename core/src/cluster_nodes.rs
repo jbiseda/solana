@@ -465,6 +465,7 @@ impl ClusterNodes<RetransmitStage> {
             .position(|node| node.pubkey() == self.pubkey)
             .unwrap();
 
+        let mut parent_neighborhood = HashSet::default();
         let mut inferred_recipients = get_neighborhood_nodes(self_index, fanout, &nodes);
         if let Some(parent_index) = get_parent_index(self_index, fanout) {
             if let Some(parent_node) = nodes.get(parent_index) {
@@ -473,7 +474,10 @@ impl ClusterNodes<RetransmitStage> {
                     NodeId::Pubkey(key) => &key,
                 };
                 inferred_recipients.insert(parent_pubkey);
-//                inferred_recipients.push(parent_node);
+
+                parent_neighborhood = get_neighborhood_nodes(parent_index, fanout, &nodes);
+
+//                inferred_recipients.extend(&parent_neighborhood);
             }
         }
 
@@ -483,13 +487,21 @@ impl ClusterNodes<RetransmitStage> {
             sum_stake += n.stake;
         }
 
+        let mut sum_parent_stake: u64 = 0;
+        for key in parent_neighborhood.iter() {
+            let n = nodes.iter().find_map(|n| if &n.pubkey() == *key { Some(n) } else { None }).unwrap();
+            sum_parent_stake += n.stake;            
+        }
+
         error!(
-            ">>> slot={} index={} inferred_cnt={} sum_stake={} pct={:.2}",
+            ">>> slot={} index={} inferred_cnt={} sum_stake={} pct={:.2} parent_stake={} par_pct={:.2}",
             slot,
             shred_index,
             inferred_recipients.len(),
             sum_stake,
-            sum_stake as f64 / root_bank.total_epoch_stake() as f64 * 100.0
+            sum_stake as f64 / root_bank.total_epoch_stake() as f64 * 100.0,
+            sum_parent_stake,
+            sum_parent_stake as f64 / root_bank.total_epoch_stake() as f64 * 100.0,
         );
 
         HashSet::default()
