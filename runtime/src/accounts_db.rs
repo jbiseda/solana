@@ -6224,6 +6224,10 @@ impl AccountsDb {
         accounts_index_root_stats.clean_dead_slot_us += measure.as_us();
         info!("remove_dead_slots_metadata: slots {:?}", dead_slots);
 
+        for slot in dead_slots.iter() {
+            warn!("TRACKING_clean_dead_slots {}", slot);
+        }
+
         accounts_index_root_stats.rooted_cleaned_count += rooted_cleaned_count;
         accounts_index_root_stats.unrooted_cleaned_count += unrooted_cleaned_count;
 

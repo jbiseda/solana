@@ -1926,12 +1926,29 @@ impl Blockstore {
                 slot_stats
             };
 
-            let (num_repaired, num_recovered) = if let Some(ref mut stats) = slot_stats {
+            let (num_repaired, num_recovered, num_turbine) = if let Some(ref mut stats) = slot_stats
+            {
                 stats.num_shreds = slot_meta.last_index.unwrap_or(0) as usize;
-                (stats.num_repaired, stats.num_recovered)
+                (
+                    stats.num_repaired,
+                    stats.num_recovered,
+                    stats.turbine_index_set.len(),
+                )
             } else {
-                (0, 0)
+                (0, 0, 0)
             };
+
+            if num_repaired == 0 {
+                warn!(
+                    "TRACKING_full_0_repair {} num_turbine={}",
+                    slot, num_turbine
+                );
+            } else {
+                warn!(
+                    "TRACKING_full_repairs {} num_repaired={} num_turbine={}",
+                    slot, num_repaired, num_turbine
+                );
+            }
 
             datapoint_info!(
                 "shred_insert_is_full",
