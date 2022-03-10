@@ -4,7 +4,6 @@ use {
     thiserror::Error,
 };
 
-// TODO: clean up errors for encryption
 #[derive(Error, Clone, Debug, Eq, PartialEq)]
 pub enum ProofError {
     #[error("proof generation failed")]
@@ -25,6 +24,8 @@ pub enum ProofError {
         "`zk_token_elgamal::pod::ElGamalCiphertext` contains invalid ElGamalCiphertext ciphertext"
     )]
     InconsistentCTData,
+    #[error("failed to decrypt ciphertext from transfer data")]
+    Decryption,
 }
 
 #[derive(Error, Clone, Debug, Eq, PartialEq)]

@@ -35,6 +35,11 @@ use {
     thiserror::Error,
 };
 
+// The default storage size for storing shreds when `rocksdb-shred-compaction`
+// is set to `fifo` in the validator arguments.  This amount of storage size
+// in bytes will equally allocated to both data shreds and coding shreds.
+pub const DEFAULT_ROCKS_FIFO_SHRED_STORAGE_SIZE_BYTES: u64 = 250 * 1024 * 1024 * 1024;
+
 const MAX_WRITE_BUFFER_SIZE: u64 = 256 * 1024 * 1024; // 256MB
 const FIFO_WRITE_BUFFER_SIZE: u64 = 2 * MAX_WRITE_BUFFER_SIZE;
 // Maximum size of cf::DataShred.  Used when `shred_storage_type`
@@ -523,9 +528,9 @@ impl Rocks {
     ///
     /// Full list of properties that return int values could be found
     /// [here](https://github.com/facebook/rocksdb/blob/08809f5e6cd9cc4bc3958dd4d59457ae78c76660/include/rocksdb/db.h#L654-L689).
-    fn get_int_property_cf(&self, cf: &ColumnFamily, name: &str) -> Result<u64> {
+    fn get_int_property_cf(&self, cf: &ColumnFamily, name: &str) -> Result<i64> {
         match self.0.property_int_value_cf(cf, name) {
-            Ok(Some(value)) => Ok(value),
+            Ok(Some(value)) => Ok(value.try_into().unwrap()),
             Ok(None) => Ok(0),
             Err(e) => Err(BlockstoreError::RocksDb(e)),
         }
@@ -1228,7 +1233,7 @@ where
     ///
     /// Full list of properties that return int values could be found
     /// [here](https://github.com/facebook/rocksdb/blob/08809f5e6cd9cc4bc3958dd4d59457ae78c76660/include/rocksdb/db.h#L654-L689).
-    pub fn get_int_property(&self, name: &str) -> Result<u64> {
+    pub fn get_int_property(&self, name: &str) -> Result<i64> {
         self.backend.get_int_property_cf(self.handle(), name)
     }
 }

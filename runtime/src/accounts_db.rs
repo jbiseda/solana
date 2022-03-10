@@ -170,14 +170,14 @@ type DashMapVersionHash = DashMap<Pubkey, (u64, Hash)>;
 
 #[derive(Debug, Clone, Copy)]
 pub enum AccountShrinkThreshold {
-    /// Measure the total space sparseness across all candididates
-    /// And select the candidiates by using the top sparse account storage entries to shrink.
+    /// Measure the total space sparseness across all candidates
+    /// And select the candidates by using the top sparse account storage entries to shrink.
     /// The value is the overall shrink threshold measured as ratio of the total live bytes
     /// over the total bytes.
     TotalSpace { shrink_ratio: f64 },
     /// Use the following option to shrink all stores whose alive ratio is below
     /// the specified threshold.
-    IndividalStore { shrink_ratio: f64 },
+    IndividualStore { shrink_ratio: f64 },
 }
 pub const DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE: bool = true;
 pub const DEFAULT_ACCOUNTS_SHRINK_RATIO: f64 = 0.80;
@@ -2943,7 +2943,6 @@ impl AccountsDb {
     /// achieved, it will stop and return the filtered-down candidates and the candidates which
     /// are skipped in this round and might be eligible for the future shrink.
     fn select_candidates_by_total_usage(
-        &self,
         shrink_slots: &ShrinkCandidates,
         shrink_ratio: f64,
     ) -> (ShrinkCandidates, ShrinkCandidates) {
@@ -3032,19 +3031,28 @@ impl AccountsDb {
     }
 
     pub fn shrink_candidate_slots(&self) -> usize {
-        let _guard = self.active_stats.activate(ActiveStatItem::Shrink);
-
         let shrink_candidates_slots =
             std::mem::take(&mut *self.shrink_candidate_slots.lock().unwrap());
         let (shrink_slots, shrink_slots_next_batch) = {
             if let AccountShrinkThreshold::TotalSpace { shrink_ratio } = self.shrink_ratio {
                 let (shrink_slots, shrink_slots_next_batch) =
-                    self.select_candidates_by_total_usage(&shrink_candidates_slots, shrink_ratio);
+                    Self::select_candidates_by_total_usage(&shrink_candidates_slots, shrink_ratio);
                 (shrink_slots, Some(shrink_slots_next_batch))
             } else {
                 (shrink_candidates_slots, None)
             }
         };
+
+        if shrink_slots.is_empty()
+            && shrink_slots_next_batch
+                .as_ref()
+                .map(|s| s.is_empty())
+                .unwrap_or(true)
+        {
+            return 0;
+        }
+
+        let _guard = self.active_stats.activate(ActiveStatItem::Shrink);
 
         let mut measure_shrink_all_candidates = Measure::start("shrink_all_candidate_slots-ms");
         let num_candidates = shrink_slots.len();
@@ -5956,7 +5964,7 @@ impl AccountsDb {
         accounts: impl StorableAccounts<'a, T>,
         previous_slot_entry_was_cached: bool,
     ) -> SlotList<AccountInfo> {
-        let slot = accounts.target_slot();
+        let target_slot = accounts.target_slot();
         // using a thread pool here results in deadlock panics from bank_hashes.write()
         // so, instead we limit how many threads will be created to the same size as the bg thread pool
         let len = std::cmp::min(accounts.len(), infos.len());
@@ -5972,9 +5980,10 @@ impl AccountsDb {
                     let info = infos[i];
                     let pubkey_account = (accounts.pubkey(i), accounts.account(i));
                     let pubkey = pubkey_account.0;
+                    let old_slot = accounts.slot(i);
                     self.accounts_index.upsert(
-                        slot,
-                        slot,
+                        target_slot,
+                        old_slot,
                         pubkey,
                         pubkey_account.1,
                         &self.account_indexes,
@@ -6029,7 +6038,7 @@ impl AccountsDb {
             AccountShrinkThreshold::TotalSpace { shrink_ratio: _ } => {
                 Self::page_align(store.alive_bytes() as u64) < store.total_bytes()
             }
-            AccountShrinkThreshold::IndividalStore { shrink_ratio } => {
+            AccountShrinkThreshold::IndividualStore { shrink_ratio } => {
                 (Self::page_align(store.alive_bytes() as u64) as f64 / store.total_bytes() as f64)
                     < shrink_ratio
             }
@@ -6064,7 +6073,7 @@ impl AccountsDb {
             {
                 assert_eq!(
                     *slot, store.slot(),
-                    "AccountDB::accounts_index corrupted. Storage pointed to: {}, expected: {}, should only point to one slot",
+                    "AccountsDB::accounts_index corrupted. Storage pointed to: {}, expected: {}, should only point to one slot",
                     store.slot(), *slot
                 );
                 let count =
@@ -10768,11 +10777,12 @@ pub mod tests {
     fn test_select_candidates_by_total_usage_no_candidates() {
         // no input candidates -- none should be selected
         solana_logger::setup();
-        let accounts = AccountsDb::new_single_for_tests();
         let candidates: ShrinkCandidates = HashMap::new();
 
-        let (selected_candidates, next_candidates) =
-            accounts.select_candidates_by_total_usage(&candidates, DEFAULT_ACCOUNTS_SHRINK_RATIO);
+        let (selected_candidates, next_candidates) = AccountsDb::select_candidates_by_total_usage(
+            &candidates,
+            DEFAULT_ACCOUNTS_SHRINK_RATIO,
+        );
 
         assert_eq!(0, selected_candidates.len());
         assert_eq!(0, next_candidates.len());
@@ -10782,7 +10792,6 @@ pub mod tests {
     fn test_select_candidates_by_total_usage_3_way_split_condition() {
         // three candidates, one selected for shrink, one is put back to the candidate list and one is ignored
         solana_logger::setup();
-        let accounts = AccountsDb::new_single_for_tests();
         let mut candidates: ShrinkCandidates = HashMap::new();
 
         let common_store_path = Path::new("");
@@ -10846,7 +10855,7 @@ pub mod tests {
         // to the candidates list for next round.
         let target_alive_ratio = 0.6;
         let (selected_candidates, next_candidates) =
-            accounts.select_candidates_by_total_usage(&candidates, target_alive_ratio);
+            AccountsDb::select_candidates_by_total_usage(&candidates, target_alive_ratio);
         assert_eq!(1, selected_candidates.len());
         assert_eq!(1, selected_candidates[&common_slot_id].len());
         assert!(selected_candidates[&common_slot_id].contains(&store1.append_vec_id()));
@@ -10858,7 +10867,6 @@ pub mod tests {
     fn test_select_candidates_by_total_usage_2_way_split_condition() {
         // three candidates, 2 are selected for shrink, one is ignored
         solana_logger::setup();
-        let accounts = AccountsDb::new_single_for_tests();
         let mut candidates: ShrinkCandidates = HashMap::new();
 
         let common_store_path = Path::new("");
@@ -10919,7 +10927,7 @@ pub mod tests {
         // Set the target ratio to default (0.8), both store1 and store2 must be selected and store3 is ignored.
         let target_alive_ratio = DEFAULT_ACCOUNTS_SHRINK_RATIO;
         let (selected_candidates, next_candidates) =
-            accounts.select_candidates_by_total_usage(&candidates, target_alive_ratio);
+            AccountsDb::select_candidates_by_total_usage(&candidates, target_alive_ratio);
         assert_eq!(1, selected_candidates.len());
         assert_eq!(2, selected_candidates[&common_slot_id].len());
         assert!(selected_candidates[&common_slot_id].contains(&store1.append_vec_id()));
@@ -10931,7 +10939,6 @@ pub mod tests {
     fn test_select_candidates_by_total_usage_all_clean() {
         // 2 candidates, they must be selected to achieve the target alive ratio
         solana_logger::setup();
-        let accounts = AccountsDb::new_single_for_tests();
         let mut candidates: ShrinkCandidates = HashMap::new();
 
         let slot1 = 12;
@@ -10980,7 +10987,7 @@ pub mod tests {
         // Set the target ratio to default (0.8), both stores from the two different slots must be selected.
         let target_alive_ratio = DEFAULT_ACCOUNTS_SHRINK_RATIO;
         let (selected_candidates, next_candidates) =
-            accounts.select_candidates_by_total_usage(&candidates, target_alive_ratio);
+            AccountsDb::select_candidates_by_total_usage(&candidates, target_alive_ratio);
         assert_eq!(2, selected_candidates.len());
         assert_eq!(1, selected_candidates[&slot1].len());
         assert_eq!(1, selected_candidates[&slot2].len());
@@ -13178,7 +13185,7 @@ pub mod tests {
                     (shrink_ratio * 100.) as u64
                 )
             }
-            AccountShrinkThreshold::IndividalStore { shrink_ratio: _ } => {
+            AccountShrinkThreshold::IndividualStore { shrink_ratio: _ } => {
                 panic!("Expect the default to be TotalSpace")
             }
         }
@@ -13189,7 +13196,7 @@ pub mod tests {
         accounts.shrink_ratio = AccountShrinkThreshold::TotalSpace { shrink_ratio: 0.3 };
         entry.alive_bytes.store(3000, Ordering::Release);
         assert!(accounts.is_candidate_for_shrink(&entry));
-        accounts.shrink_ratio = AccountShrinkThreshold::IndividalStore { shrink_ratio: 0.3 };
+        accounts.shrink_ratio = AccountShrinkThreshold::IndividualStore { shrink_ratio: 0.3 };
         assert!(!accounts.is_candidate_for_shrink(&entry));
     }
 
