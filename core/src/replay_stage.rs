@@ -1683,7 +1683,7 @@ impl ReplayStage {
             .set_dead_slot(slot)
             .expect("Failed to mark slot as dead in blockstore");
 
-        warn!("TRACKING_dead_slot {}", slot);
+        warn!("TRACKING_dead_slot {} parent {}", slot, bank.parent_slot());
 
         rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
             slot,
