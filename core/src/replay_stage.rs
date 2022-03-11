@@ -1682,6 +1682,16 @@ impl ReplayStage {
         blockstore
             .set_dead_slot(slot)
             .expect("Failed to mark slot as dead in blockstore");
+
+        // TODO check for slot in 0 repaired complete and report if so
+        if blockstore.is_completed_unrepaired_slot(slot) {
+            datapoint_info!(
+                "replay-stage-mark_dead_completed_unrepaired_slot",
+                ("slot", slot, i64),
+            );
+            warn!("replay-stage-mark_dead_completed_unrepaired_slot {}", slot);
+        }
+
         rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
             slot,
             err: format!("error: {:?}", err),

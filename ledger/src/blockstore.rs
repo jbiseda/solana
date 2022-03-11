@@ -177,6 +177,7 @@ pub struct Blockstore {
     pub lowest_cleanup_slot: Arc<RwLock<Slot>>,
     no_compaction: bool,
     slots_stats: Arc<Mutex<SlotsStats>>,
+    completed_unrepaired_slots: Arc<Mutex<HashSet<Slot>>>,
 }
 
 struct SlotsStats {
@@ -648,6 +649,7 @@ impl Blockstore {
             lowest_cleanup_slot: Arc::new(RwLock::new(0)),
             no_compaction: false,
             slots_stats: Arc::new(Mutex::new(SlotsStats::default())),
+            completed_unrepaired_slots: Arc::new(Mutex::new(HashSet::default())),
         };
         if initialize_transaction_status_index {
             blockstore.initialize_transaction_status_index()?;
@@ -1959,6 +1961,11 @@ impl Blockstore {
                     (0, 0)
                 }
             };
+
+            if num_repaired == 0 {
+                self.completed_unrepaired_slots.lock().unwrap().insert(slot);
+            }
+
             datapoint_info!(
                 "shred_insert_is_full",
                 (
@@ -3579,6 +3586,10 @@ impl Blockstore {
             ("fix_roots_us", fix_roots.as_us() as i64, i64),
         );
         Ok(())
+    }
+
+    pub fn is_completed_unrepaired_slot(&self, slot: Slot) -> bool {
+        self.completed_unrepaired_slots.lock().unwrap().contains(&slot)
     }
 }
 
