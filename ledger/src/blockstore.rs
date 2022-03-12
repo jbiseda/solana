@@ -3427,6 +3427,7 @@ impl Blockstore {
     }
 
     pub fn remove_dead_slot(&self, slot: Slot) -> Result<()> {
+        warn!("blockstore remove_dead_slot {}", slot);
         self.dead_slots_cf.delete(slot)
     }
 
@@ -3592,15 +3593,27 @@ impl Blockstore {
     }
 
     pub fn remove_completed_unrepaired_slot(&self, slot: Slot) -> bool {
-        warn!("remove_completed_unrepaired_slot {}", slot);
-        self.completed_unrepaired_slots.lock().unwrap().remove(&slot)
+        let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
+        let removed = completed_slots.remove(&slot);
+        warn!(
+            "remove_completed_unrepaired_slot slot={} removed={} set_size={}",
+            slot,
+            removed,
+            completed_slots.len(),
+        );
+        removed
     }
 
     pub fn remove_completed_unrepaired_slots(&self, slots: &[Slot]) {
-        warn!("remove_completed_unrepaired_slots {:?}", slots); // TODO remove
         let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
         for slot in slots {
-            completed_slots.remove(slot);
+            let removed = completed_slots.remove(slot);
+            warn!(
+                "remove_completed_unrepaired_slots slot={} removed={} map_size={}",
+                slot,
+                removed,
+                completed_slots.len(),
+            ); // TODO remove
         }
     }
 }
