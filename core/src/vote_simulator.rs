@@ -220,6 +220,7 @@ impl VoteSimulator {
             &mut Vec::new(),
             &mut EpochSlotsFrozenSlots::default(),
             &drop_bank_sender,
+            None,
         )
     }
 

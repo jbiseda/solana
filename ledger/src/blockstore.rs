@@ -1963,7 +1963,10 @@ impl Blockstore {
             };
 
             if num_repaired == 0 {
-                self.completed_unrepaired_slots.lock().unwrap().insert(slot);
+                //self.completed_unrepaired_slots.lock().unwrap().insert(slot);
+                let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
+                completed_slots.insert(slot); // TODO cleanup
+                warn!("completed_unrepaired_slots insert {} map_size={}", slot, completed_slots.len());
             }
 
             datapoint_info!(
@@ -3588,8 +3591,17 @@ impl Blockstore {
         Ok(())
     }
 
-    pub fn is_completed_unrepaired_slot(&self, slot: Slot) -> bool {
-        self.completed_unrepaired_slots.lock().unwrap().contains(&slot)
+    pub fn remove_completed_unrepaired_slot(&self, slot: Slot) -> bool {
+        warn!("remove_completed_unrepaired_slot {}", slot);
+        self.completed_unrepaired_slots.lock().unwrap().remove(&slot)
+    }
+
+    pub fn remove_completed_unrepaired_slots(&self, slots: &[Slot]) {
+        warn!("remove_completed_unrepaired_slots {:?}", slots); // TODO remove
+        let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
+        for slot in slots {
+            completed_slots.remove(slot);
+        }
     }
 }
 

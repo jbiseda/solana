@@ -1683,13 +1683,12 @@ impl ReplayStage {
             .set_dead_slot(slot)
             .expect("Failed to mark slot as dead in blockstore");
 
-        // TODO check for slot in 0 repaired complete and report if so
-        if blockstore.is_completed_unrepaired_slot(slot) {
-            datapoint_info!(
+        if blockstore.remove_completed_unrepaired_slot(slot) {
+            datapoint_warn!(
                 "replay-stage-mark_dead_completed_unrepaired_slot",
                 ("slot", slot, i64),
             );
-            warn!("replay-stage-mark_dead_completed_unrepaired_slot {}", slot);
+            warn!("replay-stage-mark_dead_completed_unrepaired_slot {}", slot); // TODO remove
         }
 
         rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
@@ -1797,6 +1796,7 @@ impl ReplayStage {
                 vote_signatures,
                 epoch_slots_frozen_slots,
                 bank_drop_sender,
+                Some(blockstore),
             );
             rpc_subscriptions.notify_roots(rooted_slots);
             if let Some(sender) = bank_notification_sender {
@@ -2935,12 +2935,19 @@ impl ReplayStage {
         voted_signatures: &mut Vec<Signature>,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
         bank_drop_sender: &Sender<Vec<Arc<Bank>>>,
+        blockstore: Option<&Blockstore>,
     ) {
         let removed_banks = bank_forks.write().unwrap().set_root(
             new_root,
             accounts_background_request_sender,
             highest_confirmed_root,
         );
+
+        if let Some(blockstore) = blockstore {
+            let removed_slots: Vec<_> = removed_banks.iter().map(|bank| bank.slot()).collect();
+            blockstore.remove_completed_unrepaired_slots(&removed_slots);
+        }
+
         bank_drop_sender
             .send(removed_banks)
             .unwrap_or_else(|err| warn!("bank drop failed: {:?}", err));
@@ -3467,6 +3474,7 @@ pub mod tests {
             &mut Vec::new(),
             &mut epoch_slots_frozen_slots,
             &bank_drop_sender,
+            None,
         );
         assert_eq!(bank_forks.read().unwrap().root(), root);
         assert_eq!(progress.len(), 1);
@@ -3548,6 +3556,7 @@ pub mod tests {
             &mut Vec::new(),
             &mut EpochSlotsFrozenSlots::default(),
             &bank_drop_sender,
+            None,
         );
         assert_eq!(bank_forks.read().unwrap().root(), root);
         assert!(bank_forks.read().unwrap().get(confirmed_root).is_some());
