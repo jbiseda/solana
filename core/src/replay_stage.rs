@@ -1683,6 +1683,8 @@ impl ReplayStage {
             .set_dead_slot(slot)
             .expect("Failed to mark slot as dead in blockstore");
 
+        warn!("mark_dead_slot {}", slot);
+
         if blockstore.remove_completed_unrepaired_slot(slot) {
             datapoint_warn!(
                 "replay-stage-mark_dead_completed_unrepaired_slot",
@@ -2145,7 +2147,7 @@ impl ReplayStage {
         for bank_slot in &active_banks {
             // If the fork was marked as dead, don't replay it
             if progress.get(bank_slot).map(|p| p.is_dead).unwrap_or(false) {
-                debug!("bank_slot {:?} is marked dead", *bank_slot);
+                warn!("bank_slot {:?} is marked dead", *bank_slot); //TODO debug
                 continue;
             }
 
