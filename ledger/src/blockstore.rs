@@ -1966,7 +1966,7 @@ impl Blockstore {
                 //self.completed_unrepaired_slots.lock().unwrap().insert(slot);
                 let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
                 completed_slots.insert(slot); // TODO cleanup
-                warn!("completed_unrepaired_slots insert {} map_size={}", slot, completed_slots.len());
+                warn!("TRACKING completed_unrepaired_slots insert {} map_size={}", slot, completed_slots.len());
             }
 
             datapoint_info!(
@@ -3427,7 +3427,7 @@ impl Blockstore {
     }
 
     pub fn remove_dead_slot(&self, slot: Slot) -> Result<()> {
-        warn!("blockstore remove_dead_slot {}", slot);
+        warn!("TRACKING blockstore remove_dead_slot {}", slot);
         self.dead_slots_cf.delete(slot)
     }
 
@@ -3596,7 +3596,7 @@ impl Blockstore {
         let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
         let removed = completed_slots.remove(&slot);
         warn!(
-            "remove_completed_unrepaired_slot slot={} removed={} set_size={}",
+            "TRACKING remove_completed_unrepaired_slot slot={} removed={} set_size={}",
             slot,
             removed,
             completed_slots.len(),
@@ -3609,7 +3609,7 @@ impl Blockstore {
         for slot in slots {
             let removed = completed_slots.remove(slot);
             warn!(
-                "remove_completed_unrepaired_slots slot={} removed={} map_size={}",
+                "TRACKING remove_completed_unrepaired_slots slot={} removed={} map_size={}",
                 slot,
                 removed,
                 completed_slots.len(),

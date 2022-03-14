@@ -673,7 +673,7 @@ impl ProgressMap {
                 if bank_forks.get(*k).is_some() {
                     true
                 } else {
-                    warn!("handle_new_root not retained {}", *k);
+                    warn!("TRACKING handle_new_root not retained {}", *k);
                     false
                 }
             });

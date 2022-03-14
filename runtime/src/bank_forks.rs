@@ -168,7 +168,7 @@ impl BankForks {
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<Arc<Bank>> {
-        warn!("> remove {}", slot);
+        warn!("> TRACKING remove {}", slot);
 //        blockstore.remove_completed_unrepaired_slot(slot);
         let bank = self.banks.remove(&slot)?;
         for parent in bank.proper_ancestors() {
