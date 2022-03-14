@@ -492,11 +492,15 @@ impl BankForks {
         prune_slots_time.stop();
 
         let mut prune_remove_time = Measure::start("prune_slots");
-        let removed_banks = prune_slots
+        let removed_banks: Vec<_> = prune_slots
             .into_iter()
             .filter_map(|slot| self.remove(slot))
             .collect();
         prune_remove_time.stop();
+
+        for b in removed_banks.iter() {
+            warn!("prune_non_root {}", b.slot());
+        }
 
         (
             removed_banks,
