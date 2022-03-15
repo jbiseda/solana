@@ -1388,6 +1388,7 @@ impl Blockstore {
     /// family.
     pub fn clear_unconfirmed_slot(&self, slot: Slot) {
         let _lock = self.insert_shreds_lock.lock().unwrap();
+        warn!("clean_unconfirmed_slot {}", slot);
         if let Some(mut slot_meta) = self
             .meta(slot)
             .expect("Couldn't fetch from SlotMeta column family")

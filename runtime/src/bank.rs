@@ -3561,6 +3561,7 @@ impl Bank {
     }
 
     pub fn remove_unrooted_slots(&self, slots: &[(Slot, BankId)]) {
+        warn!("TRACKING remove_unrooted_slots {:?}", slots);
         self.rc.accounts.accounts_db.remove_unrooted_slots(slots)
     }
 

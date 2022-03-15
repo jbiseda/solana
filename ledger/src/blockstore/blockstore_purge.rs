@@ -122,6 +122,7 @@ impl Blockstore {
         to_slot: Slot,
         purge_type: PurgeType,
     ) -> Result<bool> {
+        warn!("run_purge [{}-{}]", from_slot, to_slot);
         self.run_purge_with_stats(from_slot, to_slot, purge_type, &mut PurgeStats::default())
     }
 

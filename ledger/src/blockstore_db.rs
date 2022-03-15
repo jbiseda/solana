@@ -1150,6 +1150,7 @@ impl Database {
     }
 
     pub fn set_oldest_slot(&self, oldest_slot: Slot) {
+        warn!("set_oldest_slot {}", oldest_slot);
         self.backend.2.set(oldest_slot);
     }
 }
