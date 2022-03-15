@@ -699,6 +699,7 @@ impl RpcSubscriptions {
                 timestamp: timestamp(),
             }));
             self.enqueue_notification(NotificationEntry::Root(root));
+            warn!("TRACKING notify_roots {}", root);
         });
     }
 
@@ -749,6 +750,7 @@ impl RpcSubscriptions {
                             subscriptions.unsubscribe(params, id);
                         }
                         NotificationEntry::Slot(slot_info) => {
+                            warn!("NOTIFY slot {:?}", &slot_info);
                             if let Some(sub) = subscriptions
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Slot)
@@ -759,6 +761,7 @@ impl RpcSubscriptions {
                             }
                         }
                         NotificationEntry::SlotUpdate(slot_update) => {
+                            warn!("NOTIFY slot_update {:?}", &slot_update);
                             if let Some(sub) = subscriptions
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::SlotsUpdates)
@@ -787,6 +790,7 @@ impl RpcSubscriptions {
                             }
                         }
                         NotificationEntry::Root(root) => {
+                            warn!("NOTIFY root {:?}", &root);
                             if let Some(sub) = subscriptions
                                 .node_progress_watchers()
                                 .get(&SubscriptionParams::Root)
@@ -797,6 +801,7 @@ impl RpcSubscriptions {
                             }
                         }
                         NotificationEntry::Bank(commitment_slots) => {
+                            warn!("NOTIFY bank {:?}", &commitment_slots);
                             const SOURCE: &str = "bank";
                             RpcSubscriptions::notify_watchers(
                                 max_complete_transaction_status_slot.clone(),
