@@ -3607,6 +3607,9 @@ impl Blockstore {
 
     pub fn remove_completed_unrepaired_slots(&self, slots: &[Slot]) {
         let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
+
+        let min_slot = slots.iter().min().unwrap();
+
         for slot in slots {
             let removed = completed_slots.remove(slot);
             warn!(
@@ -3615,6 +3618,12 @@ impl Blockstore {
                 removed,
                 completed_slots.len(),
             ); // TODO remove
+        }
+
+        for s in completed_slots.iter() {
+            if *s < *min_slot {
+                warn!("TRACKING completed_slot {} less than min {}", s, min_slot);
+            }
         }
     }
 }

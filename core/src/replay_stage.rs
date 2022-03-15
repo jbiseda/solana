@@ -1800,6 +1800,9 @@ impl ReplayStage {
                 bank_drop_sender,
                 Some(blockstore),
             );
+
+            blockstore.remove_completed_unrepaired_slots(&rooted_slots);
+
             rpc_subscriptions.notify_roots(rooted_slots);
             if let Some(sender) = bank_notification_sender {
                 sender
