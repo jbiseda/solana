@@ -3614,7 +3614,17 @@ impl Blockstore {
 
         let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
 
+        let min_completed = *completed_slots.iter().min().unwrap();
+        let max_completed = *completed_slots.iter().max().unwrap();
+
         let min_slot = slots.iter().min().unwrap();
+
+        warn!(
+            "TRACKING remove_completed_unrepaired_slots min={} set[{}-{}]",
+            min_slot,
+            min_completed,
+            max_completed,
+        );
 
         for slot in slots {
             let removed = completed_slots.remove(slot);
