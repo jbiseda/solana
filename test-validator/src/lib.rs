@@ -13,7 +13,8 @@ use {
         socketaddr,
     },
     solana_ledger::{
-        blockstore::create_new_ledger, blockstore_db::ShredStorageType, create_new_tmp_ledger,
+        blockstore::create_new_ledger, blockstore_db::BlockstoreAdvancedOptions,
+        create_new_tmp_ledger,
     },
     solana_net_utils::PortRange,
     solana_rpc::{rpc::JsonRpcConfig, rpc_pubsub_service::PubSubConfig},
@@ -108,7 +109,7 @@ pub struct TestValidatorGenesis {
     pub authorized_voter_keypairs: Arc<RwLock<Vec<Arc<Keypair>>>>,
     pub max_ledger_shreds: Option<u64>,
     pub max_genesis_archive_unpacked_size: Option<u64>,
-    pub accountsdb_plugin_config_files: Option<Vec<PathBuf>>,
+    pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub accounts_db_caching_enabled: bool,
     deactivate_feature_set: HashSet<Pubkey>,
 }
@@ -135,7 +136,7 @@ impl Default for TestValidatorGenesis {
             authorized_voter_keypairs: Arc::<RwLock<Vec<Arc<Keypair>>>>::default(),
             max_ledger_shreds: Option::<u64>::default(),
             max_genesis_archive_unpacked_size: Option::<u64>::default(),
-            accountsdb_plugin_config_files: Option::<Vec<PathBuf>>::default(),
+            geyser_plugin_config_files: Option::<Vec<PathBuf>>::default(),
             accounts_db_caching_enabled: bool::default(),
             deactivate_feature_set: HashSet::<Pubkey>::default(),
         }
@@ -581,8 +582,7 @@ impl TestValidator {
                     config
                         .max_genesis_archive_unpacked_size
                         .unwrap_or(MAX_GENESIS_ARCHIVE_UNPACKED_SIZE),
-                    solana_ledger::blockstore_db::AccessType::PrimaryOnly,
-                    ShredStorageType::default(),
+                    BlockstoreAdvancedOptions::default(),
                 )
                 .map_err(|err| {
                     format!(
@@ -668,7 +668,7 @@ impl TestValidator {
         });
 
         let mut validator_config = ValidatorConfig {
-            accountsdb_plugin_config_files: config.accountsdb_plugin_config_files.clone(),
+            geyser_plugin_config_files: config.geyser_plugin_config_files.clone(),
             accounts_db_caching_enabled: config.accounts_db_caching_enabled,
             rpc_addrs: Some((
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), node.info.rpc.port()),

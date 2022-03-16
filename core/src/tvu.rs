@@ -27,7 +27,7 @@ use {
         voting_service::VotingService,
     },
     crossbeam_channel::{unbounded, Receiver},
-    solana_accountsdb_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierLock,
+    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierLock,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
@@ -215,14 +215,6 @@ impl Tvu {
 
         let (ledger_cleanup_slot_sender, ledger_cleanup_slot_receiver) = unbounded();
 
-        let snapshot_interval_slots = {
-            if let Some(config) = bank_forks.read().unwrap().snapshot_config() {
-                config.full_snapshot_archive_interval_slots
-            } else {
-                std::u64::MAX
-            }
-        };
-        info!("snapshot_interval_slots: {}", snapshot_interval_slots);
         let (snapshot_config, pending_snapshot_package) = snapshot_config_and_pending_package
             .map(|(snapshot_config, pending_snapshot_package)| {
                 (Some(snapshot_config), Some(pending_snapshot_package))
@@ -309,12 +301,8 @@ impl Tvu {
         );
 
         let (cost_update_sender, cost_update_receiver) = unbounded();
-        let cost_update_service = CostUpdateService::new(
-            exit.clone(),
-            blockstore.clone(),
-            cost_model.clone(),
-            cost_update_receiver,
-        );
+        let cost_update_service =
+            CostUpdateService::new(blockstore.clone(), cost_model.clone(), cost_update_receiver);
 
         let (drop_bank_sender, drop_bank_receiver) = unbounded();
 
