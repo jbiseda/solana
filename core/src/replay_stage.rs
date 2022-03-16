@@ -2939,6 +2939,7 @@ impl ReplayStage {
         voted_signatures: &mut Vec<Signature>,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
         drop_bank_sender: &Sender<Vec<Arc<Bank>>>,
+        blockstore: Option<&Blockstore>
     ) {
         let removed_banks = bank_forks.write().unwrap().set_root(
             new_root,
