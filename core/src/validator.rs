@@ -22,8 +22,8 @@ use {
     },
     crossbeam_channel::{bounded, unbounded, Receiver},
     rand::{thread_rng, Rng},
-    solana_accountsdb_plugin_manager::accountsdb_plugin_service::AccountsDbPluginService,
     solana_entry::poh::compute_hash_time_ns,
+    solana_geyser_plugin_manager::geyser_plugin_service::GeyserPluginService,
     solana_gossip::{
         cluster_info::{
             ClusterInfo, Node, DEFAULT_CONTACT_DEBUG_INTERVAL_MILLIS,
@@ -36,7 +36,7 @@ use {
     solana_ledger::{
         bank_forks_utils,
         blockstore::{Blockstore, BlockstoreSignals, CompletedSlotsReceiver, PurgeType},
-        blockstore_db::{BlockstoreOptions, BlockstoreRecoveryMode, ShredStorageType},
+        blockstore_db::{BlockstoreAdvancedOptions, BlockstoreOptions, BlockstoreRecoveryMode},
         blockstore_processor::{self, TransactionStatusSender},
         leader_schedule::FixedSchedule,
         leader_schedule_cache::LeaderScheduleCache,
@@ -119,7 +119,7 @@ pub struct ValidatorConfig {
     pub account_shrink_paths: Option<Vec<PathBuf>>,
     pub rpc_config: JsonRpcConfig,
     pub accountsdb_repl_service_config: Option<AccountsDbReplServiceConfig>,
-    pub accountsdb_plugin_config_files: Option<Vec<PathBuf>>,
+    pub geyser_plugin_config_files: Option<Vec<PathBuf>>,
     pub rpc_addrs: Option<(SocketAddr, SocketAddr)>, // (JsonRpc, JsonRpcPubSub)
     pub pubsub_config: PubSubConfig,
     pub snapshot_config: Option<SnapshotConfig>,
@@ -150,6 +150,7 @@ pub struct ValidatorConfig {
     pub bpf_jit: bool,
     pub send_transaction_service_config: send_transaction_service::Config,
     pub no_poh_speed_test: bool,
+    pub no_os_memory_stats_reporting: bool,
     pub no_os_network_stats_reporting: bool,
     pub poh_pinned_cpu_core: usize,
     pub poh_hashes_per_batch: u64,
@@ -165,7 +166,7 @@ pub struct ValidatorConfig {
     pub no_wait_for_vote_to_start_leader: bool,
     pub accounts_shrink_ratio: AccountShrinkThreshold,
     pub wait_to_vote_slot: Option<Slot>,
-    pub shred_storage_type: ShredStorageType,
+    pub blockstore_advanced_options: BlockstoreAdvancedOptions,
 }
 
 impl Default for ValidatorConfig {
@@ -181,7 +182,7 @@ impl Default for ValidatorConfig {
             account_shrink_paths: None,
             rpc_config: JsonRpcConfig::default(),
             accountsdb_repl_service_config: None,
-            accountsdb_plugin_config_files: None,
+            geyser_plugin_config_files: None,
             rpc_addrs: None,
             pubsub_config: PubSubConfig::default(),
             snapshot_config: None,
@@ -211,6 +212,7 @@ impl Default for ValidatorConfig {
             bpf_jit: false,
             send_transaction_service_config: send_transaction_service::Config::default(),
             no_poh_speed_test: true,
+            no_os_memory_stats_reporting: true,
             no_os_network_stats_reporting: true,
             poh_pinned_cpu_core: poh_service::DEFAULT_PINNED_CPU_CORE,
             poh_hashes_per_batch: poh_service::DEFAULT_HASHES_PER_BATCH,
@@ -226,7 +228,7 @@ impl Default for ValidatorConfig {
             accounts_shrink_ratio: AccountShrinkThreshold::default(),
             accounts_db_config: None,
             wait_to_vote_slot: None,
-            shred_storage_type: ShredStorageType::RocksLevel,
+            blockstore_advanced_options: BlockstoreAdvancedOptions::default(),
         }
     }
 }
@@ -301,7 +303,7 @@ pub struct Validator {
     pub cluster_info: Arc<ClusterInfo>,
     pub bank_forks: Arc<RwLock<BankForks>>,
     accountsdb_repl_service: Option<AccountsDbReplService>,
-    accountsdb_plugin_service: Option<AccountsDbPluginService>,
+    geyser_plugin_service: Option<GeyserPluginService>,
 }
 
 // in the distant future, get rid of ::new()/exit() and use Result properly...
@@ -340,18 +342,16 @@ impl Validator {
 
         let mut bank_notification_senders = Vec::new();
 
-        let accountsdb_plugin_service =
-            if let Some(accountsdb_plugin_config_files) = &config.accountsdb_plugin_config_files {
+        let geyser_plugin_service =
+            if let Some(geyser_plugin_config_files) = &config.geyser_plugin_config_files {
                 let (confirmed_bank_sender, confirmed_bank_receiver) = unbounded();
                 bank_notification_senders.push(confirmed_bank_sender);
-                let result = AccountsDbPluginService::new(
-                    confirmed_bank_receiver,
-                    accountsdb_plugin_config_files,
-                );
+                let result =
+                    GeyserPluginService::new(confirmed_bank_receiver, geyser_plugin_config_files);
                 match result {
-                    Ok(accountsdb_plugin_service) => Some(accountsdb_plugin_service),
+                    Ok(geyser_plugin_service) => Some(geyser_plugin_service),
                     Err(err) => {
-                        error!("Failed to load the AccountsDb plugin: {:?}", err);
+                        error!("Failed to load the Geyser plugin: {:?}", err);
                         abort();
                     }
                 }
@@ -425,41 +425,33 @@ impl Validator {
 
         let accounts_package_channel = unbounded();
 
-        let accounts_update_notifier =
-            accountsdb_plugin_service
-                .as_ref()
-                .and_then(|accountsdb_plugin_service| {
-                    accountsdb_plugin_service.get_accounts_update_notifier()
-                });
+        let accounts_update_notifier = geyser_plugin_service
+            .as_ref()
+            .and_then(|geyser_plugin_service| geyser_plugin_service.get_accounts_update_notifier());
 
-        let transaction_notifier =
-            accountsdb_plugin_service
-                .as_ref()
-                .and_then(|accountsdb_plugin_service| {
-                    accountsdb_plugin_service.get_transaction_notifier()
-                });
+        let transaction_notifier = geyser_plugin_service
+            .as_ref()
+            .and_then(|geyser_plugin_service| geyser_plugin_service.get_transaction_notifier());
 
-        let block_metadata_notifier =
-            accountsdb_plugin_service
-                .as_ref()
-                .and_then(|accountsdb_plugin_service| {
-                    accountsdb_plugin_service.get_block_metadata_notifier()
-                });
+        let block_metadata_notifier = geyser_plugin_service
+            .as_ref()
+            .and_then(|geyser_plugin_service| geyser_plugin_service.get_block_metadata_notifier());
 
         info!(
-            "AccountsDb plugin: accounts_update_notifier: {} transaction_notifier: {}",
+            "Geyser plugin: accounts_update_notifier: {} transaction_notifier: {}",
             accounts_update_notifier.is_some(),
             transaction_notifier.is_some()
         );
 
         let system_monitor_service = Some(SystemMonitorService::new(
             Arc::clone(&exit),
+            !config.no_os_memory_stats_reporting,
             !config.no_os_network_stats_reporting,
         ));
 
         let (
             genesis_config,
-            bank_forks,
+            mut bank_forks,
             blockstore,
             ledger_signal_receiver,
             completed_slots_receiver,
@@ -475,21 +467,30 @@ impl Validator {
                 cache_block_meta_sender,
                 cache_block_meta_service,
             },
-            tower,
         ) = new_banks_from_ledger(
-            &id,
-            vote_account,
             config,
             ledger_path,
-            config.poh_verify,
             &exit,
-            config.enforce_ulimit_nofile,
             &start_progress,
-            config.no_poh_speed_test,
             accounts_package_channel.0.clone(),
             accounts_update_notifier,
             transaction_notifier,
         );
+
+        maybe_warp_slot(config, ledger_path, &mut bank_forks, &leader_schedule_cache);
+
+        let tower = {
+            let restored_tower = Tower::restore(config.tower_storage.as_ref(), &id);
+            if let Ok(tower) = &restored_tower {
+                reconcile_blockstore_roots_with_tower(tower, &blockstore).unwrap_or_else(|err| {
+                    error!("Failed to reconcile blockstore with tower: {:?}", err);
+                    abort()
+                });
+            }
+
+            post_process_restored_tower(restored_tower, &id, vote_account, config, &bank_forks)
+        };
+        info!("Tower state: {:?}", tower);
 
         *start_progress.write().unwrap() = ValidatorStartProgress::StartingServices;
 
@@ -811,7 +812,8 @@ impl Validator {
 
         let vote_tracker = Arc::<VoteTracker>::default();
         let mut cost_model = CostModel::default();
-        cost_model.initialize_cost_table(&blockstore.read_program_costs().unwrap());
+        // initialize cost model with built-in instruction costs only
+        cost_model.initialize_cost_table(&[]);
         let cost_model = Arc::new(RwLock::new(cost_model));
 
         let (retransmit_slots_sender, retransmit_slots_receiver) = unbounded();
@@ -939,7 +941,7 @@ impl Validator {
             cluster_info,
             bank_forks,
             accountsdb_repl_service,
-            accountsdb_plugin_service,
+            geyser_plugin_service,
         }
     }
 
@@ -1061,10 +1063,8 @@ impl Validator {
                 .expect("accountsdb_repl_service");
         }
 
-        if let Some(accountsdb_plugin_service) = self.accountsdb_plugin_service {
-            accountsdb_plugin_service
-                .join()
-                .expect("accountsdb_plugin_service");
+        if let Some(geyser_plugin_service) = self.geyser_plugin_service {
+            geyser_plugin_service.join().expect("geyser_plugin_service");
         }
     }
 }
@@ -1196,17 +1196,12 @@ fn post_process_restored_tower(
         })
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
 fn new_banks_from_ledger(
-    validator_identity: &Pubkey,
-    vote_account: &Pubkey,
     config: &ValidatorConfig,
     ledger_path: &Path,
-    poh_verify: bool,
     exit: &Arc<AtomicBool>,
-    enforce_ulimit_nofile: bool,
     start_progress: &Arc<RwLock<ValidatorStartProgress>>,
-    no_poh_speed_test: bool,
     accounts_package_sender: AccountsPackageSender,
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
     transaction_notifier: Option<TransactionNotifierLock>,
@@ -1220,7 +1215,6 @@ fn new_banks_from_ledger(
     Option<Slot>,
     Option<StartingSnapshotHashes>,
     TransactionHistoryServices,
-    Tower,
 ) {
     info!("loading ledger from {:?}...", ledger_path);
     *start_progress.write().unwrap() = ValidatorStartProgress::LoadingLedger;
@@ -1244,7 +1238,7 @@ fn new_banks_from_ledger(
         }
     }
 
-    if !no_poh_speed_test {
+    if !config.no_poh_speed_test {
         check_poh_speed(&genesis_config, None);
     }
 
@@ -1257,21 +1251,12 @@ fn new_banks_from_ledger(
         ledger_path,
         BlockstoreOptions {
             recovery_mode: config.wal_recovery_mode.clone(),
-            enforce_ulimit_nofile,
-            shred_storage_type: config.shred_storage_type.clone(),
+            advanced_options: config.blockstore_advanced_options.clone(),
             ..BlockstoreOptions::default()
         },
     )
     .expect("Failed to open ledger database");
     blockstore.set_no_compaction(config.no_rocksdb_compaction);
-
-    let restored_tower = Tower::restore(config.tower_storage.as_ref(), validator_identity);
-    if let Ok(tower) = &restored_tower {
-        reconcile_blockstore_roots_with_tower(tower, &blockstore).unwrap_or_else(|err| {
-            error!("Failed to reconcile blockstore with tower: {:?}", err);
-            abort()
-        });
-    }
 
     let blockstore = Arc::new(blockstore);
     let blockstore_root_scan = if config.rpc_addrs.is_some()
@@ -1292,7 +1277,7 @@ fn new_banks_from_ledger(
 
     let process_options = blockstore_processor::ProcessOptions {
         bpf_jit: config.bpf_jit,
-        poh_verify,
+        poh_verify: config.poh_verify,
         dev_halt_at_slot: config.dev_halt_at_slot,
         new_hard_forks: config.new_hard_forks.clone(),
         debug_keys: config.debug_keys.clone(),
@@ -1321,32 +1306,71 @@ fn new_banks_from_ledger(
             TransactionHistoryServices::default()
         };
 
-    let (
-        mut bank_forks,
-        mut leader_schedule_cache,
-        last_full_snapshot_slot,
-        starting_snapshot_hashes,
-    ) = bank_forks_utils::load(
-        &genesis_config,
+    let cache_block_meta_sender = transaction_history_services
+        .cache_block_meta_sender
+        .as_ref();
+
+    let (mut bank_forks, mut leader_schedule_cache, starting_snapshot_hashes) =
+        bank_forks_utils::load_bank_forks(
+            &genesis_config,
+            &blockstore,
+            config.account_paths.clone(),
+            config.account_shrink_paths.clone(),
+            config.snapshot_config.as_ref(),
+            &process_options,
+            cache_block_meta_sender,
+            accounts_update_notifier,
+        );
+
+    leader_schedule_cache.set_fixed_leader_schedule(config.fixed_leader_schedule.clone());
+    bank_forks.set_snapshot_config(config.snapshot_config.clone());
+    bank_forks.set_accounts_hash_interval_slots(config.accounts_hash_interval_slots);
+
+    let last_full_snapshot_slot = blockstore_processor::process_blockstore_from_root(
         &blockstore,
-        config.account_paths.clone(),
-        config.account_shrink_paths.clone(),
-        config.snapshot_config.as_ref(),
-        process_options,
+        &mut bank_forks,
+        &leader_schedule_cache,
+        &process_options,
         transaction_history_services
             .transaction_status_sender
             .as_ref(),
-        transaction_history_services
-            .cache_block_meta_sender
-            .as_ref(),
+        cache_block_meta_sender,
+        config.snapshot_config.as_ref(),
         accounts_package_sender,
-        accounts_update_notifier,
     )
     .unwrap_or_else(|err| {
         error!("Failed to load ledger: {:?}", err);
         abort()
     });
 
+    let last_full_snapshot_slot =
+        last_full_snapshot_slot.or_else(|| starting_snapshot_hashes.map(|x| x.full.hash.0));
+
+    if let Some(blockstore_root_scan) = blockstore_root_scan {
+        if let Err(err) = blockstore_root_scan.join() {
+            warn!("blockstore_root_scan failed to join {:?}", err);
+        }
+    }
+
+    (
+        genesis_config,
+        bank_forks,
+        blockstore,
+        ledger_signal_receiver,
+        completed_slots_receiver,
+        leader_schedule_cache,
+        last_full_snapshot_slot,
+        starting_snapshot_hashes,
+        transaction_history_services,
+    )
+}
+
+fn maybe_warp_slot(
+    config: &ValidatorConfig,
+    ledger_path: &Path,
+    bank_forks: &mut BankForks,
+    leader_schedule_cache: &LeaderScheduleCache,
+) {
     if let Some(warp_slot) = config.warp_slot {
         let snapshot_config = config.snapshot_config.as_ref().unwrap_or_else(|| {
             error!("warp slot requires a snapshot config");
@@ -1395,40 +1419,6 @@ fn new_banks_from_ledger(
             full_snapshot_archive_info.path().display()
         );
     }
-
-    let tower = post_process_restored_tower(
-        restored_tower,
-        validator_identity,
-        vote_account,
-        config,
-        &bank_forks,
-    );
-
-    info!("Tower state: {:?}", tower);
-
-    leader_schedule_cache.set_fixed_leader_schedule(config.fixed_leader_schedule.clone());
-
-    bank_forks.set_snapshot_config(config.snapshot_config.clone());
-    bank_forks.set_accounts_hash_interval_slots(config.accounts_hash_interval_slots);
-
-    if let Some(blockstore_root_scan) = blockstore_root_scan {
-        if let Err(err) = blockstore_root_scan.join() {
-            warn!("blockstore_root_scan failed to join {:?}", err);
-        }
-    }
-
-    (
-        genesis_config,
-        bank_forks,
-        blockstore,
-        ledger_signal_receiver,
-        completed_slots_receiver,
-        leader_schedule_cache,
-        last_full_snapshot_slot,
-        starting_snapshot_hashes,
-        transaction_history_services,
-        tower,
-    )
 }
 
 fn blockstore_contains_bad_shred_version(

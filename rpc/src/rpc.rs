@@ -70,7 +70,8 @@ use {
         system_instruction,
         sysvar::stake_history,
         transaction::{
-            self, AddressLoader, SanitizedTransaction, TransactionError, VersionedTransaction,
+            self, AddressLoader, MessageHash, SanitizedTransaction, TransactionError,
+            VersionedTransaction,
         },
     },
     solana_send_transaction_service::{
@@ -82,8 +83,8 @@ use {
     solana_transaction_status::{
         BlockEncodingOptions, ConfirmedBlock, ConfirmedTransactionStatusWithSignature,
         ConfirmedTransactionWithStatusMeta, EncodedConfirmedTransactionWithStatusMeta, Reward,
-        RewardType, TransactionConfirmationStatus, TransactionStatus, UiConfirmedBlock,
-        UiTransactionEncoding,
+        RewardType, TransactionBinaryEncoding, TransactionConfirmationStatus, TransactionStatus,
+        UiConfirmedBlock, UiTransactionEncoding,
     },
     solana_vote_program::vote_state::{VoteState, MAX_LOCKOUT_HISTORY},
     spl_token::{
@@ -3468,9 +3469,15 @@ pub mod rpc_full {
         ) -> Result<String> {
             debug!("send_transaction rpc request received");
             let config = config.unwrap_or_default();
-            let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let tx_encoding = config.encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
+                Error::invalid_params(format!(
+                    "unsupported encoding: {}. Supported encodings: base58, base64",
+                    tx_encoding
+                ))
+            })?;
             let (wire_transaction, unsanitized_tx) =
-                decode_and_deserialize::<VersionedTransaction>(data, encoding)?;
+                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
 
             let preflight_commitment = config
                 .preflight_commitment
@@ -3568,9 +3575,15 @@ pub mod rpc_full {
         ) -> Result<RpcResponse<RpcSimulateTransactionResult>> {
             debug!("simulate_transaction rpc request received");
             let config = config.unwrap_or_default();
-            let encoding = config.encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let tx_encoding = config.encoding.unwrap_or(UiTransactionEncoding::Base58);
+            let binary_encoding = tx_encoding.into_binary_encoding().ok_or_else(|| {
+                Error::invalid_params(format!(
+                    "unsupported encoding: {}. Supported encodings: base58, base64",
+                    tx_encoding
+                ))
+            })?;
             let (_, mut unsanitized_tx) =
-                decode_and_deserialize::<VersionedTransaction>(data, encoding)?;
+                decode_and_deserialize::<VersionedTransaction>(data, binary_encoding)?;
 
             let bank = &*meta.bank(config.commitment);
             if config.replace_recent_blockhash {
@@ -3804,7 +3817,7 @@ pub mod rpc_full {
         ) -> Result<RpcResponse<Option<u64>>> {
             debug!("get_fee_for_message rpc request received");
             let (_, message) =
-                decode_and_deserialize::<Message>(data, UiTransactionEncoding::Base64)?;
+                decode_and_deserialize::<Message>(data, TransactionBinaryEncoding::Base64)?;
             let sanitized_message = SanitizedMessage::try_from(message).map_err(|err| {
                 Error::invalid_params(format!("invalid transaction message: {}", err))
             })?;
@@ -4206,13 +4219,13 @@ const MAX_BASE58_SIZE: usize = 1683; // Golden, bump if PACKET_DATA_SIZE changes
 const MAX_BASE64_SIZE: usize = 1644; // Golden, bump if PACKET_DATA_SIZE changes
 fn decode_and_deserialize<T>(
     encoded: String,
-    encoding: UiTransactionEncoding,
+    encoding: TransactionBinaryEncoding,
 ) -> Result<(Vec<u8>, T)>
 where
     T: serde::de::DeserializeOwned,
 {
     let wire_output = match encoding {
-        UiTransactionEncoding::Base58 => {
+        TransactionBinaryEncoding::Base58 => {
             inc_new_counter_info!("rpc-base58_encoded_tx", 1);
             if encoded.len() > MAX_BASE58_SIZE {
                 return Err(Error::invalid_params(format!(
@@ -4227,7 +4240,7 @@ where
                 .into_vec()
                 .map_err(|e| Error::invalid_params(format!("{:?}", e)))?
         }
-        UiTransactionEncoding::Base64 => {
+        TransactionBinaryEncoding::Base64 => {
             inc_new_counter_info!("rpc-base64_encoded_tx", 1);
             if encoded.len() > MAX_BASE64_SIZE {
                 return Err(Error::invalid_params(format!(
@@ -4239,12 +4252,6 @@ where
                 )));
             }
             base64::decode(encoded).map_err(|e| Error::invalid_params(format!("{:?}", e)))?
-        }
-        _ => {
-            return Err(Error::invalid_params(format!(
-                "unsupported encoding: {}. Supported encodings: base58, base64",
-                encoding
-            )))
         }
     };
     if wire_output.len() > PACKET_DATA_SIZE {
@@ -4271,10 +4278,9 @@ where
 
 fn sanitize_transaction(
     transaction: VersionedTransaction,
-    address_loader: &impl AddressLoader,
+    address_loader: impl AddressLoader,
 ) -> Result<SanitizedTransaction> {
-    let message_hash = transaction.message.hash();
-    SanitizedTransaction::try_create(transaction, message_hash, None, address_loader)
+    SanitizedTransaction::try_create(transaction, MessageHash::Compute, None, address_loader)
         .map_err(|err| Error::invalid_params(format!("invalid transaction: {}", err)))
 }
 
@@ -4414,7 +4420,7 @@ pub mod tests {
             system_program, system_transaction,
             timing::slot_duration_from_slots_per_year,
             transaction::{
-                self, DisabledAddressLoader, Transaction, TransactionError, TransactionVersion,
+                self, SimpleAddressLoader, Transaction, TransactionError, TransactionVersion,
             },
         },
         solana_transaction_status::{
@@ -7763,7 +7769,8 @@ pub mod tests {
             tx58_len, MAX_BASE58_SIZE, PACKET_DATA_SIZE,
         ));
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, UiTransactionEncoding::Base58).unwrap_err(),
+            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
+                .unwrap_err(),
             expect58
         );
         let tx64 = base64::encode(&tx_ser);
@@ -7773,7 +7780,8 @@ pub mod tests {
             tx64_len, MAX_BASE64_SIZE, PACKET_DATA_SIZE,
         ));
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, UiTransactionEncoding::Base64).unwrap_err(),
+            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err(),
             expect64
         );
         let too_big = PACKET_DATA_SIZE + 1;
@@ -7784,12 +7792,14 @@ pub mod tests {
             too_big, PACKET_DATA_SIZE
         ));
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx58, UiTransactionEncoding::Base58).unwrap_err(),
+            decode_and_deserialize::<Transaction>(tx58, TransactionBinaryEncoding::Base58)
+                .unwrap_err(),
             expect
         );
         let tx64 = base64::encode(&tx_ser);
         assert_eq!(
-            decode_and_deserialize::<Transaction>(tx64, UiTransactionEncoding::Base64).unwrap_err(),
+            decode_and_deserialize::<Transaction>(tx64, TransactionBinaryEncoding::Base64)
+                .unwrap_err(),
             expect
         );
     }
@@ -7804,7 +7814,7 @@ pub mod tests {
 
         let unsanitary_versioned_tx = decode_and_deserialize::<VersionedTransaction>(
             unsanitary_tx58,
-            UiTransactionEncoding::Base58,
+            TransactionBinaryEncoding::Base58,
         )
         .unwrap()
         .1;
@@ -7813,7 +7823,8 @@ pub mod tests {
                 .to_string(),
         );
         assert_eq!(
-            sanitize_transaction(unsanitary_versioned_tx, &DisabledAddressLoader).unwrap_err(),
+            sanitize_transaction(unsanitary_versioned_tx, SimpleAddressLoader::Disabled)
+                .unwrap_err(),
             expect58
         );
     }
@@ -7833,9 +7844,9 @@ pub mod tests {
         };
 
         assert_eq!(
-            sanitize_transaction(versioned_tx, &DisabledAddressLoader).unwrap_err(),
+            sanitize_transaction(versioned_tx, SimpleAddressLoader::Disabled).unwrap_err(),
             Error::invalid_params(
-                "invalid transaction: Transaction version is unsupported".to_string(),
+                "invalid transaction: Transaction loads an address table account that doesn't exist".to_string(),
             )
         );
     }

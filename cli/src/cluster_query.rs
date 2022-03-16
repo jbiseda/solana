@@ -2274,7 +2274,7 @@ pub fn process_transaction_history(
                                 .transaction
                                 .decode()
                                 .expect("Successful decode"),
-                            &confirmed_transaction.transaction.meta,
+                            confirmed_transaction.transaction.meta.as_ref(),
                             "  ",
                             None,
                             None,
