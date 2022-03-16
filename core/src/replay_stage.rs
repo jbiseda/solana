@@ -429,6 +429,7 @@ impl ReplayStage {
                     last_refresh_time: Instant::now(),
                     last_print_time: Instant::now(),
                 };
+                let mut prev_root: Slot = 0;
 
                 loop {
                     // Stop getting entries if we get exit signal
@@ -693,6 +694,7 @@ impl ReplayStage {
                             &mut epoch_slots_frozen_slots,
                             &drop_bank_sender,
                             wait_to_vote_slot,
+                            &mut prev_root,
                         );
                     };
                     voting_time.stop();
@@ -1747,6 +1749,7 @@ impl ReplayStage {
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
         drop_bank_sender: &Sender<Vec<Arc<Bank>>>,
         wait_to_vote_slot: Option<Slot>,
+        prev_root: &mut Slot,
     ) {
         if bank.is_empty() {
             inc_new_counter_info!("replay_stage-voted_empty_bank", 1);
@@ -1814,7 +1817,11 @@ impl ReplayStage {
                 }
             });
             info!("new root {}", new_root);
-            warn!("TRACKING new root {}", new_root);
+            warn!("TRACKING >>> new_root root={} prev={} dist={}", new_root, *prev_root, new_root - *prev_root);
+            if new_root - *prev_root > 1 {
+                warn!("TRACKING >>> new_root skipped {}-{}", *prev_root + 1, new_root - 1);
+            }
+            *prev_root = new_root;
         }
 
         let mut update_commitment_cache_time = Measure::start("update_commitment_cache");
