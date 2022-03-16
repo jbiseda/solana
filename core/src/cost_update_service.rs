@@ -16,39 +16,24 @@ use {
     },
 };
 
-// Update blockstore persistence storage when accumulated cost_table updates count exceeds the threshold
-const PERSIST_THRESHOLD: u64 = 1_000;
-
 #[derive(Default)]
 pub struct CostUpdateServiceTiming {
     last_print: u64,
     update_cost_model_count: u64,
     update_cost_model_elapsed: u64,
-    persist_cost_table_elapsed: u64,
 }
 
 impl CostUpdateServiceTiming {
-    fn update(
-        &mut self,
-        update_cost_model_count: Option<u64>,
-        update_cost_model_elapsed: Option<u64>,
-        persist_cost_table_elapsed: Option<u64>,
-    ) {
-        if let Some(update_cost_model_count) = update_cost_model_count {
-            self.update_cost_model_count += update_cost_model_count;
-        }
-        if let Some(update_cost_model_elapsed) = update_cost_model_elapsed {
-            self.update_cost_model_elapsed += update_cost_model_elapsed;
-        }
-        if let Some(persist_cost_table_elapsed) = persist_cost_table_elapsed {
-            self.persist_cost_table_elapsed += persist_cost_table_elapsed;
-        }
+    fn update(&mut self, update_cost_model_count: u64, update_cost_model_elapsed: u64) {
+        self.update_cost_model_count += update_cost_model_count;
+        self.update_cost_model_elapsed += update_cost_model_elapsed;
 
         let now = timestamp();
         let elapsed_ms = now - self.last_print;
         if elapsed_ms > 1000 {
             datapoint_info!(
                 "cost-update-service-stats",
+                ("total_elapsed_us", elapsed_ms * 1000, i64),
                 (
                     "update_cost_model_count",
                     self.update_cost_model_count as i64,
@@ -57,11 +42,6 @@ impl CostUpdateServiceTiming {
                 (
                     "update_cost_model_elapsed",
                     self.update_cost_model_elapsed as i64,
-                    i64
-                ),
-                (
-                    "persist_cost_table_elapsed",
-                    self.persist_cost_table_elapsed as i64,
                     i64
                 ),
             );
@@ -109,13 +89,11 @@ impl CostUpdateService {
     }
 
     fn service_loop(
-        blockstore: Arc<Blockstore>,
+        _blockstore: Arc<Blockstore>,
         cost_model: Arc<RwLock<CostModel>>,
         cost_update_receiver: CostUpdateReceiver,
     ) {
         let mut cost_update_service_timing = CostUpdateServiceTiming::default();
-        let mut update_count = 0_u64;
-
         for cost_update in cost_update_receiver.iter() {
             match cost_update {
                 CostUpdate::FrozenBank { bank } => {
@@ -124,33 +102,17 @@ impl CostUpdateService {
                 CostUpdate::ExecuteTiming {
                     mut execute_timings,
                 } => {
-                    let mut update_cost_model_time = Measure::start("update_cost_model_time");
-                    update_count += Self::update_cost_model(&cost_model, &mut execute_timings);
-                    update_cost_model_time.stop();
-                    cost_update_service_timing.update(
-                        Some(update_count),
-                        Some(update_cost_model_time.as_us()),
-                        None,
+                    let (update_count, update_cost_model_time) = Measure::this(
+                        |_| Self::update_cost_model(&cost_model, &mut execute_timings),
+                        (),
+                        "update_cost_model_time",
                     );
-
-                    if update_count > PERSIST_THRESHOLD {
-                        let mut persist_cost_table_time = Measure::start("persist_cost_table_time");
-                        Self::persist_cost_table(&blockstore, &cost_model);
-                        update_count = 0_u64;
-                        persist_cost_table_time.stop();
-                        cost_update_service_timing.update(
-                            None,
-                            None,
-                            Some(persist_cost_table_time.as_us()),
-                        );
-                    }
+                    cost_update_service_timing.update(update_count, update_cost_model_time.as_us());
                 }
             }
         }
     }
 
-    // Normalize `program_timings` with current estimated cost, update instruction_cost table
-    // Returns number of updates applied
     fn update_cost_model(
         cost_model: &RwLock<CostModel>,
         execute_timings: &mut ExecuteTimings,
@@ -171,37 +133,12 @@ impl CostUpdateService {
                 .unwrap()
                 .upsert_instruction_cost(program_id, units);
             update_count += 1;
-            debug!(
-                "After replayed into bank, updated cost for instruction {:?}, update_value {}, pre_aggregated_value {}",
-                program_id, units, current_estimated_program_cost
-            );
         }
+        debug!(
+           "after replayed into bank, updated cost model instruction cost table, current values: {:?}",
+           cost_model.read().unwrap().get_instruction_cost_table()
+        );
         update_count
-    }
-
-    // 1. Remove obsolete program entries from persisted table to limit its size
-    // 2. Update persisted program cost. This involves EMA cost calculation at
-    //    execute_cost_table.get_cost()
-    fn persist_cost_table(blockstore: &Blockstore, cost_model: &RwLock<CostModel>) {
-        let db_records = blockstore.read_program_costs().expect("read programs");
-        let cost_model = cost_model.read().unwrap();
-        let active_program_keys = cost_model.get_program_keys();
-
-        // delete records from blockstore if they are no longer in cost_table
-        db_records.iter().for_each(|(pubkey, _)| {
-            if !active_program_keys.contains(&pubkey) {
-                blockstore
-                    .delete_program_cost(pubkey)
-                    .expect("delete old program");
-            }
-        });
-
-        active_program_keys.iter().for_each(|program_id| {
-            let cost = cost_model.find_instruction_cost(program_id);
-            blockstore
-                .write_program_cost(program_id, &cost)
-                .expect("persist program costs to blockstore");
-        });
     }
 }
 
@@ -213,9 +150,15 @@ mod tests {
     fn test_update_cost_model_with_empty_execute_timings() {
         let cost_model = Arc::new(RwLock::new(CostModel::default()));
         let mut empty_execute_timings = ExecuteTimings::default();
+        CostUpdateService::update_cost_model(&cost_model, &mut empty_execute_timings);
+
         assert_eq!(
-            CostUpdateService::update_cost_model(&cost_model, &mut empty_execute_timings),
-            0
+            0,
+            cost_model
+                .read()
+                .unwrap()
+                .get_instruction_cost_table()
+                .len()
         );
     }
 
@@ -233,7 +176,7 @@ mod tests {
             let accumulated_units: u64 = 100;
             let total_errored_units = 0;
             let count: u32 = 10;
-            expected_cost = accumulated_units / count as u64; // = 10
+            expected_cost = accumulated_units / count as u64;
 
             execute_timings.details.per_program_timings.insert(
                 program_key_1,
@@ -245,15 +188,22 @@ mod tests {
                     total_errored_units,
                 },
             );
-            let update_count =
-                CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
-            assert_eq!(1, update_count);
+            CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
             assert_eq!(
-                expected_cost,
+                1,
                 cost_model
                     .read()
                     .unwrap()
-                    .find_instruction_cost(&program_key_1)
+                    .get_instruction_cost_table()
+                    .len()
+            );
+            assert_eq!(
+                Some(&expected_cost),
+                cost_model
+                    .read()
+                    .unwrap()
+                    .get_instruction_cost_table()
+                    .get(&program_key_1)
             );
         }
 
@@ -262,8 +212,8 @@ mod tests {
             let accumulated_us: u64 = 2000;
             let accumulated_units: u64 = 200;
             let count: u32 = 10;
-            // to expect new cost = (mean + 2 * std) of [10, 20]
-            expected_cost = 13;
+            // to expect new cost is Average(new_value, existing_value)
+            expected_cost = ((accumulated_units / count as u64) + expected_cost) / 2;
 
             execute_timings.details.per_program_timings.insert(
                 program_key_1,
@@ -275,15 +225,22 @@ mod tests {
                     total_errored_units: 0,
                 },
             );
-            let update_count =
-                CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
-            assert_eq!(1, update_count);
+            CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
             assert_eq!(
-                expected_cost,
+                1,
                 cost_model
                     .read()
                     .unwrap()
-                    .find_instruction_cost(&program_key_1)
+                    .get_instruction_cost_table()
+                    .len()
+            );
+            assert_eq!(
+                Some(&expected_cost),
+                cost_model
+                    .read()
+                    .unwrap()
+                    .get_instruction_cost_table()
+                    .get(&program_key_1)
             );
         }
     }
@@ -307,49 +264,20 @@ mod tests {
                     total_errored_units: 0,
                 },
             );
+            CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
             // If both the `errored_txs_compute_consumed` is empty and `count == 0`, then
             // nothing should be inserted into the cost model
-            assert_eq!(
-                CostUpdateService::update_cost_model(&cost_model, &mut execute_timings),
-                0
-            );
-        }
-
-        // set up current instruction cost to 100
-        let current_program_cost = 100;
-        {
-            execute_timings.details.per_program_timings.insert(
-                program_key_1,
-                ProgramTiming {
-                    accumulated_us: 1000,
-                    accumulated_units: current_program_cost,
-                    count: 1,
-                    errored_txs_compute_consumed: vec![],
-                    total_errored_units: 0,
-                },
-            );
-            let update_count =
-                CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
-            assert_eq!(1, update_count);
-            assert_eq!(
-                current_program_cost,
-                cost_model
-                    .read()
-                    .unwrap()
-                    .find_instruction_cost(&program_key_1)
-            );
+            assert!(cost_model
+                .read()
+                .unwrap()
+                .get_instruction_cost_table()
+                .is_empty());
         }
 
         // Test updating cost model with only erroring compute costs where the `cost_per_error` is
         // greater than the current instruction cost for the program. Should update with the
         // new erroring compute costs
         let cost_per_error = 1000;
-        // expected_cost = (mean + 2*std) of data points:
-        // [
-        //  100,  // original program_cost
-        //  1000, // cost_per_error
-        // ]
-        let expected_cost = 289u64;
         {
             let errored_txs_compute_consumed = vec![cost_per_error; 3];
             let total_errored_units = errored_txs_compute_consumed.iter().sum();
@@ -363,23 +291,29 @@ mod tests {
                     total_errored_units,
                 },
             );
-            let update_count =
-                CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
-
-            assert_eq!(1, update_count);
+            CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
             assert_eq!(
-                expected_cost,
+                1,
                 cost_model
                     .read()
                     .unwrap()
-                    .find_instruction_cost(&program_key_1)
+                    .get_instruction_cost_table()
+                    .len()
+            );
+            assert_eq!(
+                Some(&cost_per_error),
+                cost_model
+                    .read()
+                    .unwrap()
+                    .get_instruction_cost_table()
+                    .get(&program_key_1)
             );
         }
 
         // Test updating cost model with only erroring compute costs where the error cost is
         // `smaller_cost_per_error`, less than the current instruction cost for the program.
         // The cost should not decrease for these new lesser errors
-        let smaller_cost_per_error = expected_cost - 10;
+        let smaller_cost_per_error = cost_per_error - 10;
         {
             let errored_txs_compute_consumed = vec![smaller_cost_per_error; 3];
             let total_errored_units = errored_txs_compute_consumed.iter().sum();
@@ -393,23 +327,22 @@ mod tests {
                     total_errored_units,
                 },
             );
-            let update_count =
-                CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
-
-            // expected_cost = (mean = 2*std) of data points:
-            // [
-            //  100,  // original program cost,
-            //  1000, // cost_per_error from above test
-            //  289, // the smaller_cost_per_error will be coalesced to prev cost
-            // ]
-            let expected_cost = 293u64;
-            assert_eq!(1, update_count);
+            CostUpdateService::update_cost_model(&cost_model, &mut execute_timings);
             assert_eq!(
-                expected_cost,
+                1,
                 cost_model
                     .read()
                     .unwrap()
-                    .find_instruction_cost(&program_key_1)
+                    .get_instruction_cost_table()
+                    .len()
+            );
+            assert_eq!(
+                Some(&cost_per_error),
+                cost_model
+                    .read()
+                    .unwrap()
+                    .get_instruction_cost_table()
+                    .get(&program_key_1)
             );
         }
     }

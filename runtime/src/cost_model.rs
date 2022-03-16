@@ -11,6 +11,7 @@ use {
         instruction::CompiledInstruction, program_utils::limited_deserialize, pubkey::Pubkey,
         system_instruction::SystemInstruction, system_program, transaction::SanitizedTransaction,
     },
+    std::collections::HashMap,
 };
 
 const MAX_WRITABLE_ACCOUNTS: usize = 256;
@@ -78,9 +79,12 @@ impl CostModel {
             .map(|(key, cost)| (key, cost))
             .chain(BUILT_IN_INSTRUCTION_COSTS.iter())
             .for_each(|(program_id, cost)| {
-                self.instruction_execution_cost_table
-                    .upsert(program_id, *cost);
+                self.upsert_instruction_cost(program_id, *cost);
             });
+        debug!(
+            "restored cost model instruction cost table from blockstore, current values: {:?}",
+            self.get_instruction_cost_table()
+        );
     }
 
     pub fn calculate_cost(&self, transaction: &SanitizedTransaction) -> TransactionCost {
@@ -96,29 +100,27 @@ impl CostModel {
         tx_cost
     }
 
-    // update-or-insert op is always successful. However the result of upsert, eg the aggregated
-    // value, requires additional calculation, which should only be envoked when needed.
     pub fn upsert_instruction_cost(&mut self, program_key: &Pubkey, cost: u64) {
         self.instruction_execution_cost_table
             .upsert(program_key, cost);
     }
 
+    pub fn get_instruction_cost_table(&self) -> &HashMap<Pubkey, u64> {
+        self.instruction_execution_cost_table.get_cost_table()
+    }
+
     pub fn find_instruction_cost(&self, program_key: &Pubkey) -> u64 {
         match self.instruction_execution_cost_table.get_cost(program_key) {
-            Some(cost) => cost,
+            Some(cost) => *cost,
             None => {
-                let default_value = self.instruction_execution_cost_table.get_default();
+                let default_value = self.instruction_execution_cost_table.get_mode();
                 debug!(
-                    "instruction {:?} does not have aggregated cost, using default {}",
+                    "Program key {:?} does not have assigned cost, using mode {}",
                     program_key, default_value
                 );
                 default_value
             }
         }
-    }
-
-    pub fn get_program_keys(&self) -> Vec<&Pubkey> {
-        self.instruction_execution_cost_table.get_program_keys()
     }
 
     fn get_signature_cost(&self, transaction: &SanitizedTransaction) -> u64 {
@@ -244,7 +246,6 @@ mod tests {
             transaction::Transaction,
         },
         std::{
-            collections::HashMap,
             str::FromStr,
             sync::{Arc, RwLock},
             thread::{self, JoinHandle},
@@ -277,40 +278,11 @@ mod tests {
 
         // unknown program is assigned with default cost
         assert_eq!(
-            testee.instruction_execution_cost_table.get_default(),
+            testee.instruction_execution_cost_table.get_mode(),
             testee.find_instruction_cost(
                 &Pubkey::from_str("unknown111111111111111111111111111111111111").unwrap()
             )
         );
-    }
-
-    #[test]
-    fn test_iterating_instruction_cost_by_program_keys() {
-        solana_logger::setup();
-        let mut testee = CostModel::default();
-
-        let mut test_key_and_cost = HashMap::<Pubkey, u64>::new();
-        (0u64..10u64).for_each(|n| {
-            test_key_and_cost.insert(Pubkey::new_unique(), n);
-        });
-
-        test_key_and_cost.iter().for_each(|(key, cost)| {
-            testee.upsert_instruction_cost(key, *cost);
-            info!("key {:?} cost {}", key, cost);
-        });
-
-        let keys = testee.get_program_keys();
-        // verify each key has pre-set value
-        keys.iter().for_each(|key| {
-            let expected_cost = test_key_and_cost.get(key).unwrap();
-            info!(
-                "check key {:?} expect {} find {}",
-                key,
-                expected_cost,
-                testee.find_instruction_cost(key)
-            );
-            assert_eq!(*expected_cost, testee.find_instruction_cost(key));
-        });
     }
 
     #[test]
@@ -437,7 +409,7 @@ mod tests {
         let result = testee.get_transaction_cost(&tx);
 
         // expected cost for two random/unknown program is
-        let expected_cost = testee.instruction_execution_cost_table.get_default() * 2;
+        let expected_cost = testee.instruction_execution_cost_table.get_mode() * 2;
         assert_eq!(expected_cost, result);
     }
 
@@ -481,14 +453,14 @@ mod tests {
         let mut cost_model = CostModel::default();
         // Using default cost for unknown instruction
         assert_eq!(
-            cost_model.instruction_execution_cost_table.get_default(),
+            cost_model.instruction_execution_cost_table.get_mode(),
             cost_model.find_instruction_cost(&key1)
         );
 
         // insert instruction cost to table
         cost_model.upsert_instruction_cost(&key1, cost1);
 
-        // now it is known insturction with known cost
+        // now it is known instruction with known cost
         assert_eq!(cost1, cost_model.find_instruction_cost(&key1));
     }
 
@@ -518,8 +490,7 @@ mod tests {
         let key1 = Pubkey::new_unique();
         let cost1 = 100;
         let cost2 = 200;
-        // updated_cost = (mean + 2*std) of [100, 200] => 120.899
-        let updated_cost = 121;
+        let updated_cost = (cost1 + cost2) / 2;
 
         let mut cost_model = CostModel::default();
 

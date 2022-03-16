@@ -16,6 +16,7 @@ use {
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
         ledger_cleanup_service::LedgerCleanupService,
+        ledger_metric_report_service::LedgerMetricReportService,
         replay_stage::{ReplayStage, ReplayStageConfig},
         retransmit_stage::RetransmitStage,
         rewards_recorder_service::RewardsRecorderSender,
@@ -26,7 +27,7 @@ use {
         voting_service::VotingService,
     },
     crossbeam_channel::{unbounded, Receiver},
-    solana_accountsdb_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierLock,
+    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierLock,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::Blockstore, blockstore_processor::TransactionStatusSender,
@@ -70,6 +71,7 @@ pub struct Tvu {
     retransmit_stage: RetransmitStage,
     replay_stage: ReplayStage,
     ledger_cleanup_service: Option<LedgerCleanupService>,
+    ledger_metric_report_service: LedgerMetricReportService,
     accounts_background_service: AccountsBackgroundService,
     accounts_hash_verifier: AccountsHashVerifier,
     cost_update_service: CostUpdateService,
@@ -213,14 +215,6 @@ impl Tvu {
 
         let (ledger_cleanup_slot_sender, ledger_cleanup_slot_receiver) = unbounded();
 
-        let snapshot_interval_slots = {
-            if let Some(config) = bank_forks.read().unwrap().snapshot_config() {
-                config.full_snapshot_archive_interval_slots
-            } else {
-                std::u64::MAX
-            }
-        };
-        info!("snapshot_interval_slots: {}", snapshot_interval_slots);
         let (snapshot_config, pending_snapshot_package) = snapshot_config_and_pending_package
             .map(|(snapshot_config, pending_snapshot_package)| {
                 (Some(snapshot_config), Some(pending_snapshot_package))
@@ -357,6 +351,8 @@ impl Tvu {
             )
         });
 
+        let ledger_metric_report_service = LedgerMetricReportService::new(blockstore, exit);
+
         let accounts_background_service = AccountsBackgroundService::new(
             bank_forks.clone(),
             exit,
@@ -373,6 +369,7 @@ impl Tvu {
             retransmit_stage,
             replay_stage,
             ledger_cleanup_service,
+            ledger_metric_report_service,
             accounts_background_service,
             accounts_hash_verifier,
             cost_update_service,
@@ -389,6 +386,7 @@ impl Tvu {
         if self.ledger_cleanup_service.is_some() {
             self.ledger_cleanup_service.unwrap().join()?;
         }
+        self.ledger_metric_report_service.join()?;
         self.accounts_background_service.join()?;
         self.replay_stage.join()?;
         self.accounts_hash_verifier.join()?;

@@ -39,14 +39,35 @@ pub struct TransactionAccountLocks<'a> {
     pub writable: Vec<&'a Pubkey>,
 }
 
-pub trait AddressLoader {
-    fn load_addresses(&self, lookups: &[MessageAddressTableLookup]) -> Result<LoadedAddresses>;
+pub trait AddressLoader: Clone {
+    fn load_addresses(self, lookups: &[MessageAddressTableLookup]) -> Result<LoadedAddresses>;
 }
 
-pub struct DisabledAddressLoader;
-impl AddressLoader for DisabledAddressLoader {
-    fn load_addresses(&self, _lookups: &[MessageAddressTableLookup]) -> Result<LoadedAddresses> {
-        Err(TransactionError::UnsupportedVersion)
+#[derive(Clone)]
+pub enum SimpleAddressLoader {
+    Disabled,
+    Enabled(LoadedAddresses),
+}
+
+impl AddressLoader for SimpleAddressLoader {
+    fn load_addresses(self, _lookups: &[MessageAddressTableLookup]) -> Result<LoadedAddresses> {
+        match self {
+            Self::Disabled => Err(TransactionError::AddressLookupTableNotFound),
+            Self::Enabled(loaded_addresses) => Ok(loaded_addresses),
+        }
+    }
+}
+
+/// Type that represents whether the transaction message has been precomputed or
+/// not.
+pub enum MessageHash {
+    Precomputed(Hash),
+    Compute,
+}
+
+impl From<Hash> for MessageHash {
+    fn from(hash: Hash) -> Self {
+        Self::Precomputed(hash)
     }
 }
 
@@ -56,19 +77,25 @@ impl SanitizedTransaction {
     /// the address for each table index.
     pub fn try_create(
         tx: VersionedTransaction,
-        message_hash: Hash,
+        message_hash: impl Into<MessageHash>,
         is_simple_vote_tx: Option<bool>,
-        address_loader: &impl AddressLoader,
+        address_loader: impl AddressLoader,
     ) -> Result<Self> {
         tx.sanitize()?;
+
+        let message_hash = match message_hash.into() {
+            MessageHash::Compute => tx.message.hash(),
+            MessageHash::Precomputed(hash) => hash,
+        };
 
         let signatures = tx.signatures;
         let message = match tx.message {
             VersionedMessage::Legacy(message) => SanitizedMessage::Legacy(message),
-            VersionedMessage::V0(message) => SanitizedMessage::V0(v0::LoadedMessage {
-                loaded_addresses: address_loader.load_addresses(&message.address_table_lookups)?,
-                message,
-            }),
+            VersionedMessage::V0(message) => {
+                let loaded_addresses =
+                    address_loader.load_addresses(&message.address_table_lookups)?;
+                SanitizedMessage::V0(v0::LoadedMessage::new(message, loaded_addresses))
+            }
         };
 
         let is_simple_vote_tx = is_simple_vote_tx.unwrap_or_else(|| {
@@ -139,7 +166,7 @@ impl SanitizedTransaction {
         match &self.message {
             SanitizedMessage::V0(sanitized_msg) => VersionedTransaction {
                 signatures,
-                message: VersionedMessage::V0(sanitized_msg.message.clone()),
+                message: VersionedMessage::V0(v0::Message::clone(&sanitized_msg.message)),
             },
             SanitizedMessage::Legacy(message) => VersionedTransaction {
                 signatures,
@@ -191,7 +218,7 @@ impl SanitizedTransaction {
     pub fn get_loaded_addresses(&self) -> LoadedAddresses {
         match &self.message {
             SanitizedMessage::Legacy(_) => LoadedAddresses::default(),
-            SanitizedMessage::V0(message) => message.loaded_addresses.clone(),
+            SanitizedMessage::V0(message) => LoadedAddresses::clone(&message.loaded_addresses),
         }
     }
 
@@ -204,7 +231,7 @@ impl SanitizedTransaction {
     fn message_data(&self) -> Vec<u8> {
         match &self.message {
             SanitizedMessage::Legacy(message) => message.serialize(),
-            SanitizedMessage::V0(message) => message.serialize(),
+            SanitizedMessage::V0(loaded_msg) => loaded_msg.message.serialize(),
         }
     }
 

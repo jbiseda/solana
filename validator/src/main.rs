@@ -32,7 +32,10 @@ use {
         cluster_info::{Node, VALIDATOR_PORT_RANGE},
         contact_info::ContactInfo,
     },
-    solana_ledger::blockstore_db::BlockstoreRecoveryMode,
+    solana_ledger::blockstore_db::{
+        BlockstoreAdvancedOptions, BlockstoreRecoveryMode, BlockstoreRocksFifoOptions,
+        ShredStorageType, DEFAULT_ROCKS_FIFO_SHRED_STORAGE_SIZE_BYTES,
+    },
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_replica_lib::accountsdb_repl_server::AccountsDbReplServiceConfig,
@@ -451,6 +454,8 @@ pub fn main() {
     let default_accounts_shrink_optimize_total_space =
         &DEFAULT_ACCOUNTS_SHRINK_OPTIMIZE_TOTAL_SPACE.to_string();
     let default_accounts_shrink_ratio = &DEFAULT_ACCOUNTS_SHRINK_RATIO.to_string();
+    let default_rocksdb_fifo_shred_storage_size =
+        &DEFAULT_ROCKS_FIFO_SHRED_STORAGE_SIZE_BYTES.to_string();
 
     let matches = App::new(crate_name!()).about(crate_description!())
         .version(solana_version::version!())
@@ -921,6 +926,11 @@ pub fn main() {
                 .help("Skip checks for OS network limits.")
         )
         .arg(
+            Arg::with_name("no_os_memory_stats_reporting")
+                .long("no-os-memory-stats-reporting")
+                .help("Disable reporting of OS memory statistics.")
+        )
+        .arg(
             Arg::with_name("no_os_network_stats_reporting")
                 .long("no-os-network-stats-reporting")
                 .help("Disable reporting of OS network statistics.")
@@ -959,6 +969,32 @@ pub fn main() {
                 .max_values(1)
                 /* .default_value() intentionally not used here! */
                 .help("Keep this amount of shreds in root slots."),
+        )
+        .arg(
+            Arg::with_name("rocksdb_shred_compaction")
+                .hidden(true)
+                .long("rocksdb-shred-compaction")
+                .value_name("ROCKSDB_COMPACTION_STYLE")
+                .takes_value(true)
+                .possible_values(&["level", "fifo"])
+                .default_value("level")
+                .help("EXPERIMENTAL: Controls how RocksDB compacts shreds. \
+                       *WARNING*: You will lose your ledger data when you switch between options. \
+                       Possible values are: \
+                       'level': stores shreds using RocksDB's default (level) compaction. \
+                       'fifo': stores shreds under RocksDB's FIFO compaction. \
+                           This option is more efficient on disk-write-bytes of the ledger store."),
+        )
+        .arg(
+            Arg::with_name("rocksdb_fifo_shred_storage_size")
+                .hidden(true)
+                .long("rocksdb-fifo-shred-storage-size")
+                .value_name("SHRED_STORAGE_SIZE_BYTES")
+                .takes_value(true)
+                .validator(is_parsable::<u64>)
+                .default_value(default_rocksdb_fifo_shred_storage_size)
+                .help("The shred storage size in bytes. \
+                       The suggested value is 50% of your ledger storage size in bytes."),
         )
         .arg(
             Arg::with_name("skip_poh_verify")
@@ -1339,12 +1375,13 @@ pub fn main() {
                 .help("Number of threads to use for servicing AccountsDb Replication requests"),
         )
         .arg(
-            Arg::with_name("accountsdb_plugin_config")
-                .long("accountsdb-plugin-config")
+            Arg::with_name("geyser_plugin_config")
+                .long("geyser-plugin-config")
+                .alias("accountsdb-plugin-config")
                 .value_name("FILE")
                 .takes_value(true)
                 .multiple(true)
-                .help("Specify the configuration file for the AccountsDb plugin."),
+                .help("Specify the configuration file for the Geyser plugin."),
         )
         .arg(
             Arg::with_name("halt_on_known_validators_accounts_hash_mismatch")
@@ -2069,7 +2106,7 @@ pub fn main() {
     let accounts_shrink_ratio = if accounts_shrink_optimize_total_space {
         AccountShrinkThreshold::TotalSpace { shrink_ratio }
     } else {
-        AccountShrinkThreshold::IndividalStore { shrink_ratio }
+        AccountShrinkThreshold::IndividualStore { shrink_ratio }
     };
     let entrypoint_addrs = values_t!(matches, "entrypoint", String)
         .unwrap_or_default()
@@ -2083,6 +2120,12 @@ pub fn main() {
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
+    for addr in &entrypoint_addrs {
+        if !socket_addr_space.check(addr) {
+            eprintln!("invalid entrypoint address: {}", addr);
+            exit(1);
+        }
+    }
     // TODO: Once entrypoints are updated to return shred-version, this should
     // abort if it fails to obtain a shred-version, so that nodes always join
     // gossip with a valid shred-version. The code to adopt entrypoint shred
@@ -2203,9 +2246,9 @@ pub fn main() {
         None
     };
 
-    let accountsdb_plugin_config_files = if matches.is_present("accountsdb_plugin_config") {
+    let geyser_plugin_config_files = if matches.is_present("geyser_plugin_config") {
         Some(
-            values_t_or_exit!(matches, "accountsdb_plugin_config", String)
+            values_t_or_exit!(matches, "geyser_plugin_config", String)
                 .into_iter()
                 .map(PathBuf::from)
                 .collect(),
@@ -2260,7 +2303,7 @@ pub fn main() {
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
         },
         accountsdb_repl_service_config,
-        accountsdb_plugin_config_files,
+        geyser_plugin_config_files,
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {
             (
                 SocketAddr::new(rpc_bind_address, rpc_port),
@@ -2324,6 +2367,7 @@ pub fn main() {
             ),
         },
         no_poh_speed_test: matches.is_present("no_poh_speed_test"),
+        no_os_memory_stats_reporting: matches.is_present("no_os_memory_stats_reporting"),
         no_os_network_stats_reporting: matches.is_present("no_os_network_stats_reporting"),
         poh_pinned_cpu_core: value_of(&matches, "poh_pinned_cpu_core")
             .unwrap_or(poh_service::DEFAULT_PINNED_CPU_CORE),
@@ -2521,6 +2565,27 @@ pub fn main() {
         }
         validator_config.max_ledger_shreds = Some(limit_ledger_size);
     }
+
+    validator_config.blockstore_advanced_options = BlockstoreAdvancedOptions {
+        shred_storage_type: match matches.value_of("rocksdb_shred_compaction") {
+            None => ShredStorageType::default(),
+            Some(shred_compaction_string) => match shred_compaction_string {
+                "level" => ShredStorageType::RocksLevel,
+                "fifo" => {
+                    let shred_storage_size =
+                        value_t_or_exit!(matches, "rocksdb_fifo_shred_storage_size", u64);
+                    ShredStorageType::RocksFifo(BlockstoreRocksFifoOptions {
+                        shred_data_cf_size: shred_storage_size / 2,
+                        shred_code_cf_size: shred_storage_size / 2,
+                    })
+                }
+                _ => panic!(
+                    "Unrecognized rocksdb-shred-compaction: {}",
+                    shred_compaction_string
+                ),
+            },
+        },
+    };
 
     if matches.is_present("halt_on_known_validators_accounts_hash_mismatch") {
         validator_config.halt_on_known_validators_accounts_hash_mismatch = true;

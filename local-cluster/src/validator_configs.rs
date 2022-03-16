@@ -15,7 +15,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         account_shrink_paths: config.account_shrink_paths.clone(),
         rpc_config: config.rpc_config.clone(),
         accountsdb_repl_service_config: config.accountsdb_repl_service_config.clone(),
-        accountsdb_plugin_config_files: config.accountsdb_plugin_config_files.clone(),
+        geyser_plugin_config_files: config.geyser_plugin_config_files.clone(),
         rpc_addrs: config.rpc_addrs,
         pubsub_config: config.pubsub_config.clone(),
         snapshot_config: config.snapshot_config.clone(),
@@ -47,6 +47,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         bpf_jit: config.bpf_jit,
         send_transaction_service_config: config.send_transaction_service_config.clone(),
         no_poh_speed_test: config.no_poh_speed_test,
+        no_os_memory_stats_reporting: config.no_os_memory_stats_reporting,
         no_os_network_stats_reporting: config.no_os_network_stats_reporting,
         poh_pinned_cpu_core: config.poh_pinned_cpu_core,
         account_indexes: config.account_indexes.clone(),
@@ -62,6 +63,7 @@ pub fn safe_clone_config(config: &ValidatorConfig) -> ValidatorConfig {
         accounts_shrink_ratio: config.accounts_shrink_ratio,
         accounts_db_config: config.accounts_db_config.clone(),
         wait_to_vote_slot: config.wait_to_vote_slot,
+        blockstore_advanced_options: config.blockstore_advanced_options.clone(),
     }
 }
 
