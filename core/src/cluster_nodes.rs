@@ -98,6 +98,14 @@ fn get_parent_index(index: usize, fanout: usize) -> Option<usize> {
         return None;
     }
     let offset = index % fanout;
+    /*
+    let anchor = index - offset;
+    let neighborhood = anchor / fanout - 1;
+    let neighborhood_offset = neighborhood % fanout;
+    let parent_anchor = neighborhood - neighborhood_offset;
+    let parent_index = parent_anchor + offset;
+    Some(parent_index)
+    */
     Some((index / fanout / fanout) * fanout + offset)
 }
 
