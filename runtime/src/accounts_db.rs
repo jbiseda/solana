@@ -57,7 +57,7 @@ use {
     solana_measure::measure::Measure,
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::{
-        account::{AccountSharedData, ReadableAccount},
+        account::{AccountSharedData, ReadableAccount, WritableAccount},
         clock::{BankId, Epoch, Slot, SlotCount},
         epoch_schedule::EpochSchedule,
         genesis_config::{ClusterType, GenesisConfig},
@@ -415,7 +415,7 @@ pub enum LoadedAccountAccessor<'a> {
     Cached(Option<Cow<'a, CachedAccount>>),
 }
 
-mod accountsdb_plugin_utils;
+mod geyser_plugin_utils;
 
 impl<'a> LoadedAccountAccessor<'a> {
     fn check_and_get_loaded_account(&mut self) -> LoadedAccount {
@@ -564,6 +564,19 @@ impl<'a> ReadableAccount for LoadedAccount<'a> {
                 stored_account_meta.account_meta.rent_epoch
             }
             LoadedAccount::Cached(cached_account) => cached_account.account.rent_epoch(),
+        }
+    }
+    fn to_account_shared_data(&self) -> AccountSharedData {
+        match self {
+            LoadedAccount::Stored(_stored_account_meta) => AccountSharedData::create(
+                self.lamports(),
+                self.data().to_vec(),
+                *self.owner(),
+                self.executable(),
+                self.rent_epoch(),
+            ),
+            // clone here to prevent data copy
+            LoadedAccount::Cached(cached_account) => cached_account.account.clone(),
         }
     }
 }
@@ -1072,7 +1085,7 @@ pub struct AccountsDb {
     /// for incremental snapshot support.
     zero_lamport_accounts_to_purge_after_full_snapshot: DashSet<(Slot, Pubkey)>,
 
-    /// AccountsDbPlugin accounts update notifier
+    /// GeyserPlugin accounts update notifier
     accounts_update_notifier: Option<AccountsUpdateNotifier>,
 
     filler_account_count: usize,
@@ -6692,14 +6705,14 @@ impl AccountsDb {
                 let pubkey = stored_account.meta.pubkey;
                 assert!(!self.is_filler_account(&pubkey));
                 match accounts_map.entry(pubkey) {
-                    std::collections::hash_map::Entry::Vacant(entry) => {
+                    Entry::Vacant(entry) => {
                         entry.insert(IndexAccountMapEntry {
                             write_version: this_version,
                             store_id: storage.append_vec_id(),
                             stored_account,
                         });
                     }
-                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    Entry::Occupied(mut entry) => {
                         let occupied_version = entry.get().write_version;
                         if occupied_version < this_version {
                             entry.insert(IndexAccountMapEntry {
@@ -6841,11 +6854,17 @@ impl AccountsDb {
             return;
         }
 
+        let max_root_inclusive = self.accounts_index.max_root_inclusive();
+        let epoch = epoch_schedule.get_epoch(max_root_inclusive);
+
         info!("adding {} filler accounts", self.filler_account_count);
         // break this up to force the accounts out of memory after each pass
         let passes = 100;
         let mut roots = self.storage.all_slots();
-        Self::retain_roots_within_one_epoch_range(&mut roots, epoch_schedule.slots_per_epoch);
+        Self::retain_roots_within_one_epoch_range(
+            &mut roots,
+            epoch_schedule.get_slots_in_epoch(epoch),
+        );
         let root_count = roots.len();
         let per_pass = std::cmp::max(1, root_count / passes);
         let overall_index = AtomicUsize::new(0);

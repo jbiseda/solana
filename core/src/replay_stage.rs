@@ -27,9 +27,9 @@ use {
         window_service::DuplicateSlotReceiver,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError, Sender},
-    solana_accountsdb_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierLock,
     solana_client::rpc_response::SlotUpdate,
     solana_entry::entry::VerifyRecyclers,
+    solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierLock,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         block_error::BlockError,
@@ -1745,7 +1745,7 @@ impl ReplayStage {
         replay_timing: &mut ReplayTiming,
         voting_sender: &Sender<VoteOp>,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
-        bank_drop_sender: &Sender<Vec<Arc<Bank>>>,
+        drop_bank_sender: &Sender<Vec<Arc<Bank>>>,
         wait_to_vote_slot: Option<Slot>,
     ) {
         if bank.is_empty() {
@@ -1797,7 +1797,7 @@ impl ReplayStage {
                 has_new_vote_been_rooted,
                 vote_signatures,
                 epoch_slots_frozen_slots,
-                bank_drop_sender,
+                drop_bank_sender,
                 Some(blockstore),
             );
 
@@ -2938,8 +2938,7 @@ impl ReplayStage {
         has_new_vote_been_rooted: &mut bool,
         voted_signatures: &mut Vec<Signature>,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
-        bank_drop_sender: &Sender<Vec<Arc<Bank>>>,
-        blockstore: Option<&Blockstore>,
+        drop_bank_sender: &Sender<Vec<Arc<Bank>>>,
     ) {
         let removed_banks = bank_forks.write().unwrap().set_root(
             new_root,
@@ -2953,7 +2952,7 @@ impl ReplayStage {
             blockstore.remove_cached_completed_unrepaired_slots(&removed_slots);
         }
 
-        bank_drop_sender
+        drop_bank_sender
             .send(removed_banks)
             .unwrap_or_else(|err| warn!("bank drop failed: {:?}", err));
 
@@ -3464,7 +3463,7 @@ pub mod tests {
             .into_iter()
             .map(|slot| (slot, Hash::default()))
             .collect();
-        let (bank_drop_sender, _bank_drop_receiver) = unbounded();
+        let (drop_bank_sender, _drop_bank_receiver) = unbounded();
         ReplayStage::handle_new_root(
             root,
             &bank_forks,
@@ -3478,7 +3477,7 @@ pub mod tests {
             &mut true,
             &mut Vec::new(),
             &mut epoch_slots_frozen_slots,
-            &bank_drop_sender,
+            &drop_bank_sender,
             None,
         );
         assert_eq!(bank_forks.read().unwrap().root(), root);
@@ -3546,7 +3545,7 @@ pub mod tests {
         for i in 0..=root {
             progress.insert(i, ForkProgress::new(Hash::default(), None, None, 0, 0));
         }
-        let (bank_drop_sender, _bank_drop_receiver) = unbounded();
+        let (drop_bank_sender, _drop_bank_receiver) = unbounded();
         ReplayStage::handle_new_root(
             root,
             &bank_forks,
@@ -3560,7 +3559,7 @@ pub mod tests {
             &mut true,
             &mut Vec::new(),
             &mut EpochSlotsFrozenSlots::default(),
-            &bank_drop_sender,
+            &drop_bank_sender,
             None,
         );
         assert_eq!(bank_forks.read().unwrap().root(), root);

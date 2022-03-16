@@ -46,6 +46,7 @@ use {
         feature_set,
         message::Message,
         pubkey::Pubkey,
+        saturating_add_assign,
         timing::{duration_as_ms, timestamp, AtomicInterval},
         transaction::{
             self, AddressLoader, SanitizedTransaction, TransactionError, VersionedTransaction,
@@ -57,7 +58,7 @@ use {
     },
     std::{
         cmp,
-        collections::{HashMap, VecDeque},
+        collections::HashMap,
         env,
         net::{SocketAddr, UdpSocket},
         sync::{
@@ -325,11 +326,26 @@ impl BankingStageStats {
 }
 
 #[derive(Debug, Default)]
+pub struct BatchedTransactionDetails {
+    pub costs: BatchedTransactionCostDetails,
+    pub errors: BatchedTransactionErrorDetails,
+}
+
+#[derive(Debug, Default)]
 pub struct BatchedTransactionCostDetails {
     pub batched_signature_cost: u64,
     pub batched_write_lock_cost: u64,
     pub batched_data_bytes_cost: u64,
     pub batched_execute_cost: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct BatchedTransactionErrorDetails {
+    pub batched_retried_txs_per_block_limit_count: u64,
+    pub batched_retried_txs_per_vote_limit_count: u64,
+    pub batched_retried_txs_per_account_limit_count: u64,
+    pub batched_retried_txs_per_account_data_block_limit_count: u64,
+    pub batched_dropped_txs_per_account_data_total_limit_count: u64,
 }
 
 #[derive(Debug, Default)]
@@ -943,7 +959,7 @@ impl BankingStage {
     ) {
         let recorder = poh_recorder.lock().unwrap().recorder();
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-        let mut buffered_packet_batches = VecDeque::with_capacity(batch_limit);
+        let mut buffered_packet_batches = UnprocessedPacketBatches::with_capacity(batch_limit);
         let mut banking_stage_stats = BankingStageStats::new(id);
         let qos_service = QosService::new(cost_model, id);
         let mut slot_metrics_tracker = LeaderSlotMetricsTracker::new(id);
@@ -1415,27 +1431,74 @@ impl BankingStage {
     fn accumulate_batched_transaction_costs<'a>(
         transactions_costs: impl Iterator<Item = &'a TransactionCost>,
         transaction_results: impl Iterator<Item = &'a transaction::Result<()>>,
-    ) -> BatchedTransactionCostDetails {
-        let mut cost_details = BatchedTransactionCostDetails::default();
+    ) -> BatchedTransactionDetails {
+        let mut batched_transaction_details = BatchedTransactionDetails::default();
         transactions_costs
             .zip(transaction_results)
-            .for_each(|(cost, result)| {
-                if result.is_ok() {
-                    cost_details.batched_signature_cost = cost_details
-                        .batched_signature_cost
-                        .saturating_add(cost.signature_cost);
-                    cost_details.batched_write_lock_cost = cost_details
-                        .batched_write_lock_cost
-                        .saturating_add(cost.write_lock_cost);
-                    cost_details.batched_data_bytes_cost = cost_details
-                        .batched_data_bytes_cost
-                        .saturating_add(cost.data_bytes_cost);
-                    cost_details.batched_execute_cost = cost_details
-                        .batched_execute_cost
-                        .saturating_add(cost.execution_cost);
+            .for_each(|(cost, result)| match result {
+                Ok(_) => {
+                    saturating_add_assign!(
+                        batched_transaction_details.costs.batched_signature_cost,
+                        cost.signature_cost
+                    );
+                    saturating_add_assign!(
+                        batched_transaction_details.costs.batched_write_lock_cost,
+                        cost.write_lock_cost
+                    );
+                    saturating_add_assign!(
+                        batched_transaction_details.costs.batched_data_bytes_cost,
+                        cost.data_bytes_cost
+                    );
+                    saturating_add_assign!(
+                        batched_transaction_details.costs.batched_execute_cost,
+                        cost.execution_cost
+                    );
                 }
+                Err(transaction_error) => match transaction_error {
+                    TransactionError::WouldExceedMaxBlockCostLimit => {
+                        saturating_add_assign!(
+                            batched_transaction_details
+                                .errors
+                                .batched_retried_txs_per_block_limit_count,
+                            1
+                        );
+                    }
+                    TransactionError::WouldExceedMaxVoteCostLimit => {
+                        saturating_add_assign!(
+                            batched_transaction_details
+                                .errors
+                                .batched_retried_txs_per_vote_limit_count,
+                            1
+                        );
+                    }
+                    TransactionError::WouldExceedMaxAccountCostLimit => {
+                        saturating_add_assign!(
+                            batched_transaction_details
+                                .errors
+                                .batched_retried_txs_per_account_limit_count,
+                            1
+                        );
+                    }
+                    TransactionError::WouldExceedAccountDataBlockLimit => {
+                        saturating_add_assign!(
+                            batched_transaction_details
+                                .errors
+                                .batched_retried_txs_per_account_data_block_limit_count,
+                            1
+                        );
+                    }
+                    TransactionError::WouldExceedAccountDataTotalLimit => {
+                        saturating_add_assign!(
+                            batched_transaction_details
+                                .errors
+                                .batched_dropped_txs_per_account_data_total_limit_count,
+                            1
+                        );
+                    }
+                    _ => {}
+                },
             });
-        cost_details
+        batched_transaction_details
     }
 
     fn accumulate_execute_units_and_time(execute_timings: &ExecuteTimings) -> (u64, u64) {
@@ -1617,7 +1680,7 @@ impl BankingStage {
         transaction_indexes: &[usize],
         feature_set: &Arc<feature_set::FeatureSet>,
         votes_only: bool,
-        address_loader: &impl AddressLoader,
+        address_loader: impl AddressLoader,
     ) -> (Vec<SanitizedTransaction>, Vec<usize>) {
         transaction_indexes
             .iter()
@@ -1634,7 +1697,7 @@ impl BankingStage {
                     tx,
                     message_hash,
                     Some(p.meta.is_simple_vote_tx()),
-                    address_loader,
+                    address_loader.clone(),
                 )
                 .ok()?;
                 tx.verify_precompiles(feature_set).ok()?;
@@ -2065,7 +2128,7 @@ mod tests {
             signature::{Keypair, Signer},
             system_instruction::SystemError,
             system_transaction,
-            transaction::{DisabledAddressLoader, Transaction, TransactionError},
+            transaction::{MessageHash, SimpleAddressLoader, Transaction, TransactionError},
         },
         solana_streamer::{recvmmsg::recv_mmsg, socket::SocketAddrSpace},
         solana_transaction_status::{TransactionStatusMeta, VersionedTransactionWithStatusMeta},
@@ -3113,6 +3176,10 @@ mod tests {
             ..
         } = create_slow_genesis_config(lamports);
         let bank = Arc::new(Bank::new_no_wallclock_throttle_for_tests(&genesis_config));
+        // set cost tracker limits to MAX so it will not filter out TXs
+        bank.write_cost_tracker()
+            .unwrap()
+            .set_limits(std::u64::MAX, std::u64::MAX, std::u64::MAX);
 
         // Transfer more than the balance of the mint keypair, should cause a
         // InstructionError::InsufficientFunds that is then committed. Needs to be
@@ -3169,6 +3236,10 @@ mod tests {
             ..
         } = create_slow_genesis_config(10_000);
         let bank = Arc::new(Bank::new_no_wallclock_throttle_for_tests(&genesis_config));
+        // set cost tracker limits to MAX so it will not filter out TXs
+        bank.write_cost_tracker()
+            .unwrap()
+            .set_limits(std::u64::MAX, std::u64::MAX, std::u64::MAX);
 
         // Make all repetitive transactions that conflict on the `mint_keypair`, so only 1 should be executed
         let mut transactions = vec![
@@ -3401,10 +3472,13 @@ mod tests {
         });
 
         let tx = VersionedTransaction::try_new(message, &[&keypair]).unwrap();
-        let message_hash = tx.message.hash();
-        let sanitized_tx =
-            SanitizedTransaction::try_create(tx.clone(), message_hash, Some(false), bank.as_ref())
-                .unwrap();
+        let sanitized_tx = SanitizedTransaction::try_create(
+            tx.clone(),
+            MessageHash::Compute,
+            Some(false),
+            bank.as_ref(),
+        )
+        .unwrap();
 
         let entry = next_versioned_entry(&genesis_config.hash(), 1, vec![tx]);
         let entries = vec![entry];
@@ -4082,7 +4156,7 @@ mod tests {
                 &packet_indexes,
                 &Arc::new(FeatureSet::default()),
                 votes_only,
-                &DisabledAddressLoader,
+                SimpleAddressLoader::Disabled,
             );
             assert_eq!(2, txs.len());
             assert_eq!(vec![0, 1], tx_packet_index);
@@ -4093,7 +4167,7 @@ mod tests {
                 &packet_indexes,
                 &Arc::new(FeatureSet::default()),
                 votes_only,
-                &DisabledAddressLoader,
+                SimpleAddressLoader::Disabled,
             );
             assert_eq!(0, txs.len());
             assert_eq!(0, tx_packet_index.len());
@@ -4113,7 +4187,7 @@ mod tests {
                 &packet_indexes,
                 &Arc::new(FeatureSet::default()),
                 votes_only,
-                &DisabledAddressLoader,
+                SimpleAddressLoader::Disabled,
             );
             assert_eq!(3, txs.len());
             assert_eq!(vec![0, 1, 2], tx_packet_index);
@@ -4124,7 +4198,7 @@ mod tests {
                 &packet_indexes,
                 &Arc::new(FeatureSet::default()),
                 votes_only,
-                &DisabledAddressLoader,
+                SimpleAddressLoader::Disabled,
             );
             assert_eq!(2, txs.len());
             assert_eq!(vec![0, 2], tx_packet_index);
@@ -4144,7 +4218,7 @@ mod tests {
                 &packet_indexes,
                 &Arc::new(FeatureSet::default()),
                 votes_only,
-                &DisabledAddressLoader,
+                SimpleAddressLoader::Disabled,
             );
             assert_eq!(3, txs.len());
             assert_eq!(vec![0, 1, 2], tx_packet_index);
@@ -4155,7 +4229,7 @@ mod tests {
                 &packet_indexes,
                 &Arc::new(FeatureSet::default()),
                 votes_only,
-                &DisabledAddressLoader,
+                SimpleAddressLoader::Disabled,
             );
             assert_eq!(3, txs.len());
             assert_eq!(vec![0, 1, 2], tx_packet_index);
@@ -4197,12 +4271,24 @@ mod tests {
         let expected_write_locks = 7;
         let expected_data_bytes = 9;
         let expected_executions = 30;
-        let cost_details =
+        let batched_transaction_details =
             BankingStage::accumulate_batched_transaction_costs(tx_costs.iter(), tx_results.iter());
-        assert_eq!(expected_signatures, cost_details.batched_signature_cost);
-        assert_eq!(expected_write_locks, cost_details.batched_write_lock_cost);
-        assert_eq!(expected_data_bytes, cost_details.batched_data_bytes_cost);
-        assert_eq!(expected_executions, cost_details.batched_execute_cost);
+        assert_eq!(
+            expected_signatures,
+            batched_transaction_details.costs.batched_signature_cost
+        );
+        assert_eq!(
+            expected_write_locks,
+            batched_transaction_details.costs.batched_write_lock_cost
+        );
+        assert_eq!(
+            expected_data_bytes,
+            batched_transaction_details.costs.batched_data_bytes_cost
+        );
+        assert_eq!(
+            expected_executions,
+            batched_transaction_details.costs.batched_execute_cost
+        );
     }
 
     #[test]
