@@ -3593,7 +3593,7 @@ impl Blockstore {
         Ok(())
     }
 
-    pub fn remove_completed_unrepaired_slot(&self, slot: Slot) -> bool {
+    pub fn remove_cached_completed_unrepaired_slot(&self, slot: Slot) -> bool {
         let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
         let removed = completed_slots.remove(&slot);
         warn!(
@@ -3605,7 +3605,7 @@ impl Blockstore {
         removed
     }
 
-    pub fn remove_completed_unrepaired_slots(&self, slots: &[Slot]) {
+    pub fn remove_cached_completed_unrepaired_slots(&self, slots: &[Slot]) {
 
         if slots.len() == 0 {
             warn!("trying to remove 0 slots");

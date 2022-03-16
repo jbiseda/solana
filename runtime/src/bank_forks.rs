@@ -168,8 +168,7 @@ impl BankForks {
     }
 
     pub fn remove(&mut self, slot: Slot) -> Option<Arc<Bank>> {
-        warn!("> TRACKING remove {}", slot);
-//        blockstore.remove_completed_unrepaired_slot(slot);
+        warn!("> TRACKING bank_forks remove {}", slot);
         let bank = self.banks.remove(&slot)?;
         for parent in bank.proper_ancestors() {
             let mut entry = match self.descendants.entry(parent) {
@@ -499,7 +498,7 @@ impl BankForks {
         prune_remove_time.stop();
 
         for b in removed_banks.iter() {
-            warn!("prune_non_root {}", b.slot());
+            warn!("TRACKING prune_non_rooted {}", b.slot());
         }
 
         (

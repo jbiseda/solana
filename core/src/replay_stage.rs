@@ -1685,7 +1685,7 @@ impl ReplayStage {
 
         warn!("TRACKING mark_dead_slot {}", slot);
 
-        if blockstore.remove_completed_unrepaired_slot(slot) {
+        if blockstore.remove_cached_completed_unrepaired_slot(slot) {
             datapoint_warn!(
                 "replay-stage-mark_dead_completed_unrepaired_slot",
                 ("slot", slot, i64),
@@ -1801,8 +1801,7 @@ impl ReplayStage {
                 Some(blockstore),
             );
 
-            blockstore.remove_completed_unrepaired_slots(&rooted_slots);
-
+            blockstore.remove_cached_completed_unrepaired_slots(&rooted_slots);
             rpc_subscriptions.notify_roots(rooted_slots);
             if let Some(sender) = bank_notification_sender {
                 sender
@@ -2950,7 +2949,8 @@ impl ReplayStage {
 
         if let Some(blockstore) = blockstore {
             let removed_slots: Vec<_> = removed_banks.iter().map(|bank| bank.slot()).collect();
-            blockstore.remove_completed_unrepaired_slots(&removed_slots);
+            warn!("TRACKING handle_new_root removed_slots={:?}", &removed_slots);
+            blockstore.remove_cached_completed_unrepaired_slots(&removed_slots);
         }
 
         bank_drop_sender
