@@ -1814,6 +1814,7 @@ impl ReplayStage {
                 }
             });
             info!("new root {}", new_root);
+            warn!("TRACKING new root {}", new_root);
         }
 
         let mut update_commitment_cache_time = Measure::start("update_commitment_cache");
