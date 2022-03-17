@@ -668,15 +668,14 @@ impl ProgressMap {
     }
 
     pub fn handle_new_root(&mut self, bank_forks: &BankForks) {
-        self.progress_map
-            .retain(|k, _| {
-                if bank_forks.get(*k).is_some() {
-                    true
-                } else {
-                    warn!("TRACKING handle_new_root not retained {}", *k);
-                    false
-                }
-            });
+        self.progress_map.retain(|k, _| {
+            if bank_forks.get(*k).is_some() {
+                true
+            } else {
+                warn!("TRACKING handle_new_root not retained {}", *k);
+                false
+            }
+        });
     }
 
     pub fn log_propagated_stats(&self, slot: Slot, bank_forks: &RwLock<BankForks>) {

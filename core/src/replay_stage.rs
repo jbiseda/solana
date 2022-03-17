@@ -1692,7 +1692,20 @@ impl ReplayStage {
                 "replay-stage-mark_dead_completed_unrepaired_slot",
                 ("slot", slot, i64),
             );
-            warn!("TRACKING replay-stage-mark_dead_completed_unrepaired_slot {}", slot); // TODO remove
+            warn!(
+                "TRACKING replay-stage-mark_dead_completed_unrepaired_slot {}",
+                slot
+            ); // TODO remove
+        }
+
+        let turbine_tracker = blockstore.remove_turbine_slot_tracking_map_slot(slot);
+        if let Some(tracker) = turbine_tracker {
+            let min_batch = turbine_tracker
+                .iter()
+                .map(|(_, cnt)| cnt)
+                .min()
+                .unwrap_or_default();
+            datapoint_warn!("", ("slot", slot, i64), ("min_batch", min_batch, i64),);
         }
 
         rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
@@ -1817,9 +1830,18 @@ impl ReplayStage {
                 }
             });
             info!("new root {}", new_root);
-            warn!("TRACKING >>> new_root root={} prev={} dist={}", new_root, *prev_root, new_root - *prev_root);
+            warn!(
+                "TRACKING >>> new_root root={} prev={} dist={}",
+                new_root,
+                *prev_root,
+                new_root - *prev_root
+            );
             if new_root - *prev_root > 1 {
-                warn!("TRACKING >>> new_root skipped {}-{}", *prev_root + 1, new_root - 1);
+                warn!(
+                    "TRACKING >>> new_root skipped {}-{}",
+                    *prev_root + 1,
+                    new_root - 1
+                );
             }
             *prev_root = new_root;
         }
@@ -2947,7 +2969,7 @@ impl ReplayStage {
         voted_signatures: &mut Vec<Signature>,
         epoch_slots_frozen_slots: &mut EpochSlotsFrozenSlots,
         drop_bank_sender: &Sender<Vec<Arc<Bank>>>,
-        blockstore: Option<&Blockstore>
+        blockstore: Option<&Blockstore>,
     ) {
         let removed_banks = bank_forks.write().unwrap().set_root(
             new_root,
@@ -2957,7 +2979,10 @@ impl ReplayStage {
 
         if let Some(blockstore) = blockstore {
             let removed_slots: Vec<_> = removed_banks.iter().map(|bank| bank.slot()).collect();
-            warn!("TRACKING handle_new_root removed_slots={:?}", &removed_slots);
+            warn!(
+                "TRACKING handle_new_root removed_slots={:?}",
+                &removed_slots
+            );
             blockstore.remove_cached_completed_unrepaired_slots(&removed_slots);
         }
 

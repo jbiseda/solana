@@ -1891,6 +1891,14 @@ pub mod tests {
         data_shreds.iter().enumerate().for_each(|(i, s)| {
             let expected_fec_set_index = start_index + ((i / max_per_block) * max_per_block) as u32;
             assert_eq!(s.fec_set_index(), expected_fec_set_index);
+            println!(
+                "data {}: slot={} index={} fec_set_index={} parent_off={}",
+                i,
+                s.common_header.slot,
+                s.common_header.index,
+                s.common_header.fec_set_index,
+                s.data_header.parent_offset,
+            );
         });
 
         coding_shreds.iter().enumerate().for_each(|(i, s)| {
@@ -1899,6 +1907,16 @@ pub mod tests {
                 expected_fec_set_index -= max_per_block as u32;
             }
             assert_eq!(s.fec_set_index(), expected_fec_set_index);
+            println!(
+                "coding {}: slot={} index={} fec_set_index={} num_data={} num_coding={} position={}",
+                i,
+                s.common_header.slot,
+                s.common_header.index,
+                s.common_header.fec_set_index,
+                s.coding_header.num_data_shreds,
+                s.coding_header.num_coding_shreds,
+                s.coding_header.position,
+            );
         });
     }
 

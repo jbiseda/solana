@@ -148,6 +148,11 @@ pub struct BlockstoreSignals {
     pub completed_slots_receiver: CompletedSlotsReceiver,
 }
 
+#[derive(Debug, Default)]
+pub struct TurbineSlotTracker {
+    pub fec_set_index_count: HashMap<u32, usize>,
+}
+
 // ledger window
 pub struct Blockstore {
     ledger_path: PathBuf,
@@ -180,6 +185,7 @@ pub struct Blockstore {
     slots_stats: Arc<Mutex<SlotsStats>>,
     advanced_options: BlockstoreAdvancedOptions,
     completed_unrepaired_slots: Arc<Mutex<HashSet<Slot>>>,
+    turbine_slot_tracking_map: Arc<Mutex<HashMap<Slot, TurbineSlotTracker>>>,
 }
 
 struct SlotsStats {
@@ -667,6 +673,7 @@ impl Blockstore {
             slots_stats: Arc::new(Mutex::new(SlotsStats::default())),
             advanced_options,
             completed_unrepaired_slots: Arc::new(Mutex::new(HashSet::default())),
+            turbine_slot_tracking_map: Arc::new(Mutex::new(HashMap::default())),
         };
         if initialize_transaction_status_index {
             blockstore.initialize_transaction_status_index()?;
@@ -1745,6 +1752,22 @@ impl Blockstore {
         // `insert_coding_shred` is called
         assert!(shred.is_code() && shred.sanitize());
 
+        {
+            let mut turbine_slot_tracking_map = self.turbine_slot_tracking_map.lock().unwrap();
+            let mut slot_tracker = turbine_slot_tracking_map.entry(shred.slot()).or_default();
+            let mut e = slot_tracker
+                .fec_set_index_count
+                .entry(shred.fec_set_index())
+                .or_default();
+            *e += 1;
+            warn!(
+                "TRACKING coding fec_set_tracker slot={} fec_index={} cnt={}",
+                shred.slot(),
+                shred.fec_set_index(),
+                *e,
+            );
+        }
+
         // Commit step: commit all changes to the mutable structures at once, or none at all.
         // We don't want only a subset of these changes going through.
         write_batch.put_bytes::<cf::ShredCode>((slot, shred_index), &shred.payload)?;
@@ -1950,6 +1973,10 @@ impl Blockstore {
             slot_meta.consumed
         };
 
+        if shred_source == ShredSource::Turbine {
+            self.turbine_tracking_map_inc_slot_fec_index(shred.slot(), shred.fec_set_index());
+        }
+
         // Commit step: commit all changes to the mutable structures at once, or none at all.
         // We don't want only a subset of these changes going through.
         write_batch.put_bytes::<cf::ShredData>(
@@ -2004,7 +2031,15 @@ impl Blockstore {
                 //self.completed_unrepaired_slots.lock().unwrap().insert(slot);
                 let mut completed_slots = self.completed_unrepaired_slots.lock().unwrap();
                 completed_slots.insert(slot); // TODO cleanup
-                warn!("TRACKING completed_unrepaired_slots insert {} map_size={}", slot, completed_slots.len());
+
+                let min_batch = self.turbine_tracking_map_get_min_batch(slot);
+
+                warn!(
+                    "TRACKING completed_unrepaired_slots insert {} min_batch={} map_size={}",
+                    slot,
+                    min_batch,
+                    completed_slots.len()
+                );
             }
 
             datapoint_info!(
@@ -3643,7 +3678,6 @@ impl Blockstore {
     }
 
     pub fn remove_cached_completed_unrepaired_slots(&self, slots: &[Slot]) {
-
         if slots.len() == 0 {
             warn!("trying to remove 0 slots");
             return;
@@ -3658,9 +3692,7 @@ impl Blockstore {
 
         warn!(
             "TRACKING remove_completed_unrepaired_slots min={} set[{}-{}]",
-            min_slot,
-            min_completed,
-            max_completed,
+            min_slot, min_completed, max_completed,
         );
 
         for slot in slots {
@@ -3677,6 +3709,69 @@ impl Blockstore {
             if *s < *min_slot {
                 warn!("TRACKING completed_slot {} less than min {}", s, min_slot);
             }
+        }
+
+        self.remove_turbine_slot_tracking_map_slots(slots);
+    }
+
+    pub fn turbine_tracking_map_inc_slot_fec_index(&self, slot: Slot, fec_set_index: u32) {
+        let mut turbine_slot_tracking_map = self.turbine_slot_tracking_map.lock().unwrap();
+        let mut slot_tracker = turbine_slot_tracking_map.entry(slot).or_default();
+        let mut e = slot_tracker
+            .fec_set_index_count
+            .entry(fec_set_index)
+            .or_default();
+        *e += 1;
+        warn!(
+            "TRACKING data fec_set_tracker slot={} fec_index={} cnt={}",
+            slot, fec_set_index, *e,
+        );
+    }
+
+    pub fn turbine_tracking_map_get_min_batch(&self, slot: Slot) -> usize {
+        let mut turbine_slot_tracking_map = self.turbine_slot_tracking_map.lock().unwrap();
+        let slot_tracker = turbine_slot_tracking_map.get(&slot);
+        if let Some(tracker) = slot_tracker {
+            let min_batch = tracker
+                .fec_set_index_count
+                .iter()
+                .map(|(_, cnt)| *cnt)
+                .min()
+                .unwrap_or(0);
+            let x: Vec<_> = tracker
+                .fec_set_index_count
+                .iter()
+                .map(|(_, cnt)| *cnt)
+                .collect();
+            warn!(
+                "TRACKING turbine_tracking_map_get_min_batch slot={} min={} {:?}",
+                slot, min_batch, &x,
+            );
+            min_batch
+        } else {
+            0
+        }
+    }
+
+    pub fn remove_turbine_slot_tracking_map_slot(&self, slot: Slot) -> Option<TurbineSlotTracker> {
+        let mut turbine_slot_tracking_map = self.turbine_slot_tracking_map.lock().unwrap();
+
+        let tracker = turbine_slot_tracking_map.remove(&slot);
+
+        warn!(
+            "TRACKING remove_turbine_slot_tracking_map_slot {} found={}",
+            slot,
+            tracker.is_some(),
+        );
+
+        tracker
+    }
+
+    pub fn remove_turbine_slot_tracking_map_slots(&self, slots: &[Slot]) {
+        let mut turbine_slot_tracking_map = self.turbine_slot_tracking_map.lock().unwrap();
+
+        for slot in slots {
+            turbine_slot_tracking_map.remove(slot);
         }
     }
 }
