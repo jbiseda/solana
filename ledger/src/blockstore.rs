@@ -3725,10 +3725,12 @@ impl Blockstore {
             .entry(fec_set_index)
             .or_default();
         *e += 1;
+        /*
         warn!(
             "TRACKING data fec_set_tracker slot={} fec_index={} cnt={}",
             slot, fec_set_index, *e,
         );
+        */
     }
 
     pub fn turbine_tracking_map_get_min_batch(&self, slot: Slot) -> usize {
