@@ -1700,11 +1700,12 @@ impl ReplayStage {
 
         let turbine_tracker = blockstore.remove_turbine_slot_tracking_map_slot(slot);
         if let Some(tracker) = turbine_tracker {
-            let min_batch = turbine_tracker
+            let min_batch = tracker
+                .fec_set_index_count
                 .iter()
-                .map(|(_, cnt)| cnt)
+                .map(|(_, cnt)| *cnt)
                 .min()
-                .unwrap_or_default();
+                .unwrap_or(0);
             datapoint_warn!(
                 "replay-stage-mark_dead_slot-turbine-stats",
                 ("slot", slot, i64),
