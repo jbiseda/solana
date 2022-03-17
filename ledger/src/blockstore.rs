@@ -1760,12 +1760,14 @@ impl Blockstore {
                 .entry(shred.fec_set_index())
                 .or_default();
             *e += 1;
+            /*
             warn!(
                 "TRACKING coding fec_set_tracker slot={} fec_index={} cnt={}",
                 shred.slot(),
                 shred.fec_set_index(),
                 *e,
             );
+            */
         }
 
         // Commit step: commit all changes to the mutable structures at once, or none at all.
