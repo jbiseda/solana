@@ -2040,6 +2040,9 @@ impl Blockstore {
                     min_batch,
                     completed_slots.len()
                 );
+            } else {
+                // remove metadata for repaired slots
+                self.remove_turbine_slot_tracking_map_slot(slot);
             }
 
             datapoint_info!(
