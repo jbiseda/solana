@@ -1705,7 +1705,11 @@ impl ReplayStage {
                 .map(|(_, cnt)| cnt)
                 .min()
                 .unwrap_or_default();
-            datapoint_warn!("", ("slot", slot, i64), ("min_batch", min_batch, i64),);
+            datapoint_warn!(
+                "replay-stage-mark_dead_slot-turbine-stats",
+                ("slot", slot, i64),
+                ("min_batch", min_batch, i64),
+            );
         }
 
         rpc_subscriptions.notify_slot_update(SlotUpdate::Dead {
