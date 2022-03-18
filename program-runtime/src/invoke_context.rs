@@ -352,7 +352,11 @@ impl<'a> InvokeContext<'a> {
                 }
                 Err(InstructionError::MissingAccount)
             };
-            visit_each_account_once(instruction_accounts, &mut work)?;
+            visit_each_account_once(
+                instruction_accounts,
+                &mut work,
+                InstructionError::NotEnoughAccountKeys,
+            )?;
         } else {
             let contains = (0..self
                 .transaction_context
@@ -517,7 +521,11 @@ impl<'a> InvokeContext<'a> {
 
             Ok(())
         };
-        visit_each_account_once(instruction_accounts, &mut work)?;
+        visit_each_account_once(
+            instruction_accounts,
+            &mut work,
+            InstructionError::NotEnoughAccountKeys,
+        )?;
 
         // Verify that the total sum of all the lamports did not change
         if pre_sum != post_sum {
@@ -615,7 +623,11 @@ impl<'a> InvokeContext<'a> {
             }
             Err(InstructionError::MissingAccount)
         };
-        visit_each_account_once(instruction_accounts, &mut work)?;
+        visit_each_account_once(
+            instruction_accounts,
+            &mut work,
+            InstructionError::NotEnoughAccountKeys,
+        )?;
 
         // Verify that the total sum of all the lamports did not change
         if pre_sum != post_sum {
@@ -1154,23 +1166,25 @@ pub fn mock_process_instruction(
 }
 
 /// Visit each unique instruction account index once
-fn visit_each_account_once(
+pub fn visit_each_account_once<E>(
     instruction_accounts: &[InstructionAccount],
-    work: &mut dyn FnMut(usize, &InstructionAccount) -> Result<(), InstructionError>,
-) -> Result<(), InstructionError> {
+    work: &mut dyn FnMut(usize, &InstructionAccount) -> Result<(), E>,
+    inner_error: E,
+) -> Result<(), E> {
+    // Note: This is an O(n^2) algorithm,
+    // but performed on a very small slice and requires no heap allocations
     'root: for (index, instruction_account) in instruction_accounts.iter().enumerate() {
-        // Note: This is an O(n^2) algorithm,
-        // but performed on a very small slice and requires no heap allocations
-        for before in instruction_accounts
-            .get(..index)
-            .ok_or(InstructionError::NotEnoughAccountKeys)?
-            .iter()
-        {
-            if before.index_in_transaction == instruction_account.index_in_transaction {
-                continue 'root; // skip dups
+        match instruction_accounts.get(..index) {
+            Some(range) => {
+                for before in range.iter() {
+                    if before.index_in_transaction == instruction_account.index_in_transaction {
+                        continue 'root; // skip dups
+                    }
+                }
+                work(index, instruction_account)?;
             }
+            None => return Err(inner_error),
         }
-        work(index, instruction_account)?;
     }
     Ok(())
 }
@@ -1179,6 +1193,7 @@ fn visit_each_account_once(
 mod tests {
     use {
         super::*,
+        crate::compute_budget,
         serde::{Deserialize, Serialize},
         solana_sdk::account::{ReadableAccount, WritableAccount},
     };
@@ -1211,7 +1226,8 @@ mod tests {
                 index_sum_b += entry.index_in_transaction;
                 Ok(())
             };
-            visit_each_account_once(accounts, &mut work).unwrap();
+            visit_each_account_once(accounts, &mut work, InstructionError::NotEnoughAccountKeys)
+                .unwrap();
 
             (unique_entries, index_sum_a, index_sum_b)
         };
@@ -1659,12 +1675,12 @@ mod tests {
         let mut transaction_context = TransactionContext::new(accounts, 1, 3);
         let mut invoke_context = InvokeContext::new_mock(&mut transaction_context, &[]);
         invoke_context.feature_set = Arc::new(feature_set);
-        invoke_context.compute_budget = ComputeBudget::new(false);
+        invoke_context.compute_budget = ComputeBudget::new(compute_budget::DEFAULT_UNITS);
 
         invoke_context.push(&[], &[0], &[]).unwrap();
         assert_eq!(
             *invoke_context.get_compute_budget(),
-            ComputeBudget::new(false)
+            ComputeBudget::new(compute_budget::DEFAULT_UNITS)
         );
         invoke_context.pop().unwrap();
 
@@ -1672,7 +1688,7 @@ mod tests {
         let expected_compute_budget = ComputeBudget {
             max_units: 500_000,
             heap_size: Some(256_usize.saturating_mul(1024)),
-            ..ComputeBudget::new(false)
+            ..ComputeBudget::new(compute_budget::DEFAULT_UNITS)
         };
         assert_eq!(
             *invoke_context.get_compute_budget(),
@@ -1683,7 +1699,7 @@ mod tests {
         invoke_context.push(&[], &[0], &[]).unwrap();
         assert_eq!(
             *invoke_context.get_compute_budget(),
-            ComputeBudget::new(false)
+            ComputeBudget::new(compute_budget::DEFAULT_UNITS)
         );
         invoke_context.pop().unwrap();
     }

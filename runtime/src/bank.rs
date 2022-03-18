@@ -76,7 +76,7 @@ use {
     solana_metrics::{inc_new_counter_debug, inc_new_counter_info},
     solana_program_runtime::{
         accounts_data_meter::MAX_ACCOUNTS_DATA_LEN,
-        compute_budget::ComputeBudget,
+        compute_budget::{self, ComputeBudget},
         invoke_context::{
             BuiltinProgram, Executor, Executors, ProcessInstructionWithContext, TransactionExecutor,
         },
@@ -920,6 +920,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) stakes: Stakes,
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
+    pub(crate) accounts_data_len: u64,
 }
 
 // Bank's common fields shared by all supported snapshot versions for serialization.
@@ -958,6 +959,7 @@ pub(crate) struct BankFieldsToSerialize<'a> {
     pub(crate) stakes: &'a StakesCache,
     pub(crate) epoch_stakes: &'a HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
+    pub(crate) accounts_data_len: u64,
 }
 
 // Can't derive PartialEq because RwLock doesn't implement PartialEq
@@ -2047,6 +2049,20 @@ impl Bank {
                 bank.fee_calculator
             );
         }
+
+        datapoint_info!(
+            "bank-new-from-fields",
+            (
+                "accounts_data_len-from-snapshot",
+                fields.accounts_data_len as i64,
+                i64
+            ),
+            (
+                "accounts_data_len-from-generate_index",
+                accounts_data_len as i64,
+                i64
+            ),
+        );
         bank
     }
 
@@ -2086,6 +2102,7 @@ impl Bank {
             stakes: &self.stakes_cache,
             epoch_stakes: &self.epoch_stakes,
             is_delta: self.is_delta.load(Relaxed),
+            accounts_data_len: self.load_accounts_data_len(),
         }
     }
 
@@ -2545,10 +2562,10 @@ impl Bank {
         let invalid_stake_keys: DashMap<Pubkey, InvalidCacheEntryReason> = DashMap::new();
         let invalid_vote_keys: DashMap<Pubkey, InvalidCacheEntryReason> = DashMap::new();
 
+        let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
         thread_pool.install(|| {
-            stakes
-                .stake_delegations()
-                .par_iter()
+            stake_delegations
+                .into_par_iter()
                 .for_each(|(stake_pubkey, delegation)| {
                     let vote_pubkey = &delegation.voter_pubkey;
                     if invalid_vote_keys.contains_key(vote_pubkey) {
@@ -4036,9 +4053,14 @@ impl Bank {
                     signature_count += u64::from(tx.message().header().num_required_signatures);
 
                     let tx_wide_compute_cap = feature_set.is_active(&tx_wide_compute_cap::id());
+                    let compute_budget_max_units = if tx_wide_compute_cap {
+                        compute_budget::MAX_UNITS
+                    } else {
+                        compute_budget::DEFAULT_UNITS
+                    };
                     let mut compute_budget = self
                         .compute_budget
-                        .unwrap_or_else(|| ComputeBudget::new(tx_wide_compute_cap));
+                        .unwrap_or_else(|| ComputeBudget::new(compute_budget_max_units));
                     if tx_wide_compute_cap {
                         let mut compute_budget_process_transaction_time =
                             Measure::start("compute_budget_process_transaction_time");
@@ -6729,7 +6751,6 @@ pub(crate) mod tests {
                 genesis_sysvar_and_builtin_program_lamports, GenesisConfigInfo,
                 ValidatorVoteKeypairs,
             },
-            stake_delegations::StakeDelegations,
             status_cache::MAX_CACHE_ENTRIES,
         },
         crossbeam_channel::{bounded, unbounded},
@@ -6770,12 +6791,6 @@ pub(crate) mod tests {
         },
         std::{result, thread::Builder, time::Duration},
     };
-
-    impl Bank {
-        fn cloned_stake_delegations(&self) -> StakeDelegations {
-            self.stakes_cache.stakes().stake_delegations().clone()
-        }
-    }
 
     fn new_sanitized_message(
         instructions: &[Instruction],
@@ -10896,7 +10911,7 @@ pub(crate) mod tests {
         } = create_genesis_config_with_leader(500, &solana_sdk::pubkey::new_rand(), 1);
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
 
-        let stake_delegations = bank.cloned_stake_delegations();
+        let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
         assert_eq!(stake_delegations.len(), 1); // bootstrap validator has
                                                 // to have a stake delegation
 
@@ -10932,7 +10947,7 @@ pub(crate) mod tests {
 
         bank.process_transaction(&transaction).unwrap();
 
-        let stake_delegations = bank.cloned_stake_delegations();
+        let stake_delegations = bank.stakes_cache.stakes().stake_delegations().clone();
         assert_eq!(stake_delegations.len(), 2);
         assert!(stake_delegations.get(&stake_keypair.pubkey()).is_some());
     }
@@ -16915,7 +16930,7 @@ pub(crate) mod tests {
 
         let compute_budget = bank
             .compute_budget
-            .unwrap_or_else(|| ComputeBudget::new(false));
+            .unwrap_or_else(|| ComputeBudget::new(compute_budget::DEFAULT_UNITS));
         let transaction_context = TransactionContext::new(
             loaded_txs[0].0.as_ref().unwrap().accounts.clone(),
             compute_budget.max_invoke_depth.saturating_add(1),
