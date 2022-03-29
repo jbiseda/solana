@@ -167,6 +167,6 @@ fn bench_verify_fec_set_witnesses_rayon(b: &mut Bencher) {
             (0..witnesses.len()).into_par_iter().for_each(|i| {
                 assert!(verifier.verify_eval((xs[i], ys[i]), &commitment, &witnesses[i]));
             });
-        }
+        });
     });
 }
