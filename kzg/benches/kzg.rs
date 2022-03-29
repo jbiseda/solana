@@ -21,7 +21,8 @@ const FEC_SET_SIZE: usize = 96;
 
 lazy_static! {
     static ref PAR_THREAD_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
-        .num_threads(get_thread_count())
+        //.num_threads(get_thread_count())
+        .num_threads(16)
         .thread_name(|ix| format!("kzg_{}", ix))
         .build()
         .unwrap();
@@ -84,7 +85,6 @@ fn bench_create_witness(b: &mut Bencher) {
 }
 
 #[bench]
-#[ignore]
 fn bench_create_fec_set_witnesses(b: &mut Bencher) {
     let (params, xs, ys) = create_test_setup(FEC_SET_SIZE);
     let prover = KZGProver::new(&params);
@@ -132,7 +132,6 @@ fn bench_verify_witness(b: &mut Bencher) {
 }
 
 #[bench]
-#[ignore]
 fn bench_verify_fec_set_witnesses(b: &mut Bencher) {
     let (params, xs, ys) = create_test_setup(FEC_SET_SIZE);
     let prover = KZGProver::new(&params);
@@ -164,8 +163,10 @@ fn bench_verify_fec_set_witnesses_rayon(b: &mut Bencher) {
         .collect();
     b.iter(|| {
         let verifier = KZGVerifier::new(&params);
-        (0..witnesses.len()).into_par_iter().for_each(|i| {
-            assert!(verifier.verify_eval((xs[i], ys[i]), &commitment, &witnesses[i]));
-        });
+        PAR_THREAD_POOL.install(|| {
+            (0..witnesses.len()).into_par_iter().for_each(|i| {
+                assert!(verifier.verify_eval((xs[i], ys[i]), &commitment, &witnesses[i]));
+            });
+        }
     });
 }
