@@ -6,6 +6,7 @@ use {
     blstrs::Scalar,
     kzg::{
         coeff_form::KZGProver, coeff_form::KZGVerifier, polynomial::Polynomial, setup, KZGParams,
+        KZGWitness,
     },
     lazy_static::lazy_static,
     rayon::prelude::*,
@@ -104,11 +105,34 @@ fn bench_create_fec_set_witnesses_rayon(b: &mut Bencher) {
     let prover = KZGProver::new(&params);
     let interpolation = Polynomial::lagrange_interpolation(&xs, &ys);
     let points: Vec<_> = xs.into_iter().zip(ys.into_iter()).collect();
+
     b.iter(|| {
         PAR_THREAD_POOL.install(|| {
-            let _witnesses: Vec<_> = points
+            let _witnesses: Vec<KZGWitness> = points
                 .par_iter()
                 .map(|(x, y)| prover.create_witness(&interpolation, (*x, *y)).unwrap())
+                .collect();
+        });
+    });
+}
+
+#[bench]
+fn bench_create_fec_set_witnesses_rayon_chunked(b: &mut Bencher) {
+    let (params, xs, ys) = create_test_setup(FEC_SET_SIZE);
+    let prover = KZGProver::new(&params);
+    let interpolation = Polynomial::lagrange_interpolation(&xs, &ys);
+    let points: Vec<_> = xs.into_iter().zip(ys.into_iter()).collect();
+
+    b.iter(|| {
+        PAR_THREAD_POOL.install(|| {
+            let _witnesses: Vec<KZGWitness> = points
+                .par_chunks(6)
+                .flat_map(|points| {
+                    points
+                        .iter()
+                        .map(|(x, y)| prover.create_witness(&interpolation, (*x, *y)).unwrap())
+                        .collect::<Vec<_>>()
+                })
                 .collect();
         });
     });
@@ -132,6 +156,7 @@ fn bench_verify_witness(b: &mut Bencher) {
 }
 
 #[bench]
+#[ignore]
 fn bench_verify_fec_set_witnesses(b: &mut Bencher) {
     let (params, xs, ys) = create_test_setup(FEC_SET_SIZE);
     let prover = KZGProver::new(&params);
