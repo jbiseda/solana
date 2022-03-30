@@ -23,7 +23,7 @@ const FEC_SET_SIZE: usize = 96;
 lazy_static! {
     static ref PAR_THREAD_POOL: ThreadPool = rayon::ThreadPoolBuilder::new()
         //.num_threads(get_thread_count())
-        .num_threads(16)
+        .num_threads(8)
         .thread_name(|ix| format!("kzg_{}", ix))
         .build()
         .unwrap();
@@ -117,6 +117,7 @@ fn bench_create_fec_set_witnesses_rayon(b: &mut Bencher) {
 }
 
 #[bench]
+#[ignore]
 fn bench_create_fec_set_witnesses_rayon_chunked(b: &mut Bencher) {
     let (params, xs, ys) = create_test_setup(FEC_SET_SIZE);
     let prover = KZGProver::new(&params);
