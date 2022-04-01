@@ -11,8 +11,11 @@ use {
     lazy_static::lazy_static,
     rayon::prelude::*,
     rayon::ThreadPool,
+    rs_merkle::{MerkleProof, MerkleTree},
     sha2::{Digest, Sha256},
     solana_kzg::kzg::{hash_packets, test_create_random_packet_data, test_create_trusted_setup},
+    //solana_merkle_tree::MerkleTree,
+    solana_program::hash::{hash, hashv, Hash, Hasher},
     solana_rayon_threadlimit::get_thread_count,
     std::time::Instant,
     test::Bencher,
@@ -194,5 +197,137 @@ fn bench_verify_fec_set_witnesses_rayon(b: &mut Bencher) {
                 assert!(verifier.verify_eval((xs[i], ys[i]), &commitment, &witnesses[i]));
             });
         });
+    });
+}
+
+/*
+pub fn merkle_hash_packets(packets: &Vec<Vec<u8>>) -> Vec<Hash> {
+    packets.iter().map(|p| hash(&p)).collect()
+}
+*/
+
+#[bench]
+fn bench_rs_merkle_create_tree(b: &mut Bencher) {
+    let packets: Vec<_> = (0..FEC_SET_SIZE)
+        .map(|_| test_create_random_packet_data())
+        .collect();
+
+    b.iter(|| {
+        let leaves: Vec<[u8; 32]> = packets
+            .iter()
+            .map(|x| <[u8; 32]>::try_from(Sha256::digest(x).as_slice()).unwrap())
+            .collect();
+        let _merkle_tree = MerkleTree::<rs_merkle::algorithms::Sha256>::from_leaves(&leaves);
+    });
+}
+
+#[bench]
+fn bench_rs_merkle_create_proofs(b: &mut Bencher) {
+    let packets: Vec<_> = (0..FEC_SET_SIZE)
+        .map(|_| test_create_random_packet_data())
+        .collect();
+
+    let leaves: Vec<[u8; 32]> = packets
+        .iter()
+        .map(|x| <[u8; 32]>::try_from(Sha256::digest(x).as_slice()).unwrap())
+        .collect();
+    let merkle_tree = MerkleTree::<rs_merkle::algorithms::Sha256>::from_leaves(&leaves);
+
+    b.iter(|| {
+        let proofs: Vec<_> = (0..leaves.len()).map(|i| merkle_tree.proof(&[i])).collect();
+    });
+}
+
+#[bench]
+fn bench_rs_merkle_verify_proofs(b: &mut Bencher) {
+    let packets: Vec<_> = (0..FEC_SET_SIZE)
+        .map(|_| test_create_random_packet_data())
+        .collect();
+
+    let leaves: Vec<[u8; 32]> = packets
+        .iter()
+        .map(|x| <[u8; 32]>::try_from(Sha256::digest(x).as_slice()).unwrap())
+        .collect();
+    let merkle_tree = MerkleTree::<rs_merkle::algorithms::Sha256>::from_leaves(&leaves);
+
+    let proofs: Vec<_> = (0..leaves.len()).map(|i| merkle_tree.proof(&[i])).collect();
+
+    b.iter(|| {
+        let merkle_root = merkle_tree.root().unwrap();
+        for i in 0..leaves.len() {
+            assert!(proofs[i].verify(merkle_root, &[i], &[leaves[i]], leaves.len()));
+        }
+    });
+}
+
+#[bench]
+fn bench_solana_merkle_create_tree(b: &mut Bencher) {
+    let packets: Vec<_> = (0..FEC_SET_SIZE)
+        .map(|_| test_create_random_packet_data())
+        .collect();
+
+    //let hashes: Vec<Hash> = merkle_hash_packets(&packets);
+
+    b.iter(|| {
+        let _merkle_tree = solana_merkle_tree::MerkleTree::new(&packets);
+    });
+}
+
+#[bench]
+fn bench_solana_merkle_create_proofs(b: &mut Bencher) {
+    let packets: Vec<_> = (0..FEC_SET_SIZE)
+        .map(|_| test_create_random_packet_data())
+        .collect();
+
+    //let hashes: Vec<Hash> = merkle_hash_packets(&packets);
+
+    let merkle_tree = solana_merkle_tree::MerkleTree::new(&packets);
+
+    b.iter(|| {
+        let _path_proofs: Vec<_> = (0..packets.len())
+            .map(|i| merkle_tree.find_path(i).unwrap())
+            .collect();
+    });
+}
+
+const LEAF_PREFIX: &[u8] = &[0];
+const INTERMEDIATE_PREFIX: &[u8] = &[1];
+
+#[bench]
+fn bench_solana_merkle_verify_proofs(b: &mut Bencher) {
+    let packets: Vec<_> = (0..FEC_SET_SIZE)
+        .map(|_| test_create_random_packet_data())
+        .collect();
+
+    //let hashes: Vec<Hash> = merkle_hash_packets(&packets);
+
+    let merkle_tree = solana_merkle_tree::MerkleTree::new(&packets);
+
+    let path_proofs: Vec<_> = (0..packets.len())
+        .map(|i| merkle_tree.find_path(i).unwrap())
+        .collect();
+
+    let leaf_hashes: Vec<_> = packets.iter().map(|p| hashv(&[LEAF_PREFIX, p])).collect();
+
+    b.iter(|| {
+        for i in 0..packets.len() {
+            //let leaf_hash = hashv(&[LEAF_PREFIX, hashes[i].get_bytes()]);
+            //let leaf_hash = hashv(&[LEAF_PREFIX, &packets[i]]);
+            //assert!(path_proofs[i].verify(leaf_hash));
+            assert!(path_proofs[i].verify(leaf_hashes[i]));
+        }
+    });
+}
+
+#[bench]
+fn bench_merk_sha(b: &mut Bencher) {
+    let packets: Vec<_> = (0..FEC_SET_SIZE)
+        .map(|_| test_create_random_packet_data())
+        .collect();
+
+    let hashes: Vec<_> = packets.iter().map(|p| Sha256::digest(p)).collect();
+
+    b.iter(|| {
+        let _ = hashv(&[&hashes[0], &hashes[1]]);
     });
 }

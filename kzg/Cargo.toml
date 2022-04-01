@@ -19,7 +19,10 @@ rand = "0.8.4"
 rayon = "1.5.1"
 sha2 = "0.9.9"
 serde = { version = "1", optional = true, features = ["derive"] }
+solana-merkle-tree = { path = "../merkle-tree", version = "=1.11.0" }
 solana-rayon-threadlimit = { path = "../rayon-threadlimit", version = "=1.11.0" }
+solana-program = { path = "../sdk/program", version = "=1.11.0" }
+rs_merkle = "1.2"
 
 [features]
 #parallel = ["rayon"]

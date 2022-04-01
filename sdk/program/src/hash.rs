@@ -32,6 +32,12 @@ const MAX_BASE58_LEN: usize = 44;
 #[repr(transparent)]
 pub struct Hash(pub(crate) [u8; HASH_BYTES]);
 
+impl Hash {
+    pub fn get_bytes(&self) -> &[u8; HASH_BYTES] {
+        &self.0
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct Hasher {
     hasher: Sha256,
