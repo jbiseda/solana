@@ -320,7 +320,20 @@ fn bench_solana_merkle_verify_proofs(b: &mut Bencher) {
 }
 
 #[bench]
-fn bench_merk_sha(b: &mut Bencher) {
+fn bench_merk_sha_1(b: &mut Bencher) {
+    let packets: Vec<_> = (0..FEC_SET_SIZE)
+        .map(|_| test_create_random_packet_data())
+        .collect();
+
+    let hashes: Vec<_> = packets.iter().map(|p| Sha256::digest(p)).collect();
+
+    b.iter(|| {
+        let _ = hashv(&[&hashes[0]]);
+    });
+}
+
+#[bench]
+fn bench_merk_sha_2(b: &mut Bencher) {
     let packets: Vec<_> = (0..FEC_SET_SIZE)
         .map(|_| test_create_random_packet_data())
         .collect();
