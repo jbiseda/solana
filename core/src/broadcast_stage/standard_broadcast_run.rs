@@ -227,6 +227,11 @@ impl StandardBroadcastRun {
             is_last_in_slot,
             &mut process_stats,
         );
+
+        error!("data_shreds.len()={}", data_shreds.len());
+
+        // TODO new sig for shreds
+
         // Insert the first shred so blockstore stores that the leader started this block
         // This must be done before the blocks are sent out over the wire.
         if !data_shreds.is_empty() && data_shreds[0].index() == 0 {
@@ -297,6 +302,13 @@ impl StandardBroadcastRun {
         // create merkle tree
         // get merkle root
         // sign merkle root
+
+        error!(
+            "TRACKING SENDING data_shreds.len()={} coding_shreds.len()={} sum={}",
+            data_shreds.len(),
+            coding_shreds.len(),
+            data_shreds.len() + coding_shreds.len(),
+        );
 
         socket_sender.send((data_shreds.clone(), batch_info.clone()))?;
         blockstore_sender.send((data_shreds, batch_info.clone()))?;

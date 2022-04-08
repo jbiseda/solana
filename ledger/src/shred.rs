@@ -915,7 +915,7 @@ impl Shredder {
         PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 coding_shreds.par_iter_mut().for_each(|coding_shred| {
-                    Shredder::sign_shred(keypair, coding_shred);
+                    Shredder::sign_shred(keypair, coding_shred); // TODO sign here can be removed
                 })
             })
         });
