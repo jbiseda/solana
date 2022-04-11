@@ -59,7 +59,12 @@ use {
     serde::{Deserialize, Deserializer, Serialize, Serializer},
     solana_entry::entry::{create_ticks, Entry},
     solana_measure::measure::Measure,
-    solana_perf::packet::{limited_deserialize, Packet},
+    solana_perf::{
+        packet::{limited_deserialize, Packet},
+        turbine_merkle::{
+            TurbineMerkleHash, TURBINE_MERKLE_HASH_BYTES, TURBINE_MERKLE_PROOF_BYTES_FEC64,
+        },
+    },
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::{
         clock::Slot,
@@ -105,10 +110,6 @@ pub type Nonce = u32;
 /// The following constants are computed by hand, and hardcoded.
 /// `test_shred_constants` ensures that the values are correct.
 /// Constants are used over lazy_static for performance reasons.
-
-// TODO consolidate with turbine_merkle.rs
-pub const TURBINE_MERKLE_HASH_BYTES: usize = 20;
-pub const TURBINE_MERKLE_PROOF_BYTES_FEC64: usize = TURBINE_MERKLE_HASH_BYTES * 6;
 
 //pub const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
 pub const SIZE_OF_COMMON_SHRED_HEADER: usize =
@@ -232,16 +233,6 @@ pub struct Hash(pub(crate) [u8; HASH_BYTES]);
 pub struct Signature(GenericArray<u8, U64>);
 */
 
-#[repr(transparent)]
-#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
-//pub struct MerkleRootHash(pub [u8; 32]);
-pub struct MerkleRootHash(pub [u8; TURBINE_MERKLE_HASH_BYTES]);
-
-#[repr(transparent)]
-#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
-//pub struct MerkelProofBytes(pub GenericArray<u8, U192>);
-pub struct MerkelProofBytes(pub GenericArray<u8, U120>);
-
 /// A common header that is present in data and code shred headers
 #[derive(Serialize, Clone, Deserialize, Default, PartialEq, Debug)]
 pub struct ShredCommonHeader {
@@ -251,8 +242,8 @@ pub struct ShredCommonHeader {
     pub index: u32,
     pub version: u16,
     pub fec_set_index: u32,
-    pub merkle_root: MerkleRootHash,
-    pub merkle_proof: MerkelProofBytes,
+    pub merkle_root: TurbineMerkleHash,
+    pub merkle_proof: GenericArray<u8, U120>, // TODO cleanup
 }
 
 /// The data shred header has parent offset and flags

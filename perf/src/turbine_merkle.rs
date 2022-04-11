@@ -1,13 +1,16 @@
 use {
     serde::{Deserialize, Serialize},
-    sha2::{Digest, Sha256}
+    sha2::{Digest, Sha256},
 };
 
 pub const TURBINE_MERKLE_HASH_BYTES: usize = 20;
+pub const TURBINE_MERKLE_PROOF_BYTES_FEC64: usize = TURBINE_MERKLE_HASH_BYTES * 6;
 
+#[repr(transparent)]
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TurbineMerkleHash(pub [u8; TURBINE_MERKLE_HASH_BYTES]);
 
+#[repr(transparent)]
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurbineMerkleProof(pub Vec<TurbineMerkleHash>);
 

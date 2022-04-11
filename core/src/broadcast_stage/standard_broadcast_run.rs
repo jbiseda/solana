@@ -6,8 +6,7 @@ use {
         *,
     },
     crate::{
-        broadcast_stage::broadcast_utils::UnfinishedSlotInfo,
-        cluster_nodes::ClusterNodesCache,
+        broadcast_stage::broadcast_utils::UnfinishedSlotInfo, cluster_nodes::ClusterNodesCache,
     },
     solana_entry::entry::Entry,
     solana_ledger::shred::{
@@ -351,7 +350,7 @@ impl StandardBroadcastRun {
                     .expect("failed to serialize signature");
                 bincode::serialize_into(&mut s.common_header.merkle_root.0[..], &merkle_root)
                     .expect("failed to serialize merkle root");
-                bincode::serialize_into(&mut s.common_header.merkle_proof.0[..], &merkle_proofs[i])
+                bincode::serialize_into(&mut s.common_header.merkle_proof[..], &merkle_proofs[i])
                     .expect("failed to serialize merkle proof");
             }
         }

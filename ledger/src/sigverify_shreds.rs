@@ -16,6 +16,7 @@ use {
         perf_libs,
         recycler_cache::RecyclerCache,
         sigverify::{self, count_packets_in_batches, TxOffset},
+        turbine_merkle::TURBINE_MERKLE_HASH_BYTES,
     },
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::{
@@ -49,7 +50,13 @@ pub fn verify_shred_cpu(packet: &Packet, slot_leaders: &HashMap<u64, [u8; 32]>) 
     let sig_end = size_of::<Signature>();
     let slot_start = sig_end + size_of::<ShredType>();
     let slot_end = slot_start + size_of::<u64>();
-    let msg_start = sig_end;
+    let index_end = slot_end + size_of::<u32>();
+    //let msg_start = sig_end;
+
+    // TODO cleanup
+    let merkle_root_start = index_end + size_of::<u16>() + size_of::<u32>();
+    let merkle_root_end = merkle_root_start + TURBINE_MERKLE_HASH_BYTES;
+
     if packet.meta.discard() {
         return Some(0);
     }
@@ -58,7 +65,10 @@ pub fn verify_shred_cpu(packet: &Packet, slot_leaders: &HashMap<u64, [u8; 32]>) 
         return Some(0);
     }
     let slot: u64 = limited_deserialize(&packet.data[slot_start..slot_end]).ok()?;
-    let msg_end = if packet.meta.repair() {
+
+    let index: u32 = limited_deserialize(&packet.data[slot_end..index_end]).ok()?;
+
+    let _msg_end = if packet.meta.repair() {
         packet.meta.size.saturating_sub(SIZE_OF_NONCE)
     } else {
         packet.meta.size
@@ -70,9 +80,26 @@ pub fn verify_shred_cpu(packet: &Packet, slot_leaders: &HashMap<u64, [u8; 32]>) 
     }
     let signature = Signature::new(&packet.data[sig_start..sig_end]);
     trace!("signature {}", signature);
+
+    /*
     if !signature.verify(pubkey, &packet.data[msg_start..msg_end]) {
         return Some(0);
     }
+    */
+    if !signature.verify(pubkey, &packet.data[merkle_root_start..merkle_root_end]) {
+        error!("merkle rood sig verify failed slot={}", slot);
+        return Some(0);
+    }
+
+    error!("slot={} index={}", slot, index);
+
+    let _merkle_proof_start = merkle_root_end;
+    let _merkle_proof_end = TURBINE_MERKLE_HASH_BYTES * 6; // TODO cleanup
+
+    // get leaf hash
+    //TurbineMerkleHash::hash()
+    //proof.verify(root_hash, leaf_hash, leaf_index)
+
     Some(1)
 }
 
