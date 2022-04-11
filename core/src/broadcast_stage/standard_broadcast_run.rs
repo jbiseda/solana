@@ -8,13 +8,13 @@ use {
     crate::{
         broadcast_stage::broadcast_utils::UnfinishedSlotInfo,
         cluster_nodes::ClusterNodesCache,
-        turbine_merkle::{TurbineMerkleHash, TurbineMerkleTree},
     },
     solana_entry::entry::Entry,
     solana_ledger::shred::{
         ProcessShredsStats, Shred, Shredder, MAX_DATA_SHREDS_PER_FEC_BLOCK,
         SHRED_TICK_REFERENCE_MASK, SIZE_OF_SIGNATURE,
     },
+    solana_perf::turbine_merkle::{TurbineMerkleHash, TurbineMerkleTree},
     solana_sdk::{
         signature::{Keypair, Signer},
         timing::{duration_as_us, AtomicInterval},

@@ -3,7 +3,7 @@
 extern crate test;
 
 use {
-    solana_core::turbine_merkle::{TurbineMerkleHash, TurbineMerkleTree},
+    solana_perf::turbine_merkle::{TurbineMerkleHash, TurbineMerkleTree},
     test::Bencher,
 };
 

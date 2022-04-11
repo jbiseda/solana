@@ -1,4 +1,7 @@
-use sha2::{Digest, Sha256};
+use {
+    serde::{Deserialize, Serialize},
+    sha2::{Digest, Sha256}
+};
 
 pub const TURBINE_MERKLE_HASH_BYTES: usize = 20;
 
