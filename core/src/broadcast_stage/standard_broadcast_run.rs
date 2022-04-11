@@ -11,7 +11,8 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::shred::{
         ProcessShredsStats, Shred, Shredder, MAX_DATA_SHREDS_PER_FEC_BLOCK,
-        SHRED_TICK_REFERENCE_MASK, SIZE_OF_SIGNATURE,
+        SHRED_TICK_REFERENCE_MASK, SIZE_OF_SIGNATURE, SIZE_OF_SHRED_MERKLE_PROOF, SIZE_OF_SHRED_MERKLE_ROOT,
+        OFFSET_OF_SHRED_MERKLE_PROOF, OFFSET_OF_SHRED_MERKLE_ROOT,
     },
     solana_perf::turbine_merkle::{TurbineMerkleHash, TurbineMerkleTree},
     solana_sdk::{
@@ -346,11 +347,24 @@ impl StandardBroadcastRun {
             let merkle_proofs: Vec<_> = (0..64).map(|i| merkle_tree.prove(i)).collect();
 
             for (i, s) in coding_shreds.iter_mut().enumerate() {
+                s.common_header.signature = root_sig;
                 bincode::serialize_into(&mut s.payload[..SIZE_OF_SIGNATURE], &root_sig)
                     .expect("failed to serialize signature");
-                bincode::serialize_into(&mut s.common_header.merkle_root.0[..], &merkle_root)
+
+                s.common_header.merkle_root = merkle_root;
+                //bincode::serialize_into(&mut s.common_header.merkle_root.0[..], &merkle_root)
+                //    .expect("failed to serialize merkle root");
+                let merkle_root_start = OFFSET_OF_SHRED_MERKLE_ROOT;
+                let merkle_root_end = merkle_root_start + SIZE_OF_SHRED_MERKLE_ROOT;
+                bincode::serialize_into(&mut s.payload[merkle_root_start..merkle_root_end], &merkle_root)
                     .expect("failed to serialize merkle root");
+
+                //s.common_header.merkle_proof = merkle_proofs[i];
                 bincode::serialize_into(&mut s.common_header.merkle_proof[..], &merkle_proofs[i])
+                    .expect("failed to serialize merkle proof");
+                let merkle_proof_start = OFFSET_OF_SHRED_MERKLE_PROOF;
+                let merkle_proof_end = merkle_proof_start + SIZE_OF_SHRED_MERKLE_PROOF;
+                bincode::serialize_into(&mut s.payload[merkle_proof_start..merkle_proof_end], &merkle_proofs[i])
                     .expect("failed to serialize merkle proof");
             }
         }
