@@ -52,7 +52,7 @@
 use {
     crate::{blockstore::MAX_DATA_SHREDS_PER_SLOT, erasure::Session},
     bincode::config::Options,
-    generic_array::{typenum::U192, GenericArray},
+    generic_array::{typenum::U120, GenericArray},
     num_derive::FromPrimitive,
     num_traits::FromPrimitive,
     rayon::{prelude::*, ThreadPool},
@@ -106,8 +106,13 @@ pub type Nonce = u32;
 /// `test_shred_constants` ensures that the values are correct.
 /// Constants are used over lazy_static for performance reasons.
 
+// TODO consolidate with turbine_merkle.rs
+pub const TURBINE_MERKLE_HASH_BYTES: usize = 20;
+pub const TURBINE_MERKLE_PROOF_BYTES_FEC64: usize = TURBINE_MERKLE_HASH_BYTES * 6;
+
 //pub const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
-pub const SIZE_OF_COMMON_SHRED_HEADER: usize = 83 + 32 + (32 * 6);
+pub const SIZE_OF_COMMON_SHRED_HEADER: usize =
+    83 + TURBINE_MERKLE_HASH_BYTES + (TURBINE_MERKLE_PROOF_BYTES_FEC64);
 
 pub const SIZE_OF_DATA_SHRED_HEADER: usize = 5;
 pub const SIZE_OF_CODING_SHRED_HEADER: usize = 6;
@@ -229,11 +234,13 @@ pub struct Signature(GenericArray<u8, U64>);
 
 #[repr(transparent)]
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
-pub struct MerkleRootHash(pub [u8; 32]);
+//pub struct MerkleRootHash(pub [u8; 32]);
+pub struct MerkleRootHash(pub [u8; TURBINE_MERKLE_HASH_BYTES]);
 
 #[repr(transparent)]
 #[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
-pub struct MerkelProofBytes(pub GenericArray<u8, U192>);
+//pub struct MerkelProofBytes(pub GenericArray<u8, U192>);
+pub struct MerkelProofBytes(pub GenericArray<u8, U120>);
 
 /// A common header that is present in data and code shred headers
 #[derive(Serialize, Clone, Deserialize, Default, PartialEq, Debug)]
@@ -537,7 +544,7 @@ impl Shred {
         self.common_header.index
     }
 
-    pub(crate) fn fec_set_index(&self) -> u32 {
+    pub fn fec_set_index(&self) -> u32 {
         self.common_header.fec_set_index
     }
 
@@ -878,6 +885,7 @@ impl Shredder {
         if data_shreds.is_empty() {
             return Ok(Vec::default());
         }
+        let data_shreds_len = data_shreds.len();
         let mut gen_coding_time = Measure::start("gen_coding_shreds");
         // 1) Generate coding shreds
         let mut coding_shreds: Vec<_> = PAR_THREAD_POOL.with(|thread_pool| {
@@ -923,6 +931,11 @@ impl Shredder {
 
         process_stats.gen_coding_elapsed += gen_coding_time.as_us();
         process_stats.sign_coding_elapsed += sign_coding_time.as_us();
+        error!(
+            "TRACKING data2coding data={} code={}",
+            data_shreds_len,
+            coding_shreds.len()
+        );
         Ok(coding_shreds)
     }
 

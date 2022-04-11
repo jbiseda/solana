@@ -6,15 +6,17 @@ use {
         *,
     },
     crate::{
-        broadcast_stage::broadcast_utils::UnfinishedSlotInfo, cluster_nodes::ClusterNodesCache,
+        broadcast_stage::broadcast_utils::UnfinishedSlotInfo,
+        cluster_nodes::ClusterNodesCache,
+        turbine_merkle::{TurbineMerkleHash, TurbineMerkleTree},
     },
     solana_entry::entry::Entry,
     solana_ledger::shred::{
         ProcessShredsStats, Shred, Shredder, MAX_DATA_SHREDS_PER_FEC_BLOCK,
-        SHRED_TICK_REFERENCE_MASK,
+        SHRED_TICK_REFERENCE_MASK, SIZE_OF_SIGNATURE,
     },
     solana_sdk::{
-        signature::Keypair,
+        signature::{Keypair, Signer},
         timing::{duration_as_us, AtomicInterval},
     },
     std::{sync::RwLock, time::Duration},
@@ -215,6 +217,7 @@ impl StandardBroadcastRun {
         // 1) Check if slot was interrupted
         let prev_slot_shreds =
             self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8, &mut process_stats);
+        // TODO handle data shreds included here
 
         // 2) Convert entries to shreds and coding shreds
         let is_last_in_slot = last_tick_height == bank.max_tick_height();
@@ -287,16 +290,12 @@ impl StandardBroadcastRun {
         debug_assert!(data_shreds.iter().all(|shred| shred.slot() == bank.slot()));
 
         // Create and send coding shreds
-        let coding_shreds = make_coding_shreds(
+        let mut coding_shreds = make_coding_shreds(
             keypair,
             &mut self.unfinished_slot,
             is_last_in_slot,
             &mut process_stats,
         );
-        let coding_shreds = Arc::new(coding_shreds);
-        debug_assert!(coding_shreds
-            .iter()
-            .all(|shred| shred.slot() == bank.slot()));
 
         // TODO create hashes from all packets
         // create merkle tree
@@ -310,8 +309,57 @@ impl StandardBroadcastRun {
             data_shreds.len() + coding_shreds.len(),
         );
 
-        socket_sender.send((data_shreds.clone(), batch_info.clone()))?;
-        blockstore_sender.send((data_shreds, batch_info.clone()))?;
+        //socket_sender.send((data_shreds.clone(), batch_info.clone()))?;
+        //blockstore_sender.send((data_shreds, batch_info.clone()))?;
+
+        if !coding_shreds.is_empty() {
+            let indexes: Vec<_> = coding_shreds.iter().map(|s| s.index()).collect();
+            println!(
+                "coding_shreds fec_set={} indexes: {:?}",
+                coding_shreds[0].fec_set_index(),
+                &indexes
+            );
+            let fec_index = coding_shreds[0].fec_set_index();
+            for s in coding_shreds.iter() {
+                if s.fec_set_index() != fec_index {
+                    error!("FEC SET MISMATCH! {} {}", fec_index, s.fec_set_index());
+                }
+            }
+
+            /*
+                            pub fn sign_shred(signer: &Keypair, shred: &mut Shred) {
+                    let signature = signer.sign_message(&shred.payload[SIZE_OF_SIGNATURE..]);
+                    bincode::serialize_into(&mut shred.payload[..SIZE_OF_SIGNATURE], &signature)
+                        .expect("Failed to generate serialized signature");
+                    shred.common_header.signature = signature;
+                }
+            */
+
+            let merkle_leaves: Vec<_> = coding_shreds
+                .iter()
+                .map(|s| TurbineMerkleHash::hash(&[&s.payload[SIZE_OF_SIGNATURE..]]))
+                .collect();
+
+            let merkle_tree = TurbineMerkleTree::new_from_leaves(&merkle_leaves);
+
+            let merkle_root = merkle_tree.root();
+            let root_sig = keypair.sign_message(merkle_root.as_bytes());
+            let merkle_proofs: Vec<_> = (0..64).map(|i| merkle_tree.prove(i)).collect();
+
+            for (i, s) in coding_shreds.iter_mut().enumerate() {
+                bincode::serialize_into(&mut s.payload[..SIZE_OF_SIGNATURE], &root_sig)
+                    .expect("failed to serialize signature");
+                bincode::serialize_into(&mut s.common_header.merkle_root.0[..], &merkle_root)
+                    .expect("failed to serialize merkle root");
+                bincode::serialize_into(&mut s.common_header.merkle_proof.0[..], &merkle_proofs[i])
+                    .expect("failed to serialize merkle proof");
+            }
+        }
+
+        let coding_shreds = Arc::new(coding_shreds);
+        debug_assert!(coding_shreds
+            .iter()
+            .all(|shred| shred.slot() == bank.slot()));
 
         socket_sender.send((coding_shreds.clone(), batch_info.clone()))?;
         blockstore_sender.send((coding_shreds, batch_info))?;
@@ -477,7 +525,7 @@ fn make_coding_shreds(
         None => return Vec::default(),
         Some(state) => state,
     };
-    let data_shreds: Vec<_> = {
+    let mut data_shreds: Vec<_> = {
         let size = unfinished_slot.data_shreds_buffer.len();
         // Consume a multiple of 32, unless this is the slot end.
         let offset = if is_slot_end {
@@ -506,7 +554,9 @@ fn make_coding_shreds(
     {
         unfinished_slot.next_code_index = unfinished_slot.next_code_index.max(index + 1);
     }
-    shreds
+    //shreds
+    data_shreds.extend(shreds.into_iter());
+    data_shreds
 }
 
 impl BroadcastRun for StandardBroadcastRun {

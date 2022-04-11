@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 
-pub const TURBINE_MERKLE_HASH_BYTES: usize = 10;
+pub const TURBINE_MERKLE_HASH_BYTES: usize = 20;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TurbineMerkleHash(pub [u8; TURBINE_MERKLE_HASH_BYTES]);
@@ -21,6 +21,10 @@ impl TurbineMerkleHash {
         let mut ret = TurbineMerkleHash::default();
         ret.0[..].copy_from_slice(&h.as_slice()[0..TURBINE_MERKLE_HASH_BYTES]);
         ret
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 }
 
