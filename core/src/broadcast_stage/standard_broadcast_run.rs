@@ -11,12 +11,15 @@ use {
     solana_entry::entry::Entry,
     solana_ledger::shred::{
         ProcessShredsStats, Shred, Shredder, MAX_DATA_SHREDS_PER_FEC_BLOCK,
-        SHRED_TICK_REFERENCE_MASK, SIZE_OF_SIGNATURE, SIZE_OF_SHRED_MERKLE_PROOF, SIZE_OF_SHRED_MERKLE_ROOT,
-        OFFSET_OF_SHRED_MERKLE_PROOF, OFFSET_OF_SHRED_MERKLE_ROOT,
+        OFFSET_OF_SHRED_HASHED_PAYLOAD, OFFSET_OF_SHRED_MERKLE_PROOF, OFFSET_OF_SHRED_MERKLE_ROOT,
+        SHRED_TICK_REFERENCE_MASK, SIZE_OF_SHRED_MERKLE_PROOF, SIZE_OF_SHRED_MERKLE_ROOT,
+        SIZE_OF_SIGNATURE,
     },
-    solana_perf::turbine_merkle::{TurbineMerkleHash, TurbineMerkleTree},
+    solana_perf::turbine_merkle::{
+        TurbineMerkleHash, TurbineMerkleProof, TurbineMerkleTree, TURBINE_MERKLE_HASH_BYTES,
+    },
     solana_sdk::{
-        signature::{Keypair, Signer},
+        signature::{Keypair, Signature, Signer},
         timing::{duration_as_us, AtomicInterval},
     },
     std::{sync::RwLock, time::Duration},
@@ -64,11 +67,11 @@ impl StandardBroadcastRun {
         keypair: &Keypair,
         max_ticks_in_slot: u8,
         stats: &mut ProcessShredsStats,
-    ) -> Vec<Shred> {
+    ) -> (Vec<Shred>, Vec<Shred>) {
         let (current_slot, _) = self.current_slot_and_parent.unwrap();
         match self.unfinished_slot {
-            None => Vec::default(),
-            Some(ref state) if state.slot == current_slot => Vec::default(),
+            None => (Vec::default(), Vec::default()),
+            Some(ref state) if state.slot == current_slot => (Vec::default(), Vec::default()),
             Some(ref mut state) => {
                 let parent_offset = state.slot - state.parent;
                 let reference_tick = max_ticks_in_slot & SHRED_TICK_REFERENCE_MASK;
@@ -85,18 +88,18 @@ impl StandardBroadcastRun {
                     self.shred_version,
                     fec_set_index.unwrap(),
                 );
-                Shredder::sign_shred(keypair, &mut shred);
+                //Shredder::sign_shred(keypair, &mut shred);
                 state.data_shreds_buffer.push(shred.clone());
-                let mut shreds = make_coding_shreds(
+                let (data_shreds, mut coding_shreds) = make_coding_shreds(
                     keypair,
                     &mut self.unfinished_slot,
                     true, // is_last_in_slot
                     stats,
                 );
-                shreds.insert(0, shred);
+                coding_shreds.insert(0, shred);
                 self.report_and_reset_stats(true);
                 self.unfinished_slot = None;
-                shreds
+                (data_shreds, coding_shreds)
             }
         }
     }
@@ -215,7 +218,7 @@ impl StandardBroadcastRun {
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
 
         // 1) Check if slot was interrupted
-        let prev_slot_shreds =
+        let (prev_slot_shreds_data, prev_slot_shreds_coding) =
             self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8, &mut process_stats);
         // TODO handle data shreds included here
 
@@ -231,10 +234,6 @@ impl StandardBroadcastRun {
             &mut process_stats,
         );
 
-        error!("data_shreds.len()={}", data_shreds.len());
-
-        // TODO new sig for shreds
-
         // Insert the first shred so blockstore stores that the leader started this block
         // This must be done before the blocks are sent out over the wire.
         if !data_shreds.is_empty() && data_shreds[0].index() == 0 {
@@ -247,8 +246,9 @@ impl StandardBroadcastRun {
 
         let mut get_leader_schedule_time = Measure::start("broadcast_get_leader_schedule");
         // Broadcast the last shred of the interrupted slot if necessary
-        if !prev_slot_shreds.is_empty() {
-            let slot = prev_slot_shreds[0].slot();
+        if !prev_slot_shreds_coding.is_empty() {
+            let slot = prev_slot_shreds_coding[0].slot();
+            error!("PREV_SLOT_SHREDS_CODING! {}", slot);
             let batch_info = Some(BroadcastShredBatchInfo {
                 slot,
                 num_expected_batches: Some(old_num_batches + 1),
@@ -258,11 +258,15 @@ impl StandardBroadcastRun {
                 ),
                 was_interrupted: true,
             });
-            let shreds = Arc::new(prev_slot_shreds);
+            let shreds = Arc::new(prev_slot_shreds_coding);
             debug_assert!(shreds.iter().all(|shred| shred.slot() == slot));
+
+            // TODO do we still send these here?
             socket_sender.send((shreds.clone(), batch_info.clone()))?;
             blockstore_sender.send((shreds, batch_info))?;
         }
+
+        // TODO prev_slot_shreds_data?
 
         // Increment by two batches, one for the data batch, one for the coding batch.
         self.num_batches += 2;
@@ -285,97 +289,76 @@ impl StandardBroadcastRun {
 
         let mut coding_send_time = Measure::start("broadcast_coding_send");
 
-        // Send data shreds
-        let data_shreds = Arc::new(data_shreds);
-        debug_assert!(data_shreds.iter().all(|shred| shred.slot() == bank.slot()));
-
         // Create and send coding shreds
-        let mut coding_shreds = make_coding_shreds(
+        let (mut data_shreds_agg, mut coding_shreds) = make_coding_shreds(
             keypair,
             &mut self.unfinished_slot,
             is_last_in_slot,
             &mut process_stats,
         );
 
-        // TODO create hashes from all packets
-        // create merkle tree
-        // get merkle root
-        // sign merkle root
-
-        error!(
-            "TRACKING SENDING data_shreds.len()={} coding_shreds.len()={} sum={}",
-            data_shreds.len(),
-            coding_shreds.len(),
-            data_shreds.len() + coding_shreds.len(),
-        );
-
-        //socket_sender.send((data_shreds.clone(), batch_info.clone()))?;
-        //blockstore_sender.send((data_shreds, batch_info.clone()))?;
-
         if !coding_shreds.is_empty() {
-            let indexes: Vec<_> = coding_shreds.iter().map(|s| s.index()).collect();
-            println!(
-                "coding_shreds fec_set={} indexes: {:?}",
-                coding_shreds[0].fec_set_index(),
-                &indexes
-            );
-            let fec_index = coding_shreds[0].fec_set_index();
-            for s in coding_shreds.iter() {
-                if s.fec_set_index() != fec_index {
-                    error!("FEC SET MISMATCH! {} {}", fec_index, s.fec_set_index());
-                }
-            }
+            let total_shreds = data_shreds_agg.len() + coding_shreds.len();
+            assert!(total_shreds % 64 == 0);
+            assert!(total_shreds / 64 > 0);
 
-            /*
-                            pub fn sign_shred(signer: &Keypair, shred: &mut Shred) {
-                    let signature = signer.sign_message(&shred.payload[SIZE_OF_SIGNATURE..]);
-                    bincode::serialize_into(&mut shred.payload[..SIZE_OF_SIGNATURE], &signature)
-                        .expect("Failed to generate serialized signature");
-                    shred.common_header.signature = signature;
-                }
-            */
-
-            let merkle_leaves: Vec<_> = coding_shreds
+            let x: Vec<_> = data_shreds_agg
                 .iter()
-                .map(|s| TurbineMerkleHash::hash(&[&s.payload[SIZE_OF_SIGNATURE..]]))
+                .map(|s| (s.slot(), s.fec_set_index(), s.index()))
                 .collect();
+            warn!("DATA >>> {:?}", &x);
+            let x: Vec<_> = coding_shreds
+                .iter()
+                .map(|s| {
+                    (
+                        s.slot(),
+                        s.fec_set_index(),
+                        s.index(),
+                        s.coding_header.num_data_shreds + s.coding_header.position,
+                    )
+                })
+                .collect();
+            warn!("CODE >>> {:?}", &x);
 
-            let merkle_tree = TurbineMerkleTree::new_from_leaves(&merkle_leaves);
+            while !data_shreds_agg.is_empty() {
+                let mut batch_shreds: Vec<_> = data_shreds_agg
+                    .drain(..32.min(data_shreds_agg.len()))
+                    .collect();
+                batch_shreds.extend(coding_shreds.drain(..64 - batch_shreds.len()));
 
-            let merkle_root = merkle_tree.root();
-            let root_sig = keypair.sign_message(merkle_root.as_bytes());
-            let merkle_proofs: Vec<_> = (0..64).map(|i| merkle_tree.prove(i)).collect();
+                assert_eq!(batch_shreds.len(), 64);
 
-            for (i, s) in coding_shreds.iter_mut().enumerate() {
-                s.common_header.signature = root_sig;
-                bincode::serialize_into(&mut s.payload[..SIZE_OF_SIGNATURE], &root_sig)
-                    .expect("failed to serialize signature");
+                let merkle_leaves: Vec<_> = batch_shreds
+                    .iter()
+                    .map(|s| {
+                        TurbineMerkleHash::hash(&[&s.payload[OFFSET_OF_SHRED_HASHED_PAYLOAD..]])
+                    })
+                    .collect();
 
-                s.common_header.merkle_root = merkle_root;
-                //bincode::serialize_into(&mut s.common_header.merkle_root.0[..], &merkle_root)
-                //    .expect("failed to serialize merkle root");
-                let merkle_root_start = OFFSET_OF_SHRED_MERKLE_ROOT;
-                let merkle_root_end = merkle_root_start + SIZE_OF_SHRED_MERKLE_ROOT;
-                bincode::serialize_into(&mut s.payload[merkle_root_start..merkle_root_end], &merkle_root)
-                    .expect("failed to serialize merkle root");
+                let merkle_tree = TurbineMerkleTree::new_from_leaves(&merkle_leaves);
 
-                //s.common_header.merkle_proof = merkle_proofs[i];
-                bincode::serialize_into(&mut s.common_header.merkle_proof[..], &merkle_proofs[i])
-                    .expect("failed to serialize merkle proof");
-                let merkle_proof_start = OFFSET_OF_SHRED_MERKLE_PROOF;
-                let merkle_proof_end = merkle_proof_start + SIZE_OF_SHRED_MERKLE_PROOF;
-                bincode::serialize_into(&mut s.payload[merkle_proof_start..merkle_proof_end], &merkle_proofs[i])
-                    .expect("failed to serialize merkle proof");
+                let merkle_root = merkle_tree.root();
+                let root_sig = keypair.sign_message(merkle_root.as_bytes());
+                let merkle_proofs: Vec<_> = (0..64).map(|i| merkle_tree.prove(i)).collect();
+
+                for i in 0..64 {
+                    Self::set_merkle_data_for_shred(
+                        &mut batch_shreds[i],
+                        &merkle_root,
+                        &root_sig,
+                        &merkle_proofs[i],
+                    );
+                }
+
+                let batch_shreds = Arc::new(batch_shreds);
+                debug_assert!(batch_shreds.iter().all(|shred| shred.slot() == bank.slot()));
+                socket_sender.send((batch_shreds.clone(), batch_info.clone()))?;
+                blockstore_sender.send((batch_shreds, batch_info.clone()))?;
             }
+
+            assert!(data_shreds_agg.is_empty());
+            assert!(coding_shreds.is_empty());
         }
-
-        let coding_shreds = Arc::new(coding_shreds);
-        debug_assert!(coding_shreds
-            .iter()
-            .all(|shred| shred.slot() == bank.slot()));
-
-        socket_sender.send((coding_shreds.clone(), batch_info.clone()))?;
-        blockstore_sender.send((coding_shreds, batch_info))?;
 
         coding_send_time.stop();
 
@@ -392,6 +375,37 @@ impl StandardBroadcastRun {
         }
 
         Ok(())
+    }
+
+    fn set_merkle_data_for_shred(
+        shred: &mut Shred,
+        root: &TurbineMerkleHash,
+        root_signature: &Signature,
+        proof: &TurbineMerkleProof,
+    ) {
+        shred.common_header.signature = *root_signature;
+        shred.common_header.merkle_root = *root;
+        // shred.common_header.merkle_proof = proof
+
+        bincode::serialize_into(&mut shred.payload[..SIZE_OF_SIGNATURE], root_signature)
+            .expect("failed to serialize signature");
+
+        bincode::serialize_into(
+            &mut shred.payload[OFFSET_OF_SHRED_MERKLE_ROOT
+                ..OFFSET_OF_SHRED_MERKLE_ROOT + SIZE_OF_SHRED_MERKLE_ROOT],
+            &root,
+        )
+        .expect("failed to serialize merkle root");
+
+        let mut curr_proof_start = OFFSET_OF_SHRED_MERKLE_PROOF;
+        for i in 0..6 {
+            bincode::serialize_into(
+                &mut shred.payload[curr_proof_start..curr_proof_start + TURBINE_MERKLE_HASH_BYTES],
+                &proof.0[i],
+            )
+            .expect("failed to serialize merkle proof");
+            curr_proof_start += TURBINE_MERKLE_HASH_BYTES;
+        }
     }
 
     fn insert(
@@ -533,9 +547,9 @@ fn make_coding_shreds(
     unfinished_slot: &mut Option<UnfinishedSlotInfo>,
     is_slot_end: bool,
     stats: &mut ProcessShredsStats,
-) -> Vec<Shred> {
+) -> (Vec<Shred>, Vec<Shred>) {
     let unfinished_slot = match unfinished_slot {
-        None => return Vec::default(),
+        None => return (Vec::default(), Vec::default()),
         Some(state) => state,
     };
     let mut data_shreds: Vec<_> = {
@@ -567,9 +581,7 @@ fn make_coding_shreds(
     {
         unfinished_slot.next_code_index = unfinished_slot.next_code_index.max(index + 1);
     }
-    //shreds
-    data_shreds.extend(shreds.into_iter());
-    data_shreds
+    (data_shreds, shreds)
 }
 
 impl BroadcastRun for StandardBroadcastRun {
@@ -698,8 +710,9 @@ mod test {
         run.current_slot_and_parent = Some((4, 2));
 
         // Slot 2 interrupted slot 1
-        let shreds = run.finish_prev_slot(&keypair, 0, &mut ProcessShredsStats::default());
-        let shred = shreds
+        let (data_shreds, coding_shreds) =
+            run.finish_prev_slot(&keypair, 0, &mut ProcessShredsStats::default());
+        let shred = coding_shreds
             .get(0)
             .expect("Expected a shred that signals an interrupt");
 

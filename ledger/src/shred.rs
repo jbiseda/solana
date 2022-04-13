@@ -62,7 +62,8 @@ use {
     solana_perf::{
         packet::{limited_deserialize, Packet},
         turbine_merkle::{
-            TurbineMerkleHash, TURBINE_MERKLE_HASH_BYTES, TURBINE_MERKLE_PROOF_BYTES_FEC64,
+            TurbineMerkleHash, TurbineMerkleProof, TURBINE_MERKLE_HASH_BYTES,
+            TURBINE_MERKLE_PROOF_BYTES_FEC64,
         },
     },
     solana_rayon_threadlimit::get_thread_count,
@@ -139,9 +140,14 @@ pub const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_TYPE;
 pub const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
 pub const OFFSET_OF_SHRED_VERSION: usize = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX;
 pub const OFFSET_OF_SHRED_FEC_SET_INDEX: usize = OFFSET_OF_SHRED_VERSION + SIZE_OF_SHRED_VERSION;
-pub const OFFSET_OF_SHRED_MERKLE_ROOT: usize = OFFSET_OF_SHRED_FEC_SET_INDEX + SIZE_OF_SHRED_FEC_SET_INDEX;
-pub const OFFSET_OF_SHRED_MERKLE_PROOF: usize = OFFSET_OF_SHRED_MERKLE_ROOT + SIZE_OF_SHRED_MERKLE_ROOT;
+pub const OFFSET_OF_SHRED_MERKLE_ROOT: usize =
+    OFFSET_OF_SHRED_FEC_SET_INDEX + SIZE_OF_SHRED_FEC_SET_INDEX;
+pub const OFFSET_OF_SHRED_MERKLE_PROOF: usize =
+    OFFSET_OF_SHRED_MERKLE_ROOT + SIZE_OF_SHRED_MERKLE_ROOT;
 pub const SHRED_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - SIZE_OF_NONCE;
+
+pub const OFFSET_OF_SHRED_HASHED_PAYLOAD: usize =
+    SIZE_OF_SIGNATURE + SIZE_OF_SHRED_MERKLE_ROOT + SIZE_OF_SHRED_MERKLE_PROOF;
 
 thread_local!(static PAR_THREAD_POOL: RefCell<ThreadPool> = RefCell::new(rayon::ThreadPoolBuilder::new()
                     .num_threads(get_thread_count())
@@ -245,13 +251,15 @@ pub struct Signature(GenericArray<u8, U64>);
 #[derive(Serialize, Clone, Deserialize, Default, PartialEq, Debug)]
 pub struct ShredCommonHeader {
     pub signature: Signature,
+    pub merkle_root: TurbineMerkleHash,
+    pub merkle_proof: TurbineMerkleProof,
+    //pub merkle_proof: GenericArray<u8, U120>, // TODO cleanup
+    // OFFSET_OF_SHRED_HASHED_PAYLOAD
     pub shred_type: ShredType,
     pub slot: Slot,
     pub index: u32,
     pub version: u16,
     pub fec_set_index: u32,
-    pub merkle_root: TurbineMerkleHash,
-    pub merkle_proof: GenericArray<u8, U120>, // TODO cleanup
 }
 
 /// The data shred header has parent offset and flags
@@ -746,8 +754,26 @@ impl Shred {
     }
 
     pub fn verify(&self, pubkey: &Pubkey) -> bool {
+        /*
         self.signature()
             .verify(pubkey.as_ref(), &self.payload[SIZE_OF_SIGNATURE..])
+            */
+        if !self
+            .signature()
+            .verify(pubkey.as_ref(), &self.common_header.merkle_root.0[..])
+        {
+            return false;
+        }
+        let leaf_hash = TurbineMerkleHash::hash(&[&self.payload[OFFSET_OF_SHRED_HASHED_PAYLOAD..]]);
+        let idx = match self.shred_type() {
+            ShredType::Data => self.index(),
+            ShredType::Code => {
+                self.coding_header.num_data_shreds as u32 + self.coding_header.position as u32
+            }
+        } as usize;
+        self.common_header
+            .merkle_proof
+            .verify(&self.common_header.merkle_root, &leaf_hash, idx)
     }
 }
 
@@ -851,7 +877,7 @@ impl Shredder {
                 self.version,
                 fec_set_index.unwrap(),
             );
-            Shredder::sign_shred(keypair, &mut shred);
+            //Shredder::sign_shred(keypair, &mut shred);
             shred
         };
         let data_shreds: Vec<Shred> = PAR_THREAD_POOL.with(|thread_pool| {
@@ -919,6 +945,7 @@ impl Shredder {
 
         let mut sign_coding_time = Measure::start("sign_coding_shreds");
         // 2) Sign coding shreds
+        /*
         PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 coding_shreds.par_iter_mut().for_each(|coding_shred| {
@@ -926,24 +953,31 @@ impl Shredder {
                 })
             })
         });
+        */
         sign_coding_time.stop();
 
         process_stats.gen_coding_elapsed += gen_coding_time.as_us();
         process_stats.sign_coding_elapsed += sign_coding_time.as_us();
+
+        /*
         error!(
             "TRACKING data2coding data={} code={}",
             data_shreds_len,
             coding_shreds.len()
         );
+        */
+
         Ok(coding_shreds)
     }
 
+    /*
     pub fn sign_shred(signer: &Keypair, shred: &mut Shred) {
         let signature = signer.sign_message(&shred.payload[SIZE_OF_SIGNATURE..]);
         bincode::serialize_into(&mut shred.payload[..SIZE_OF_SIGNATURE], &signature)
             .expect("Failed to generate serialized signature");
         shred.common_header.signature = signature;
     }
+    */
 
     pub fn new_coding_shred_header(
         slot: Slot,

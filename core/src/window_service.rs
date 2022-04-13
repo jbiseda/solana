@@ -886,7 +886,7 @@ mod test {
         );
         let mut coding_shred =
             Shred::new_empty_from_header(common, DataShredHeader::default(), coding);
-        Shredder::sign_shred(&leader_keypair, &mut coding_shred);
+        //Shredder::sign_shred(&leader_keypair, &mut coding_shred);
         // shred.slot() > root, shred continues
         assert!(should_retransmit_and_persist(
             &coding_shred,
