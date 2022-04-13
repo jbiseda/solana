@@ -219,41 +219,12 @@ impl<'de> Deserialize<'de> for ShredType {
     }
 }
 
-/*
-#[wasm_bindgen]
-#[derive(
-    Serialize,
-    Deserialize,
-    BorshSerialize,
-    BorshDeserialize,
-    BorshSchema,
-    Clone,
-    Copy,
-    Default,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Hash,
-    AbiExample,
-)]
-#[repr(transparent)]
-pub struct Hash(pub(crate) [u8; HASH_BYTES]);
-
-#[repr(transparent)]
-#[derive(
-    Serialize, Deserialize, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash, AbiExample,
-)]
-pub struct Signature(GenericArray<u8, U64>);
-*/
-
 /// A common header that is present in data and code shred headers
 #[derive(Serialize, Clone, Deserialize, Default, PartialEq, Debug)]
 pub struct ShredCommonHeader {
     pub signature: Signature,
     pub merkle_root: TurbineMerkleHash,
     pub merkle_proof: TurbineMerkleProof,
-    //pub merkle_proof: GenericArray<u8, U120>, // TODO cleanup
     // OFFSET_OF_SHRED_HASHED_PAYLOAD
     pub shred_type: ShredType,
     pub slot: Slot,
@@ -758,6 +729,12 @@ impl Shred {
         self.signature()
             .verify(pubkey.as_ref(), &self.payload[SIZE_OF_SIGNATURE..])
             */
+
+        let index = if let Some(idx) = self.erasure_block_index() {
+            idx
+        } else {
+            return false;
+        };
         if !self
             .signature()
             .verify(pubkey.as_ref(), &self.common_header.merkle_root.0[..])
@@ -765,15 +742,9 @@ impl Shred {
             return false;
         }
         let leaf_hash = TurbineMerkleHash::hash(&[&self.payload[OFFSET_OF_SHRED_HASHED_PAYLOAD..]]);
-        let idx = match self.shred_type() {
-            ShredType::Data => self.index(),
-            ShredType::Code => {
-                self.coding_header.num_data_shreds as u32 + self.coding_header.position as u32
-            }
-        } as usize;
         self.common_header
             .merkle_proof
-            .verify(&self.common_header.merkle_root, &leaf_hash, idx)
+            .verify(&self.common_header.merkle_root, &leaf_hash, index)
     }
 }
 
