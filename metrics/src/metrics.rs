@@ -326,7 +326,7 @@ impl MetricsAgent {
     }
 
     pub fn submit(&self, point: DataPoint, level: log::Level) {
-        {
+        if level <= log::Level::Info {
             let mut m = self.meta_metrics.lock().unwrap();
             *m.submit_map.entry(point.name).or_default() += 1;
             m.maybe_submit();
@@ -337,7 +337,7 @@ impl MetricsAgent {
     }
 
     pub fn submit_counter(&self, counter: CounterPoint, level: log::Level, bucket: u64) {
-        {
+        if level <= log::Level::Info {
             let mut m = self.meta_metrics.lock().unwrap();
             *m.submit_counter_map.entry(counter.name).or_default() += 1;
             m.maybe_submit();
