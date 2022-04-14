@@ -36,8 +36,35 @@ enum MetricsCommand {
     SubmitCounter(CounterPoint, log::Level, u64),
 }
 
+struct MetaMetrics {
+    submit_map: HashMap<&'static str, usize>,
+    submit_counter_map: HashMap<&'static str, usize>,
+    last_report: Instant,
+}
+
+impl Default for MetaMetrics {
+    fn default() -> MetaMetrics {
+        MetaMetrics {
+            submit_map: HashMap::default(),
+            submit_counter_map: HashMap::default(),
+            last_report: Instant::now(),
+        }
+    }
+}
+
+impl MetaMetrics {
+    fn maybe_submit(&mut self) {
+        if self.last_report.elapsed().as_secs() > 10 {
+            error!("submit_map: {:?}", &self.submit_map);
+            error!("submit_counter_map: {:?}", &self.submit_counter_map);
+            self.last_report = Instant::now();
+        }
+    }
+}
+
 struct MetricsAgent {
     sender: Sender<MetricsCommand>,
+    meta_metrics: Mutex<MetaMetrics>,
 }
 
 trait MetricsWriter {
@@ -156,7 +183,10 @@ impl MetricsAgent {
         let (sender, receiver) = unbounded::<MetricsCommand>();
         thread::spawn(move || Self::run(&receiver, &writer, write_frequency, max_points_per_sec));
 
-        Self { sender }
+        Self {
+            sender,
+            meta_metrics: Mutex::new(MetaMetrics::default()),
+        }
     }
 
     fn collect_points(
@@ -289,12 +319,22 @@ impl MetricsAgent {
     }
 
     pub fn submit(&self, point: DataPoint, level: log::Level) {
+        {
+            let mut m = self.meta_metrics.lock().unwrap();
+            *m.submit_map.entry(point.name).or_default() += 1;
+            m.maybe_submit();
+        }
         self.sender
             .send(MetricsCommand::Submit(point, level))
             .unwrap();
     }
 
     pub fn submit_counter(&self, counter: CounterPoint, level: log::Level, bucket: u64) {
+        {
+            let mut m = self.meta_metrics.lock().unwrap();
+            *m.submit_counter_map.entry(counter.name).or_default() += 1;
+            m.maybe_submit();
+        }
         self.sender
             .send(MetricsCommand::SubmitCounter(counter, level, bucket))
             .unwrap();
