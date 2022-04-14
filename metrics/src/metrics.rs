@@ -55,8 +55,15 @@ impl Default for MetaMetrics {
 impl MetaMetrics {
     fn maybe_submit(&mut self) {
         if self.last_report.elapsed().as_secs() > 10 {
-            error!("submit_map: {:?}", &self.submit_map);
-            error!("submit_counter_map: {:?}", &self.submit_counter_map);
+
+            let mut v: Vec<_> = self.submit_map.iter().collect();
+            v.sort_unstable_by(|(_, a), (_, b)| b.cmp(a));
+            //error!("submit_map: {}", &v.iter().fold(String::new(), |acc, (name, cnt)| acc + format!("{:10d} {}\n", cnt, name))[..]);
+            error!("submit_map: {:#?}", &v);
+
+            let mut v: Vec<_> = self.submit_counter_map.iter().collect();
+            v.sort_unstable_by(|(_, a), (_, b)| b.cmp(a));
+            error!("submit_counter_map: {:#?}", &v);
             self.last_report = Instant::now();
         }
     }
