@@ -12,8 +12,7 @@ use {
     solana_ledger::shred::{
         ProcessShredsStats, Shred, Shredder, MAX_DATA_SHREDS_PER_FEC_BLOCK,
         OFFSET_OF_SHRED_HASHED_PAYLOAD, OFFSET_OF_SHRED_MERKLE_PROOF, OFFSET_OF_SHRED_MERKLE_ROOT,
-        SHRED_TICK_REFERENCE_MASK, SIZE_OF_SHRED_MERKLE_PROOF, SIZE_OF_SHRED_MERKLE_ROOT,
-        SIZE_OF_SIGNATURE,
+        SHRED_TICK_REFERENCE_MASK, SIZE_OF_SHRED_MERKLE_ROOT, SIZE_OF_SIGNATURE,
     },
     solana_perf::turbine_merkle::{
         TurbineMerkleHash, TurbineMerkleProof, TurbineMerkleTree, TURBINE_MERKLE_HASH_BYTES,
@@ -385,7 +384,7 @@ impl StandardBroadcastRun {
     ) {
         shred.common_header.signature = *root_signature;
         shred.common_header.merkle_root = *root;
-        // shred.common_header.merkle_proof = proof
+        shred.common_header.merkle_proof = proof.clone();
 
         bincode::serialize_into(&mut shred.payload[..SIZE_OF_SIGNATURE], root_signature)
             .expect("failed to serialize signature");
@@ -552,7 +551,7 @@ fn make_coding_shreds(
         None => return (Vec::default(), Vec::default()),
         Some(state) => state,
     };
-    let mut data_shreds: Vec<_> = {
+    let data_shreds: Vec<_> = {
         let size = unfinished_slot.data_shreds_buffer.len();
         // Consume a multiple of 32, unless this is the slot end.
         let offset = if is_slot_end {

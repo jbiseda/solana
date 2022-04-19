@@ -34,17 +34,30 @@ impl TurbineMerkleHash {
     }
 }
 
+impl From<&[u8]> for TurbineMerkleHash {
+    fn from(buf: &[u8]) -> Self {
+        assert!(buf.len() == TURBINE_MERKLE_HASH_BYTES);
+        TurbineMerkleHash(buf.try_into().unwrap())
+    }
+}
+
+impl AsRef<[u8]> for TurbineMerkleHash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0[..]
+    }
+}
+
 impl TurbineMerkleProof {
     fn compute_root(&self, leaf_hash: &TurbineMerkleHash, leaf_index: usize) -> TurbineMerkleHash {
         let mut hash = *leaf_hash;
         let mut idx = leaf_index;
         for i in 0..self.0.len() {
-            hash = if idx % 2 == 0 {
+            hash = if idx & 1 == 0 {
                 TurbineMerkleHash::hash(&[&hash.0, &self.0[i].0])
             } else {
                 TurbineMerkleHash::hash(&[&self.0[i].0, &hash.0])
             };
-            idx /= 2;
+            idx >>= 1;
         }
         hash
     }
@@ -56,6 +69,17 @@ impl TurbineMerkleProof {
         leaf_index: usize,
     ) -> bool {
         &self.compute_root(leaf_hash, leaf_index) == root_hash
+    }
+}
+
+impl From<&[u8]> for TurbineMerkleProof {
+    fn from(buf: &[u8]) -> Self {
+        assert!(buf.len() == TURBINE_MERKLE_PROOF_BYTES_FEC64);
+        let v: Vec<TurbineMerkleHash> = buf
+            .chunks_exact(TURBINE_MERKLE_HASH_BYTES)
+            .map(|x| x.into())
+            .collect();
+        TurbineMerkleProof(v)
     }
 }
 

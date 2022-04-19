@@ -1,6 +1,14 @@
 #![allow(clippy::implicit_hasher)]
 use {
-    crate::shred::{ShredType, SIZE_OF_NONCE},
+    crate::shred::{
+        CodingShredHeader, ShredType, OFFSET_OF_SHRED_FEC_SET_INDEX,
+        OFFSET_OF_SHRED_HASHED_PAYLOAD, OFFSET_OF_SHRED_INDEX, OFFSET_OF_SHRED_MERKLE_PROOF,
+        OFFSET_OF_SHRED_MERKLE_ROOT, OFFSET_OF_SHRED_SIGNATURE, OFFSET_OF_SHRED_SLOT,
+        OFFSET_OF_SHRED_TYPE, SIZE_OF_CODING_SHRED_HEADER, SIZE_OF_COMMON_SHRED_HEADER,
+        SIZE_OF_NONCE, SIZE_OF_SHRED_FEC_SET_INDEX, SIZE_OF_SHRED_INDEX,
+        SIZE_OF_SHRED_MERKLE_PROOF, SIZE_OF_SHRED_MERKLE_ROOT, SIZE_OF_SHRED_SLOT,
+        SIZE_OF_SHRED_TYPE, SIZE_OF_SIGNATURE,
+    },
     rayon::{
         iter::{
             IndexedParallelIterator, IntoParallelIterator, IntoParallelRefMutIterator,
@@ -16,7 +24,7 @@ use {
         perf_libs,
         recycler_cache::RecyclerCache,
         sigverify::{self, count_packets_in_batches, TxOffset},
-        turbine_merkle::TURBINE_MERKLE_HASH_BYTES,
+        turbine_merkle::{TurbineMerkleHash, TurbineMerkleProof},
     },
     solana_rayon_threadlimit::get_thread_count,
     solana_sdk::{
@@ -37,68 +45,99 @@ lazy_static! {
         .unwrap();
 }
 
-/// Assuming layout is
-/// signature: Signature
-/// signed_msg: {
-///   type: ShredType
-///   slot: u64,
-///   ...
-/// }
-/// Signature is the first thing in the packet, and slot is the first thing in the signed message.
 pub fn verify_shred_cpu(packet: &Packet, slot_leaders: &HashMap<u64, [u8; 32]>) -> Option<u8> {
-    let sig_start = 0;
-    let sig_end = size_of::<Signature>();
-    let slot_start = sig_end + size_of::<ShredType>();
-    let slot_end = slot_start + size_of::<u64>();
-    let index_end = slot_end + size_of::<u32>();
-    //let msg_start = sig_end;
-
-    // TODO cleanup
-    let merkle_root_start = index_end + size_of::<u16>() + size_of::<u32>();
-    let merkle_root_end = merkle_root_start + TURBINE_MERKLE_HASH_BYTES;
-
     if packet.meta.discard() {
         return Some(0);
     }
-    trace!("slot start and end {} {}", slot_start, slot_end);
-    if packet.meta.size < slot_end {
+
+    // verify packet contains fields up to and including 'index'
+    if packet.meta.size < OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX {
         return Some(0);
     }
-    let slot: u64 = limited_deserialize(&packet.data[slot_start..slot_end]).ok()?;
 
-    let index: u32 = limited_deserialize(&packet.data[slot_end..index_end]).ok()?;
+    let signature = Signature::new(
+        &packet.data[OFFSET_OF_SHRED_SIGNATURE..OFFSET_OF_SHRED_SIGNATURE + SIZE_OF_SIGNATURE],
+    );
+    trace!("signature {}", signature);
+    let slot: u64 = limited_deserialize(
+        &packet.data[OFFSET_OF_SHRED_SLOT..OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT],
+    )
+    .ok()?;
+    trace!("slot {}", slot);
+    let index: u32 = limited_deserialize(
+        &packet.data[OFFSET_OF_SHRED_INDEX..OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX],
+    )
+    .ok()?;
 
-    let _msg_end = if packet.meta.repair() {
+    let msg_end = if packet.meta.repair() {
         packet.meta.size.saturating_sub(SIZE_OF_NONCE)
     } else {
         packet.meta.size
     };
-    trace!("slot {}", slot);
-    let pubkey = slot_leaders.get(&slot)?;
-    if packet.meta.size < sig_end {
-        return Some(0);
-    }
-    let signature = Signature::new(&packet.data[sig_start..sig_end]);
-    trace!("signature {}", signature);
 
+    let pubkey = slot_leaders.get(&slot)?;
     /*
     if !signature.verify(pubkey, &packet.data[msg_start..msg_end]) {
         return Some(0);
     }
     */
-    if !signature.verify(pubkey, &packet.data[merkle_root_start..merkle_root_end]) {
-        error!("merkle rood sig verify failed slot={}", slot);
+
+    let root_hash = TurbineMerkleHash::from(
+        &packet.data
+            [OFFSET_OF_SHRED_MERKLE_ROOT..OFFSET_OF_SHRED_MERKLE_ROOT + SIZE_OF_SHRED_MERKLE_ROOT],
+    );
+
+    if !signature.verify(pubkey, root_hash.as_ref()) {
+        error!("merkle root sig verify failed slot={}", slot);
         return Some(0);
     }
 
-    error!("slot={} index={}", slot, index);
+    let merkle_proof = TurbineMerkleProof::from(
+        &packet.data[OFFSET_OF_SHRED_MERKLE_PROOF
+            ..OFFSET_OF_SHRED_MERKLE_PROOF + SIZE_OF_SHRED_MERKLE_PROOF],
+    );
 
-    let _merkle_proof_start = merkle_root_end;
-    let _merkle_proof_end = TURBINE_MERKLE_HASH_BYTES * 6; // TODO cleanup
+    let leaf_hash =
+        TurbineMerkleHash::hash(&[&packet.data[OFFSET_OF_SHRED_HASHED_PAYLOAD..msg_end]]);
 
-    // get leaf hash
-    //TurbineMerkleHash::hash()
-    //proof.verify(root_hash, leaf_hash, leaf_index)
+    let shred_type = limited_deserialize::<ShredType>(
+        &packet.data[OFFSET_OF_SHRED_TYPE..OFFSET_OF_SHRED_TYPE + SIZE_OF_SHRED_TYPE],
+    )
+    .ok()?;
+
+    // TODO rationalize with shred::erasure_block_index
+    let leaf_index: usize = match shred_type {
+        ShredType::Data => {
+            if packet.meta.size < OFFSET_OF_SHRED_FEC_SET_INDEX + SIZE_OF_SHRED_FEC_SET_INDEX {
+                error!("packet.meta.size too small for fec_set_index");
+                return Some(0);
+            }
+            let fec_set_index: u32 = limited_deserialize(
+                &packet.data[OFFSET_OF_SHRED_FEC_SET_INDEX
+                    ..OFFSET_OF_SHRED_FEC_SET_INDEX + SIZE_OF_SHRED_FEC_SET_INDEX],
+            )
+            .ok()?;
+            (index as usize).saturating_sub(fec_set_index as usize)
+        }
+        ShredType::Code => {
+            if packet.meta.size < SIZE_OF_COMMON_SHRED_HEADER + SIZE_OF_CODING_SHRED_HEADER {
+                error!("packet.meta.size too small for coding header");
+                return Some(0);
+            }
+            let coding_header: CodingShredHeader = limited_deserialize(
+                &packet.data[SIZE_OF_COMMON_SHRED_HEADER
+                    ..SIZE_OF_COMMON_SHRED_HEADER + SIZE_OF_CODING_SHRED_HEADER],
+            )
+            .ok()?;
+            usize::from(coding_header.position)
+                .checked_add(usize::from(coding_header.num_data_shreds))?
+        }
+    };
+
+    if !merkle_proof.verify(&root_hash, &leaf_hash, leaf_index) {
+        error!("merkle proof verify failed slot={}", slot);
+        return Some(0);
+    }
 
     Some(1)
 }

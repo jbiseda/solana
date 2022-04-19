@@ -52,7 +52,6 @@
 use {
     crate::{blockstore::MAX_DATA_SHREDS_PER_SLOT, erasure::Session},
     bincode::config::Options,
-    generic_array::{typenum::U120, GenericArray},
     num_derive::FromPrimitive,
     num_traits::FromPrimitive,
     rayon::{prelude::*, ThreadPool},
@@ -72,7 +71,7 @@ use {
         hash::{hashv, Hash},
         packet::PACKET_DATA_SIZE,
         pubkey::Pubkey,
-        signature::{Keypair, Signature, Signer},
+        signature::{Keypair, Signature},
     },
     std::{cell::RefCell, mem::size_of},
     thiserror::Error,
@@ -112,20 +111,26 @@ pub type Nonce = u32;
 /// `test_shred_constants` ensures that the values are correct.
 /// Constants are used over lazy_static for performance reasons.
 
-//pub const SIZE_OF_COMMON_SHRED_HEADER: usize = 83;
-pub const SIZE_OF_COMMON_SHRED_HEADER: usize =
-    83 + TURBINE_MERKLE_HASH_BYTES + (TURBINE_MERKLE_PROOF_BYTES_FEC64);
-
-pub const SIZE_OF_DATA_SHRED_HEADER: usize = 5;
-pub const SIZE_OF_CODING_SHRED_HEADER: usize = 6;
 pub const SIZE_OF_SIGNATURE: usize = 64;
+pub const SIZE_OF_SHRED_MERKLE_ROOT: usize = TURBINE_MERKLE_HASH_BYTES;
+pub const SIZE_OF_SHRED_MERKLE_PROOF: usize = TURBINE_MERKLE_PROOF_BYTES_FEC64;
 pub const SIZE_OF_SHRED_TYPE: usize = 1;
 pub const SIZE_OF_SHRED_SLOT: usize = 8;
 pub const SIZE_OF_SHRED_INDEX: usize = 4;
 pub const SIZE_OF_SHRED_VERSION: usize = 2;
 pub const SIZE_OF_SHRED_FEC_SET_INDEX: usize = 4;
-pub const SIZE_OF_SHRED_MERKLE_ROOT: usize = TURBINE_MERKLE_HASH_BYTES;
-pub const SIZE_OF_SHRED_MERKLE_PROOF: usize = TURBINE_MERKLE_PROOF_BYTES_FEC64;
+
+pub const SIZE_OF_COMMON_SHRED_HEADER: usize = SIZE_OF_SIGNATURE
+    + SIZE_OF_SHRED_MERKLE_ROOT
+    + SIZE_OF_SHRED_MERKLE_PROOF
+    + SIZE_OF_SHRED_TYPE
+    + SIZE_OF_SHRED_SLOT
+    + SIZE_OF_SHRED_INDEX
+    + SIZE_OF_SHRED_VERSION
+    + SIZE_OF_SHRED_FEC_SET_INDEX;
+pub const SIZE_OF_DATA_SHRED_HEADER: usize = 5;
+pub const SIZE_OF_CODING_SHRED_HEADER: usize = 6;
+
 pub const SIZE_OF_NONCE: usize = 4;
 pub const SIZE_OF_CODING_SHRED_HEADERS: usize =
     SIZE_OF_COMMON_SHRED_HEADER + SIZE_OF_CODING_SHRED_HEADER;
@@ -135,15 +140,16 @@ pub const SIZE_OF_DATA_SHRED_PAYLOAD: usize = PACKET_DATA_SIZE
     - SIZE_OF_CODING_SHRED_HEADERS
     - SIZE_OF_NONCE;
 
-pub const OFFSET_OF_SHRED_TYPE: usize = SIZE_OF_SIGNATURE;
-pub const OFFSET_OF_SHRED_SLOT: usize = SIZE_OF_SIGNATURE + SIZE_OF_SHRED_TYPE;
+pub const OFFSET_OF_SHRED_SIGNATURE: usize = 0;
+pub const OFFSET_OF_SHRED_MERKLE_ROOT: usize = OFFSET_OF_SHRED_SIGNATURE + SIZE_OF_SIGNATURE;
+pub const OFFSET_OF_SHRED_MERKLE_PROOF: usize =
+    OFFSET_OF_SHRED_MERKLE_ROOT + SIZE_OF_SHRED_MERKLE_ROOT;
+pub const OFFSET_OF_SHRED_TYPE: usize = OFFSET_OF_SHRED_MERKLE_PROOF + SIZE_OF_SHRED_MERKLE_PROOF;
+pub const OFFSET_OF_SHRED_SLOT: usize = OFFSET_OF_SHRED_TYPE + SIZE_OF_SHRED_TYPE;
 pub const OFFSET_OF_SHRED_INDEX: usize = OFFSET_OF_SHRED_SLOT + SIZE_OF_SHRED_SLOT;
 pub const OFFSET_OF_SHRED_VERSION: usize = OFFSET_OF_SHRED_INDEX + SIZE_OF_SHRED_INDEX;
 pub const OFFSET_OF_SHRED_FEC_SET_INDEX: usize = OFFSET_OF_SHRED_VERSION + SIZE_OF_SHRED_VERSION;
-pub const OFFSET_OF_SHRED_MERKLE_ROOT: usize =
-    OFFSET_OF_SHRED_FEC_SET_INDEX + SIZE_OF_SHRED_FEC_SET_INDEX;
-pub const OFFSET_OF_SHRED_MERKLE_PROOF: usize =
-    OFFSET_OF_SHRED_MERKLE_ROOT + SIZE_OF_SHRED_MERKLE_ROOT;
+
 pub const SHRED_PAYLOAD_SIZE: usize = PACKET_DATA_SIZE - SIZE_OF_NONCE;
 
 pub const OFFSET_OF_SHRED_HASHED_PAYLOAD: usize =
@@ -813,7 +819,7 @@ impl Shredder {
 
     pub fn entries_to_data_shreds(
         &self,
-        keypair: &Keypair,
+        _keypair: &Keypair,
         entries: &[Entry],
         is_last_in_slot: bool,
         next_shred_index: u32,
@@ -837,7 +843,7 @@ impl Shredder {
             let is_last_in_slot = is_last_data && is_last_in_slot;
             let parent_offset = self.slot - self.parent_slot;
             let fec_set_index = Self::fec_set_index(shred_index, fec_set_offset);
-            let mut shred = Shred::new_from_data(
+            Shred::new_from_data(
                 self.slot,
                 shred_index,
                 parent_offset as u16,
@@ -847,9 +853,10 @@ impl Shredder {
                 self.reference_tick,
                 self.version,
                 fec_set_index.unwrap(),
-            );
+            )
+            // TODO sign when we have the full FEC set
             //Shredder::sign_shred(keypair, &mut shred);
-            shred
+            //shred
         };
         let data_shreds: Vec<Shred> = PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
@@ -872,7 +879,7 @@ impl Shredder {
     }
 
     pub fn data_shreds_to_coding_shreds(
-        keypair: &Keypair,
+        _keypair: &Keypair,
         data_shreds: &[Shred],
         is_last_in_slot: bool,
         next_code_index: u32,
@@ -881,10 +888,10 @@ impl Shredder {
         if data_shreds.is_empty() {
             return Ok(Vec::default());
         }
-        let data_shreds_len = data_shreds.len();
+        //let data_shreds_len = data_shreds.len();
         let mut gen_coding_time = Measure::start("gen_coding_shreds");
         // 1) Generate coding shreds
-        let mut coding_shreds: Vec<_> = PAR_THREAD_POOL.with(|thread_pool| {
+        let coding_shreds: Vec<_> = PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 data_shreds
                     .par_chunks(MAX_DATA_SHREDS_PER_FEC_BLOCK as usize)
@@ -914,6 +921,7 @@ impl Shredder {
         });
         gen_coding_time.stop();
 
+        // TODO sign when we have the full fec set
         let mut sign_coding_time = Measure::start("sign_coding_shreds");
         // 2) Sign coding shreds
         /*
