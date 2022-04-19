@@ -196,7 +196,7 @@ impl QosService {
     fn update_transaction_costs<'a>(
         transaction_costs: impl Iterator<Item = &'a TransactionCost>,
         transaction_qos_results: impl Iterator<Item = &'a transaction::Result<()>>,
-        transaction_committed_status: &Vec<bool>,
+        transaction_committed_status: &[bool],
         bank: &Arc<Bank>,
     ) {
         let mut cost_tracker = bank.write_cost_tracker().unwrap();

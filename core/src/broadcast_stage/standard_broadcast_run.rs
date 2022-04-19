@@ -76,7 +76,7 @@ impl StandardBroadcastRun {
                 let reference_tick = max_ticks_in_slot & SHRED_TICK_REFERENCE_MASK;
                 let fec_set_index =
                     Shredder::fec_set_index(state.next_shred_index, state.fec_set_offset);
-                let mut shred = Shred::new_from_data(
+                let shred = Shred::new_from_data(
                     state.slot,
                     state.next_shred_index,
                     parent_offset as u16,
@@ -87,6 +87,7 @@ impl StandardBroadcastRun {
                     self.shred_version,
                     fec_set_index.unwrap(),
                 );
+                // TODO
                 //Shredder::sign_shred(keypair, &mut shred);
                 state.data_shreds_buffer.push(shred.clone());
                 let (data_shreds, mut coding_shreds) = make_coding_shreds(
@@ -217,7 +218,7 @@ impl StandardBroadcastRun {
         let mut to_shreds_time = Measure::start("broadcast_to_shreds");
 
         // 1) Check if slot was interrupted
-        let (prev_slot_shreds_data, prev_slot_shreds_coding) =
+        let (_prev_slot_shreds_data, prev_slot_shreds_coding) =
             self.finish_prev_slot(keypair, bank.ticks_per_slot() as u8, &mut process_stats);
         // TODO handle data shreds included here
 
