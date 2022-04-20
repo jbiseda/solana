@@ -1243,6 +1243,7 @@ pub mod tests {
         solana_sdk::{
             hash::{self, hash},
             shred_version, system_transaction,
+            signature::Signer,
         },
         std::{collections::HashSet, convert::TryInto, iter::repeat_with, sync::Arc},
     };
