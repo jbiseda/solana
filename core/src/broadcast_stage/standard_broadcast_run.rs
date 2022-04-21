@@ -88,7 +88,7 @@ impl StandardBroadcastRun {
                     fec_set_index.unwrap(),
                 );
                 // TODO
-                //Shredder::sign_shred(keypair, &mut shred);
+                //shred.sign(keypair);
                 state.data_shreds_buffer.push(shred.clone());
                 let (data_shreds, mut coding_shreds) = make_coding_shreds(
                     keypair,

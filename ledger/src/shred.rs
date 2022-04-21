@@ -72,7 +72,7 @@ use {
         hash::{hashv, Hash},
         packet::PACKET_DATA_SIZE,
         pubkey::Pubkey,
-        signature::{Keypair, Signature},
+        signature::{Keypair, Signature, Signer},
     },
     std::{cell::RefCell, mem::size_of},
     thiserror::Error,
@@ -400,6 +400,33 @@ impl Shred {
             .ok_or(ShredError::InvalidPayload)
     }
 
+    pub fn new_coding_shred_header(
+        slot: Slot,
+        index: u32,
+        fec_set_index: u32,
+        num_data_shreds: u16,
+        num_coding_shreds: u16,
+        position: u16,
+        version: u16,
+    ) -> (ShredCommonHeader, CodingShredHeader) {
+        let header = ShredCommonHeader {
+            shred_type: ShredType::Code,
+            index,
+            slot,
+            version,
+            fec_set_index,
+            ..ShredCommonHeader::default()
+        };
+        (
+            header,
+            CodingShredHeader {
+                num_data_shreds,
+                num_coding_shreds,
+                position,
+            },
+        )
+    }
+
     pub fn new_empty_coding(
         slot: Slot,
         index: u32,
@@ -409,7 +436,7 @@ impl Shred {
         position: u16,
         version: u16,
     ) -> Self {
-        let (header, coding_header) = Shredder::new_coding_shred_header(
+        let (header, coding_header) = Self::new_coding_shred_header(
             slot,
             index,
             fec_set_index,
@@ -611,6 +638,13 @@ impl Shred {
 
     pub fn signature(&self) -> Signature {
         self.common_header.signature
+    }
+
+    pub fn sign(&mut self, keypair: &Keypair) {
+        let signature = keypair.sign_message(&self.payload[SIZE_OF_SIGNATURE..]);
+        bincode::serialize_into(&mut self.payload[..SIZE_OF_SIGNATURE], &signature)
+            .expect("Failed to generate serialized signature");
+        self.common_header.signature = signature;
     }
 
     pub fn seed(&self, leader_pubkey: Pubkey) -> [u8; 32] {
@@ -816,7 +850,7 @@ impl Shredder {
             let is_last_in_slot = is_last_data && is_last_in_slot;
             let parent_offset = self.slot - self.parent_slot;
             let fec_set_index = Self::fec_set_index(shred_index, fec_set_offset);
-            Shred::new_from_data(
+            let shred = Shred::new_from_data(
                 self.slot,
                 shred_index,
                 parent_offset as u16,
@@ -826,10 +860,10 @@ impl Shredder {
                 self.reference_tick,
                 self.version,
                 fec_set_index.unwrap(),
-            )
+            );
             // TODO sign when we have the full FEC set
-            //Shredder::sign_shred(keypair, &mut shred);
-            //shred
+            //shred.sign(keypair);
+            shred
         };
         let data_shreds: Vec<Shred> = PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
@@ -901,7 +935,7 @@ impl Shredder {
         PAR_THREAD_POOL.with(|thread_pool| {
             thread_pool.borrow().install(|| {
                 coding_shreds.par_iter_mut().for_each(|coding_shred| {
-                    Shredder::sign_shred(keypair, coding_shred); // TODO sign here can be removed
+                    coding_shred.sign(keypair);
                 })
             })
         });
@@ -920,42 +954,6 @@ impl Shredder {
         */
 
         Ok(coding_shreds)
-    }
-
-    /*
-    pub fn sign_shred(signer: &Keypair, shred: &mut Shred) {
-        let signature = signer.sign_message(&shred.payload[SIZE_OF_SIGNATURE..]);
-        bincode::serialize_into(&mut shred.payload[..SIZE_OF_SIGNATURE], &signature)
-            .expect("Failed to generate serialized signature");
-        shred.common_header.signature = signature;
-    }
-    */
-
-    pub fn new_coding_shred_header(
-        slot: Slot,
-        index: u32,
-        fec_set_index: u32,
-        num_data_shreds: u16,
-        num_coding_shreds: u16,
-        position: u16,
-        version: u16,
-    ) -> (ShredCommonHeader, CodingShredHeader) {
-        let header = ShredCommonHeader {
-            shred_type: ShredType::Code,
-            index,
-            slot,
-            version,
-            fec_set_index,
-            ..ShredCommonHeader::default()
-        };
-        (
-            header,
-            CodingShredHeader {
-                num_data_shreds,
-                num_coding_shreds,
-                position,
-            },
-        )
     }
 
     /// Generates coding shreds for the data shreds in the current FEC set
@@ -2061,7 +2059,7 @@ pub mod tests {
         assert_eq!(None, get_shred_slot_index_type(&packet, &mut stats));
         assert_eq!(1, stats.index_out_of_bounds);
 
-        let (header, coding_header) = Shredder::new_coding_shred_header(
+        let (header, coding_header) = Shred::new_coding_shred_header(
             8,   // slot
             2,   // index
             10,  // fec_set_index

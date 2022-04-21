@@ -134,6 +134,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_TESTING: AccountsDbConfig = AccountsDbConfig {
     filler_accounts_config: FillerAccountsConfig::const_default(),
     hash_calc_num_passes: None,
     write_cache_limit_bytes: None,
+    skip_rewrites: false,
 };
 pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig {
     index: Some(ACCOUNTS_INDEX_CONFIG_FOR_BENCHMARKS),
@@ -141,6 +142,7 @@ pub const ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS: AccountsDbConfig = AccountsDbConfig
     filler_accounts_config: FillerAccountsConfig::const_default(),
     hash_calc_num_passes: None,
     write_cache_limit_bytes: None,
+    skip_rewrites: false,
 };
 
 pub type BinnedHashData = Vec<Vec<CalculateHashIntermediate>>;
@@ -178,6 +180,7 @@ pub struct AccountsDbConfig {
     pub filler_accounts_config: FillerAccountsConfig,
     pub hash_calc_num_passes: Option<usize>,
     pub write_cache_limit_bytes: Option<u64>,
+    pub skip_rewrites: bool,
 }
 
 struct FoundStoredAccount<'a> {
@@ -1014,6 +1017,9 @@ pub struct AccountsDb {
     /// Keeps tracks of index into AppendVec on a per slot basis
     pub accounts_index: AccountInfoAccountsIndex,
 
+    /// true iff rent exempt accounts are not rewritten in their normal rent collection slot
+    pub skip_rewrites: bool,
+
     pub storage: AccountStorage,
 
     pub accounts_cache: AccountsCache,
@@ -1264,6 +1270,7 @@ struct FlushStats {
 #[derive(Debug, Default)]
 struct LatestAccountsIndexRootsStats {
     roots_len: AtomicUsize,
+    historical_roots_len: AtomicUsize,
     uncleaned_roots_len: AtomicUsize,
     previous_uncleaned_roots_len: AtomicUsize,
     roots_range: AtomicU64,
@@ -1283,6 +1290,10 @@ impl LatestAccountsIndexRootsStats {
         );
         self.previous_uncleaned_roots_len.store(
             accounts_index_roots_stats.previous_uncleaned_roots_len,
+            Ordering::Relaxed,
+        );
+        self.historical_roots_len.store(
+            accounts_index_roots_stats.historical_roots_len,
             Ordering::Relaxed,
         );
         self.roots_range
@@ -1311,6 +1322,11 @@ impl LatestAccountsIndexRootsStats {
             (
                 "roots_len",
                 self.roots_len.load(Ordering::Relaxed) as i64,
+                i64
+            ),
+            (
+                "historical_roots_len",
+                self.historical_roots_len.load(Ordering::Relaxed) as i64,
                 i64
             ),
             (
@@ -1614,6 +1630,7 @@ impl AccountsDb {
 
         AccountsDb {
             active_stats: ActiveStats::default(),
+            skip_rewrites: false,
             accounts_index,
             storage: AccountStorage::default(),
             accounts_cache: AccountsCache::default(),
@@ -1706,6 +1723,10 @@ impl AccountsDb {
             .as_ref()
             .map(|config| config.filler_accounts_config)
             .unwrap_or_default();
+        let skip_rewrites = accounts_db_config
+            .as_ref()
+            .map(|config| config.skip_rewrites)
+            .unwrap_or_default();
 
         let filler_account_suffix = if filler_accounts_config.count > 0 {
             Some(solana_sdk::pubkey::new_rand())
@@ -1715,6 +1736,7 @@ impl AccountsDb {
         let paths_is_empty = paths.is_empty();
         let mut new = Self {
             paths,
+            skip_rewrites,
             cluster_type: Some(*cluster_type),
             account_indexes,
             caching_enabled,
@@ -5223,7 +5245,7 @@ impl AccountsDb {
                                                 *slot,
                                                 config.rent_collector,
                                                 &stats,
-                                                max_slot + 1, // this wants an 'exclusive' number
+                                                max_slot,
                                                 find_unskipped_slot,
                                                 self.filler_account_suffix.as_ref(),
                                             );
@@ -5607,7 +5629,7 @@ impl AccountsDb {
             let result = self.calculate_accounts_hash_without_index(config, &storages, timings);
 
             // now that calculate_accounts_hash_without_index is complete, we can remove old historical roots
-            self.remove_old_historical_roots(slot, &HashSet::default());
+            self.remove_old_historical_roots(slot, &config.rent_collector.epoch_schedule);
 
             result
         } else {
@@ -5729,7 +5751,7 @@ impl AccountsDb {
                     slot,
                     config.rent_collector,
                     stats,
-                    storage.range().end,
+                    storage.range().end.saturating_sub(1), // 'end' is exclusive, convert to inclusive
                     find_unskipped_slot,
                     filler_account_suffix,
                 );
@@ -5865,15 +5887,43 @@ impl AccountsDb {
         }
     }
 
-    /// get rid of old historical roots
-    /// except keep those in 'keep'
-    fn remove_old_historical_roots(&self, current_max_root_inclusive: Slot, keep: &HashSet<Slot>) {
-        // epoch_schedule::DEFAULT_SLOTS_PER_EPOCH is a sufficient approximation for now
-        let width = solana_sdk::epoch_schedule::DEFAULT_SLOTS_PER_EPOCH * 11 / 10; // a buffer
-        if current_max_root_inclusive > width {
-            let min_root = current_max_root_inclusive - width;
+    /// calculate oldest_slot_to_keep and alive_roots
+    fn calc_old_historical_roots(
+        &self,
+        max_root_inclusive: Slot,
+        epoch_schedule: &EpochSchedule,
+    ) -> Option<(Slot, HashSet<Slot>)> {
+        let width = epoch_schedule.slots_per_epoch;
+        (max_root_inclusive > width).then(|| {
+            let oldest_slot_to_keep = max_root_inclusive - width;
+            let mut alive_roots = HashSet::default();
+            {
+                let all_roots = self.accounts_index.roots_tracker.read().unwrap();
+
+                if let Some(min) = all_roots.historical_roots.min() {
+                    for slot in min..oldest_slot_to_keep {
+                        if all_roots.alive_roots.contains(&slot) {
+                            // there was a storage for this root, so it counts as a root
+                            alive_roots.insert(slot);
+                        }
+                    }
+                }
+            }
+            (oldest_slot_to_keep, alive_roots)
+        })
+    }
+
+    /// get rid of historical roots that are older than an epoch from 'max_root_inclusive'
+    fn remove_old_historical_roots(
+        &self,
+        max_root_inclusive: Slot,
+        epoch_schedule: &EpochSchedule,
+    ) {
+        if let Some((oldest_slot_to_keep, alive_roots)) =
+            self.calc_old_historical_roots(max_root_inclusive, epoch_schedule)
+        {
             self.accounts_index
-                .remove_old_historical_roots(min_root, keep);
+                .remove_old_historical_roots(oldest_slot_to_keep, &alive_roots);
         }
     }
 
@@ -6609,7 +6659,6 @@ impl AccountsDb {
         is_cached_store: bool,
         reset_accounts: bool,
     ) -> StoreAccountsTiming {
-        let slot = accounts.target_slot();
         let storage_finder = storage_finder
             .unwrap_or_else(|| Box::new(move |slot, size| self.find_storage_candidate(slot, size)));
 
@@ -6641,6 +6690,10 @@ impl AccountsDb {
         let mut update_index_time = Measure::start("update_index");
 
         let previous_slot_entry_was_cached = self.caching_enabled && is_cached_store;
+
+        // if we are squashing a single slot, then we can expect a single dead slot
+        let expected_single_dead_slot =
+            (!accounts.contains_multiple_slots()).then(|| accounts.target_slot());
 
         // If the cache was flushed, then because `update_index` occurs
         // after the account are stored by the above `store_accounts_to`
@@ -6677,7 +6730,13 @@ impl AccountsDb {
         // equivalent to asserting there will be no dead slots, is safe.
         let no_purge_stats = None;
         let mut handle_reclaims_time = Measure::start("handle_reclaims");
-        self.handle_reclaims(&reclaims, Some(slot), no_purge_stats, None, reset_accounts);
+        self.handle_reclaims(
+            &reclaims,
+            expected_single_dead_slot,
+            no_purge_stats,
+            None,
+            reset_accounts,
+        );
         handle_reclaims_time.stop();
         self.stats
             .store_handle_reclaims
@@ -13867,5 +13926,37 @@ pub mod tests {
         rewrites.write().unwrap().insert(pubkey2, hash2);
         AccountsDb::extend_hashes_with_skipped_rewrites(&mut hashes, &rewrites);
         assert_eq!(hashes, vec![(pubkey, hash), (pubkey2, hash2)]);
+    }
+
+    #[test]
+    fn test_calc_old_historical_roots() {
+        let db = AccountsDb::new_single_for_tests();
+        let epoch_schedule = EpochSchedule::default();
+        let max_root_inclusive = 0;
+        let result = db.calc_old_historical_roots(max_root_inclusive, &epoch_schedule);
+        assert_eq!(result, None);
+        for extra in 1..3 {
+            let max_root_inclusive = epoch_schedule.slots_per_epoch + extra;
+            let result = db.calc_old_historical_roots(max_root_inclusive, &epoch_schedule);
+            assert_eq!(
+                result,
+                Some((extra, HashSet::default())),
+                "extra: {}",
+                extra
+            );
+        }
+
+        let extra = 3;
+        let active_root = 2;
+        let max_root_inclusive = epoch_schedule.slots_per_epoch + extra;
+        db.accounts_index.add_root(active_root, false);
+        let result = db.calc_old_historical_roots(max_root_inclusive, &epoch_schedule);
+        let expected_alive_roots = [active_root].into_iter().collect();
+        assert_eq!(
+            result,
+            Some((extra, expected_alive_roots)),
+            "extra: {}",
+            extra
+        );
     }
 }
