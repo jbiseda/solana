@@ -37,7 +37,10 @@
 use solana_sdk::recent_blockhashes_account;
 use {
     crate::{
-        accounts::{AccountAddressFilter, Accounts, LoadedTransaction, TransactionLoadResult},
+        accounts::{
+            AccountAddressFilter, Accounts, LoadedTransaction, PubkeyAccountSlot,
+            TransactionLoadResult,
+        },
         accounts_db::{
             AccountShrinkThreshold, AccountsDbConfig, ErrorCounters, SnapshotStorages,
             ACCOUNTS_DB_CONFIG_FOR_BENCHMARKS, ACCOUNTS_DB_CONFIG_FOR_TESTING,
@@ -53,11 +56,12 @@ use {
         inline_spl_associated_token_account, inline_spl_token,
         message_processor::MessageProcessor,
         rent_collector::{CollectedInfo, RentCollector},
+        stake_account::{self, StakeAccount},
         stake_weighted_timestamp::{
             calculate_stake_weighted_timestamp, MaxAllowableDrift, MAX_ALLOWABLE_DRIFT_PERCENTAGE,
             MAX_ALLOWABLE_DRIFT_PERCENTAGE_FAST, MAX_ALLOWABLE_DRIFT_PERCENTAGE_SLOW,
         },
-        stakes::{InvalidCacheEntryReason, Stakes, StakesCache},
+        stakes::{InvalidCacheEntryReason, Stakes, StakesCache, StakesEnum},
         status_cache::{SlotDelta, StatusCache},
         system_instruction_processor::{get_system_account_kind, SystemAccountKind},
         transaction_batch::TransactionBatch,
@@ -124,6 +128,7 @@ use {
         signature::{Keypair, Signature},
         slot_hashes::SlotHashes,
         slot_history::SlotHistory,
+        stake::state::Delegation,
         system_transaction,
         sysvar::{self, Sysvar, SysvarId},
         timing::years_as_slots,
@@ -146,13 +151,13 @@ use {
         collections::{HashMap, HashSet},
         convert::{TryFrom, TryInto},
         fmt, mem,
-        ops::{Div, RangeInclusive},
+        ops::{Deref, Div, RangeInclusive},
         path::PathBuf,
         ptr,
         rc::Rc,
         sync::{
             atomic::{
-                AtomicBool, AtomicU64,
+                AtomicBool, AtomicU64, AtomicUsize,
                 Ordering::{AcqRel, Acquire, Relaxed, Release},
             },
             Arc, LockResult, RwLock, RwLockReadGuard, RwLockWriteGuard,
@@ -167,6 +172,9 @@ struct RewardsMetrics {
     calculate_points_us: AtomicU64,
     store_stake_accounts_us: AtomicU64,
     store_vote_accounts_us: AtomicU64,
+    invalid_cached_vote_accounts: usize,
+    invalid_cached_stake_accounts: usize,
+    vote_accounts_cache_miss_count: usize,
 }
 
 mod address_lookup_table;
@@ -594,6 +602,7 @@ pub struct TransactionExecutionDetails {
     pub inner_instructions: Option<InnerInstructionsList>,
     pub durable_nonce_fee: Option<DurableNonceFee>,
     pub return_data: Option<TransactionReturnData>,
+    pub executed_units: u64,
 }
 
 /// Type safe representation of a transaction execution attempt which
@@ -933,7 +942,7 @@ pub(crate) struct BankFieldsToDeserialize {
     pub(crate) rent_collector: RentCollector,
     pub(crate) epoch_schedule: EpochSchedule,
     pub(crate) inflation: Inflation,
-    pub(crate) stakes: Stakes,
+    pub(crate) stakes: Stakes<Delegation>,
     pub(crate) epoch_stakes: HashMap<Epoch, EpochStakes>,
     pub(crate) is_delta: bool,
     pub(crate) accounts_data_len: u64,
@@ -1258,13 +1267,17 @@ pub struct Bank {
 struct VoteWithStakeDelegations {
     vote_state: Arc<VoteState>,
     vote_account: AccountSharedData,
-    delegations: Vec<(Pubkey, (StakeState, AccountSharedData))>,
+    // TODO: use StakeAccount<Delegation> once the old code is deleted.
+    delegations: Vec<(Pubkey, StakeAccount<()>)>,
 }
 
 struct LoadVoteAndStakeAccountsResult {
     vote_with_stake_delegations_map: DashMap<Pubkey, VoteWithStakeDelegations>,
     invalid_stake_keys: DashMap<Pubkey, InvalidCacheEntryReason>,
     invalid_vote_keys: DashMap<Pubkey, InvalidCacheEntryReason>,
+    invalid_cached_vote_accounts: usize,
+    invalid_cached_stake_accounts: usize,
+    vote_accounts_cache_miss_count: usize,
 }
 
 #[derive(Debug, Default)]
@@ -1492,10 +1505,11 @@ impl Bank {
         // genesis needs stakes for all epochs up to the epoch implied by
         //  slot = 0 and genesis configuration
         {
-            let stakes = bank.stakes_cache.stakes();
+            let stakes = bank.stakes_cache.stakes().clone();
+            let stakes = Arc::new(StakesEnum::from(stakes));
             for epoch in 0..=bank.get_leader_schedule_epoch(bank.slot) {
                 bank.epoch_stakes
-                    .insert(epoch, EpochStakes::new(&stakes, epoch));
+                    .insert(epoch, EpochStakes::new(stakes.clone(), epoch));
             }
             bank.update_stake_history(None);
         }
@@ -1779,7 +1793,7 @@ impl Bank {
                         "update_epoch_stakes",
                     );
 
-                    let metrics = RewardsMetrics::default();
+                    let mut metrics = RewardsMetrics::default();
                     // After saving a snapshot of stakes, apply stake rewards and commission
                     let (_, update_rewards_with_thread_pool_time) = Measure::this(
                         |_| {
@@ -1787,7 +1801,7 @@ impl Bank {
                                 parent_epoch,
                                 reward_calc_tracer,
                                 &thread_pool,
-                                &metrics,
+                                &mut metrics,
                             )
                         },
                         (),
@@ -1834,6 +1848,21 @@ impl Bank {
                         (
                             "store_vote_accounts_us",
                             metrics.store_vote_accounts_us.load(Relaxed),
+                            i64
+                        ),
+                        (
+                            "invalid_cached_vote_accounts",
+                            metrics.invalid_cached_vote_accounts,
+                            i64
+                        ),
+                        (
+                            "invalid_cached_stake_accounts",
+                            metrics.invalid_cached_stake_accounts,
+                            i64
+                        ),
+                        (
+                            "vote_accounts_cache_miss_count",
+                            metrics.vote_accounts_cache_miss_count,
                             i64
                         ),
                     );
@@ -1978,6 +2007,23 @@ impl Bank {
         debug_do_not_add_builtins: bool,
         accounts_data_len: u64,
     ) -> Self {
+        let now = Instant::now();
+        let ancestors = Ancestors::from(&fields.ancestors);
+        // For backward compatibility, we can only serialize and deserialize
+        // Stakes<Delegation> in BankFieldsTo{Serialize,Deserialize}. But Bank
+        // caches Stakes<StakeAccount>. Below Stakes<StakeAccount> is obtained
+        // from Stakes<Delegation> by reading the full account state from
+        // accounts-db. Note that it is crucial that these accounts are loaded
+        // at the right slot and match precisely with serialized Delegations.
+        let stakes = Stakes::new(&fields.stakes, |pubkey| {
+            let (account, _slot) = bank_rc.accounts.load_with_fixed_root(&ancestors, pubkey)?;
+            Some(account)
+        })
+        .expect(
+            "Stakes cache is inconsistent with accounts-db. This can indicate \
+            a corrupted snapshot or bugs in cached accounts or accounts-db.",
+        );
+        let stakes_accounts_load_duration = now.elapsed();
         fn new<T: Default>() -> T {
             T::default()
         }
@@ -1987,7 +2033,7 @@ impl Bank {
             rc: bank_rc,
             src: new(),
             blockhash_queue: RwLock::new(fields.blockhash_queue),
-            ancestors: Ancestors::from(&fields.ancestors),
+            ancestors,
             hash: RwLock::new(fields.hash),
             parent_hash: fields.parent_hash,
             parent_slot: fields.parent_slot,
@@ -2018,7 +2064,7 @@ impl Bank {
             rent_collector: Self::get_rent_collector_from(&fields.rent_collector, fields.epoch),
             epoch_schedule: fields.epoch_schedule,
             inflation: Arc::new(RwLock::new(fields.inflation)),
-            stakes_cache: StakesCache::new(fields.stakes),
+            stakes_cache: StakesCache::new(stakes),
             epoch_stakes: fields.epoch_stakes,
             is_delta: AtomicBool::new(fields.is_delta),
             builtin_programs: new(),
@@ -2099,6 +2145,11 @@ impl Bank {
             (
                 "accounts_data_len-from-generate_index",
                 accounts_data_len as i64,
+                i64
+            ),
+            (
+                "stakes_accounts_load_duration_us",
+                stakes_accounts_load_duration.as_micros(),
                 i64
             ),
         );
@@ -2373,9 +2424,9 @@ impl Bank {
             self.epoch_stakes.retain(|&epoch, _| {
                 epoch >= leader_schedule_epoch.saturating_sub(MAX_LEADER_SCHEDULE_STAKES)
             });
-
-            let new_epoch_stakes =
-                EpochStakes::new(&self.stakes_cache.stakes(), leader_schedule_epoch);
+            let stakes = self.stakes_cache.stakes().clone();
+            let stakes = Arc::new(StakesEnum::from(stakes));
+            let new_epoch_stakes = EpochStakes::new(stakes, leader_schedule_epoch);
             {
                 let vote_stakes: HashMap<_, _> = self
                     .stakes_cache
@@ -2493,7 +2544,7 @@ impl Bank {
         prev_epoch: Epoch,
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         thread_pool: &ThreadPool,
-        metrics: &RewardsMetrics,
+        metrics: &mut RewardsMetrics,
     ) {
         let slot_in_year = self.slot_in_year_for_inflation();
         let epoch_duration_in_years = self.epoch_duration_in_years(prev_epoch);
@@ -2511,6 +2562,9 @@ impl Bank {
             (validator_rate * capitalization as f64 * epoch_duration_in_years) as u64;
 
         let old_vote_balance_and_staked = self.stakes_cache.stakes().vote_balance_and_staked();
+        let update_rewards_from_cached_accounts = self
+            .feature_set
+            .is_active(&feature_set::update_rewards_from_cached_accounts::id());
 
         let validator_point_value = self.pay_validator_rewards_with_thread_pool(
             prev_epoch,
@@ -2519,6 +2573,7 @@ impl Bank {
             self.stake_program_advance_activating_credits_observed(),
             thread_pool,
             metrics,
+            update_rewards_from_cached_accounts,
         );
 
         if !self
@@ -2598,52 +2653,72 @@ impl Bank {
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
     ) -> LoadVoteAndStakeAccountsResult {
         let stakes = self.stakes_cache.stakes();
-        let vote_with_stake_delegations_map =
-            DashMap::with_capacity(stakes.vote_accounts().as_ref().len());
+        let cached_vote_accounts = stakes.vote_accounts();
+        let vote_with_stake_delegations_map = DashMap::with_capacity(cached_vote_accounts.len());
         let invalid_stake_keys: DashMap<Pubkey, InvalidCacheEntryReason> = DashMap::new();
         let invalid_vote_keys: DashMap<Pubkey, InvalidCacheEntryReason> = DashMap::new();
+        let invalid_cached_stake_accounts = AtomicUsize::default();
+        let invalid_cached_vote_accounts = AtomicUsize::default();
 
         let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
         thread_pool.install(|| {
             stake_delegations
                 .into_par_iter()
-                .for_each(|(stake_pubkey, delegation)| {
+                .for_each(|(stake_pubkey, cached_stake_account)| {
+                    let delegation = cached_stake_account.delegation();
                     let vote_pubkey = &delegation.voter_pubkey;
                     if invalid_vote_keys.contains_key(vote_pubkey) {
                         return;
                     }
-
-                    let stake_delegation = match self.get_account_with_fixed_root(stake_pubkey) {
-                        Some(stake_account) => {
-                            if stake_account.owner() != &solana_stake_program::id() {
-                                invalid_stake_keys
-                                    .insert(*stake_pubkey, InvalidCacheEntryReason::WrongOwner);
-                                return;
-                            }
-
-                            match stake_account.state().ok() {
-                                Some(stake_state) => (*stake_pubkey, (stake_state, stake_account)),
-                                None => {
-                                    invalid_stake_keys
-                                        .insert(*stake_pubkey, InvalidCacheEntryReason::BadState);
-                                    return;
-                                }
-                            }
-                        }
+                    let stake_account = match self.get_account_with_fixed_root(stake_pubkey) {
+                        Some(stake_account) => stake_account,
                         None => {
                             invalid_stake_keys
                                 .insert(*stake_pubkey, InvalidCacheEntryReason::Missing);
                             return;
                         }
                     };
-
+                    let stake_account = match StakeAccount::<()>::try_from(stake_account) {
+                        Ok(stake_account) => stake_account,
+                        Err(stake_account::Error::InvalidOwner { .. }) => {
+                            invalid_stake_keys
+                                .insert(*stake_pubkey, InvalidCacheEntryReason::WrongOwner);
+                            return;
+                        }
+                        Err(stake_account::Error::InstructionError(_)) => {
+                            invalid_stake_keys
+                                .insert(*stake_pubkey, InvalidCacheEntryReason::BadState);
+                            return;
+                        }
+                        Err(stake_account::Error::InvalidDelegation(_)) => {
+                            // This should not happen.
+                            error!(
+                                "Unexpected code path! StakeAccount<()> \
+                                should not check if stake-state is a \
+                                Delegation."
+                            );
+                            return;
+                        }
+                    };
+                    if cached_stake_account != &stake_account {
+                        invalid_cached_stake_accounts.fetch_add(1, Relaxed);
+                    }
+                    let stake_delegation = (*stake_pubkey, stake_account);
                     let mut vote_delegations = if let Some(vote_delegations) =
                         vote_with_stake_delegations_map.get_mut(vote_pubkey)
                     {
                         vote_delegations
                     } else {
+                        let cached_vote_account = cached_vote_accounts.get(vote_pubkey);
                         let vote_account = match self.get_account_with_fixed_root(vote_pubkey) {
                             Some(vote_account) => {
+                                match cached_vote_account {
+                                    Some((_stake, cached_vote_account))
+                                        if cached_vote_account == &vote_account => {}
+                                    _ => {
+                                        invalid_cached_vote_accounts.fetch_add(1, Relaxed);
+                                    }
+                                };
                                 if vote_account.owner() != &solana_vote_program::id() {
                                     invalid_vote_keys
                                         .insert(*vote_pubkey, InvalidCacheEntryReason::WrongOwner);
@@ -2652,6 +2727,9 @@ impl Bank {
                                 vote_account
                             }
                             None => {
+                                if cached_vote_account.is_some() {
+                                    invalid_cached_vote_accounts.fetch_add(1, Relaxed);
+                                }
                                 invalid_vote_keys
                                     .insert(*vote_pubkey, InvalidCacheEntryReason::Missing);
                                 return;
@@ -2681,7 +2759,7 @@ impl Bank {
                         reward_calc_tracer(&RewardCalculationEvent::Staking(
                             stake_pubkey,
                             &InflationPointCalculationEvent::Delegation(
-                                *delegation,
+                                delegation,
                                 solana_vote_program::id(),
                             ),
                         ));
@@ -2690,11 +2768,132 @@ impl Bank {
                     vote_delegations.delegations.push(stake_delegation);
                 });
         });
-
+        invalid_cached_stake_accounts.fetch_add(invalid_stake_keys.len(), Relaxed);
         LoadVoteAndStakeAccountsResult {
             vote_with_stake_delegations_map,
             invalid_vote_keys,
             invalid_stake_keys,
+            invalid_cached_vote_accounts: invalid_cached_vote_accounts.into_inner(),
+            invalid_cached_stake_accounts: invalid_cached_stake_accounts.into_inner(),
+            vote_accounts_cache_miss_count: 0,
+        }
+    }
+
+    fn load_vote_and_stake_accounts<F>(
+        &self,
+        thread_pool: &ThreadPool,
+        reward_calc_tracer: Option<F>,
+    ) -> LoadVoteAndStakeAccountsResult
+    where
+        F: Fn(&RewardCalculationEvent) + Send + Sync,
+    {
+        let stakes = self.stakes_cache.stakes();
+        let stake_delegations: Vec<_> = stakes.stake_delegations().iter().collect();
+        // Obtain all unique voter pubkeys from stake delegations.
+        fn merge(mut acc: HashSet<Pubkey>, other: HashSet<Pubkey>) -> HashSet<Pubkey> {
+            if acc.len() < other.len() {
+                return merge(other, acc);
+            }
+            acc.extend(other);
+            acc
+        }
+        let voter_pubkeys = thread_pool.install(|| {
+            stake_delegations
+                .par_iter()
+                .fold(
+                    HashSet::default,
+                    |mut voter_pubkeys, (_stake_pubkey, stake_account)| {
+                        let delegation = stake_account.delegation();
+                        voter_pubkeys.insert(delegation.voter_pubkey);
+                        voter_pubkeys
+                    },
+                )
+                .reduce(HashSet::default, merge)
+        });
+        // Obtain vote-accounts for unique voter pubkeys.
+        let cached_vote_accounts = stakes.vote_accounts();
+        let solana_vote_program: Pubkey = solana_vote_program::id();
+        let vote_accounts_cache_miss_count = AtomicUsize::default();
+        let get_vote_account = |vote_pubkey: &Pubkey| -> Option<VoteAccount> {
+            if let Some((_stake, vote_account)) = cached_vote_accounts.get(vote_pubkey) {
+                return Some(vote_account.clone());
+            }
+            // If accounts-db contains a valid vote account, then it should
+            // already have been cached in cached_vote_accounts; so the code
+            // below is only for sanity check, and can be removed once
+            // vote_accounts_cache_miss_count is shown to be always zero.
+            let account = self.get_account_with_fixed_root(vote_pubkey)?;
+            if account.owner() == &solana_vote_program
+                && VoteState::deserialize(account.data()).is_ok()
+            {
+                vote_accounts_cache_miss_count.fetch_add(1, Relaxed);
+            }
+            Some(VoteAccount::from(account))
+        };
+        let invalid_vote_keys = DashMap::<Pubkey, InvalidCacheEntryReason>::new();
+        let make_vote_delegations_entry = |vote_pubkey| {
+            let vote_account = match get_vote_account(&vote_pubkey) {
+                Some(vote_account) => vote_account,
+                None => {
+                    invalid_vote_keys.insert(vote_pubkey, InvalidCacheEntryReason::Missing);
+                    return None;
+                }
+            };
+            if vote_account.owner() != &solana_vote_program {
+                invalid_vote_keys.insert(vote_pubkey, InvalidCacheEntryReason::WrongOwner);
+                return None;
+            }
+            let vote_state = match vote_account.vote_state().deref() {
+                Ok(vote_state) => vote_state.clone(),
+                Err(_) => {
+                    invalid_vote_keys.insert(vote_pubkey, InvalidCacheEntryReason::BadState);
+                    return None;
+                }
+            };
+            let vote_with_stake_delegations = VoteWithStakeDelegations {
+                vote_state: Arc::new(vote_state),
+                vote_account: AccountSharedData::from(vote_account),
+                delegations: Vec::default(),
+            };
+            Some((vote_pubkey, vote_with_stake_delegations))
+        };
+        let vote_with_stake_delegations_map: DashMap<Pubkey, VoteWithStakeDelegations> =
+            thread_pool.install(|| {
+                voter_pubkeys
+                    .into_par_iter()
+                    .filter_map(make_vote_delegations_entry)
+                    .collect()
+            });
+        // Join stake accounts with vote-accounts.
+        let push_stake_delegation = |(stake_pubkey, stake_account): (&Pubkey, &StakeAccount<_>)| {
+            let delegation = stake_account.delegation();
+            let mut vote_delegations =
+                match vote_with_stake_delegations_map.get_mut(&delegation.voter_pubkey) {
+                    Some(vote_delegations) => vote_delegations,
+                    None => return,
+                };
+            if let Some(reward_calc_tracer) = reward_calc_tracer.as_ref() {
+                let delegation =
+                    InflationPointCalculationEvent::Delegation(delegation, solana_vote_program);
+                let event = RewardCalculationEvent::Staking(stake_pubkey, &delegation);
+                reward_calc_tracer(&event);
+            }
+            let stake_account = StakeAccount::from(stake_account.clone());
+            let stake_delegation = (*stake_pubkey, stake_account);
+            vote_delegations.delegations.push(stake_delegation);
+        };
+        thread_pool.install(|| {
+            stake_delegations
+                .into_par_iter()
+                .for_each(push_stake_delegation);
+        });
+        LoadVoteAndStakeAccountsResult {
+            vote_with_stake_delegations_map,
+            invalid_vote_keys,
+            invalid_stake_keys: DashMap::default(),
+            invalid_cached_vote_accounts: 0,
+            invalid_cached_stake_accounts: 0,
+            vote_accounts_cache_miss_count: vote_accounts_cache_miss_count.into_inner(),
         }
     }
 
@@ -2707,7 +2906,8 @@ impl Bank {
         reward_calc_tracer: Option<impl Fn(&RewardCalculationEvent) + Send + Sync>,
         fix_activating_credits_observed: bool,
         thread_pool: &ThreadPool,
-        metrics: &RewardsMetrics,
+        metrics: &mut RewardsMetrics,
+        update_rewards_from_cached_accounts: bool,
     ) -> f64 {
         let stake_history = self.stakes_cache.stakes().history().clone();
         let vote_with_stake_delegations_map = {
@@ -2716,15 +2916,24 @@ impl Bank {
                 vote_with_stake_delegations_map,
                 invalid_stake_keys,
                 invalid_vote_keys,
-            } = self.load_vote_and_stake_accounts_with_thread_pool(
-                thread_pool,
-                reward_calc_tracer.as_ref(),
-            );
+                invalid_cached_vote_accounts,
+                invalid_cached_stake_accounts,
+                vote_accounts_cache_miss_count,
+            } = if update_rewards_from_cached_accounts {
+                self.load_vote_and_stake_accounts(thread_pool, reward_calc_tracer.as_ref())
+            } else {
+                self.load_vote_and_stake_accounts_with_thread_pool(
+                    thread_pool,
+                    reward_calc_tracer.as_ref(),
+                )
+            };
             m.stop();
             metrics
                 .load_vote_and_stake_accounts_us
                 .fetch_add(m.as_us(), Relaxed);
-
+            metrics.invalid_cached_vote_accounts += invalid_cached_vote_accounts;
+            metrics.invalid_cached_stake_accounts += invalid_cached_stake_accounts;
+            metrics.vote_accounts_cache_miss_count += vote_accounts_cache_miss_count;
             let evict_invalid_stakes_cache_entries = self
                 .feature_set
                 .is_active(&feature_set::evict_invalid_stakes_cache_entries::id());
@@ -2750,9 +2959,9 @@ impl Bank {
 
                     delegations
                         .par_iter()
-                        .map(|(_stake_pubkey, (stake_state, _stake_account))| {
+                        .map(|(_stake_pubkey, stake_account)| {
                             stake_state::calculate_points(
-                                stake_state,
+                                stake_account.stake_state(),
                                 vote_state,
                                 Some(&stake_history),
                             )
@@ -2793,66 +3002,62 @@ impl Bank {
         let mut m = Measure::start("redeem_rewards");
         let mut stake_rewards = thread_pool.install(|| {
             stake_delegation_iterator
-                .filter_map(
-                    |(
-                        vote_pubkey,
-                        vote_state,
-                        (stake_pubkey, (stake_state, mut stake_account)),
-                    )| {
-                        // curry closure to add the contextual stake_pubkey
-                        let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
-                            // inner
-                            move |inner_event: &_| {
-                                outer(&RewardCalculationEvent::Staking(&stake_pubkey, inner_event))
-                            }
-                        });
-                        let redeemed = stake_state::redeem_rewards(
-                            rewarded_epoch,
-                            stake_state,
-                            &mut stake_account,
-                            &vote_state,
-                            &point_value,
-                            Some(&stake_history),
-                            reward_calc_tracer.as_ref(),
-                            fix_activating_credits_observed,
-                        );
-                        if let Ok((stakers_reward, voters_reward)) = redeemed {
-                            // track voter rewards
-                            if let Some((
-                                _vote_account,
-                                _commission,
-                                vote_rewards_sum,
-                                vote_needs_store,
-                            )) = vote_account_rewards.get_mut(&vote_pubkey).as_deref_mut()
-                            {
-                                *vote_needs_store = true;
-                                *vote_rewards_sum = vote_rewards_sum.saturating_add(voters_reward);
-                            }
-
-                            // store stake account even if stakers_reward is 0
-                            // because credits observed has changed
-                            self.store_account(&stake_pubkey, &stake_account);
-
-                            if stakers_reward > 0 {
-                                return Some((
-                                    stake_pubkey,
-                                    RewardInfo {
-                                        reward_type: RewardType::Staking,
-                                        lamports: stakers_reward as i64,
-                                        post_balance: stake_account.lamports(),
-                                        commission: Some(vote_state.commission),
-                                    },
-                                ));
-                            }
-                        } else {
-                            debug!(
-                                "stake_state::redeem_rewards() failed for {}: {:?}",
-                                stake_pubkey, redeemed
-                            );
+                .filter_map(|(vote_pubkey, vote_state, (stake_pubkey, stake_account))| {
+                    // curry closure to add the contextual stake_pubkey
+                    let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
+                        // inner
+                        move |inner_event: &_| {
+                            outer(&RewardCalculationEvent::Staking(&stake_pubkey, inner_event))
                         }
-                        None
-                    },
-                )
+                    });
+                    let (mut stake_account, stake_state) =
+                        <(AccountSharedData, StakeState)>::from(stake_account);
+                    let redeemed = stake_state::redeem_rewards(
+                        rewarded_epoch,
+                        stake_state,
+                        &mut stake_account,
+                        &vote_state,
+                        &point_value,
+                        Some(&stake_history),
+                        reward_calc_tracer.as_ref(),
+                        fix_activating_credits_observed,
+                    );
+                    if let Ok((stakers_reward, voters_reward)) = redeemed {
+                        // track voter rewards
+                        if let Some((
+                            _vote_account,
+                            _commission,
+                            vote_rewards_sum,
+                            vote_needs_store,
+                        )) = vote_account_rewards.get_mut(&vote_pubkey).as_deref_mut()
+                        {
+                            *vote_needs_store = true;
+                            *vote_rewards_sum = vote_rewards_sum.saturating_add(voters_reward);
+                        }
+
+                        // store stake account even if stakers_reward is 0
+                        // because credits observed has changed
+                        self.store_account(&stake_pubkey, &stake_account);
+
+                        if stakers_reward > 0 {
+                            return Some((
+                                stake_pubkey,
+                                RewardInfo {
+                                    reward_type: RewardType::Staking,
+                                    lamports: stakers_reward as i64,
+                                    post_balance: stake_account.lamports(),
+                                    commission: Some(vote_state.commission),
+                                },
+                            ));
+                        }
+                    } else {
+                        debug!(
+                            "stake_state::redeem_rewards() failed for {}: {:?}",
+                            stake_pubkey, redeemed
+                        );
+                    }
+                    None
+                })
                 .collect()
         });
         m.stop();
@@ -3329,7 +3534,7 @@ impl Bank {
 
     pub fn is_blockhash_valid(&self, hash: &Hash) -> bool {
         let blockhash_queue = self.blockhash_queue.read().unwrap();
-        blockhash_queue.check_hash(hash)
+        blockhash_queue.is_hash_valid(hash)
     }
 
     pub fn get_minimum_balance_for_rent_exemption(&self, data_len: usize) -> u64 {
@@ -3459,6 +3664,18 @@ impl Bank {
         }
     }
 
+    /// Register a new recent blockhash in the bank's recent blockhash queue. Called when a bank
+    /// reaches its max tick height. Can be called by tests to get new blockhashes for transaction
+    /// processing without advancing to a new bank slot.
+    pub fn register_recent_blockhash(&self, blockhash: &Hash) {
+        // Only acquire the write lock for the blockhash queue on block boundaries because
+        // readers can starve this write lock acquisition and ticks would be slowed down too
+        // much if the write lock is acquired for each tick.
+        let mut w_blockhash_queue = self.blockhash_queue.write().unwrap();
+        w_blockhash_queue.register_hash(blockhash, self.fee_rate_governor.lamports_per_signature);
+        self.update_recent_blockhashes_locked(&w_blockhash_queue);
+    }
+
     /// Tell the bank which Entry IDs exist on the ledger. This function assumes subsequent calls
     /// correspond to later entries, and will boot the oldest ones once its internal cache is full.
     /// Once boot, the bank will reject transactions using that `hash`.
@@ -3473,12 +3690,7 @@ impl Bank {
 
         inc_new_counter_debug!("bank-register_tick-registered", 1);
         if self.is_block_boundary(self.tick_height.load(Relaxed) + 1) {
-            // Only acquire the write lock for the blockhash queue on block boundaries because
-            // readers can starve this write lock acquisition and ticks would be slowed down too
-            // much if the write lock is acquired for each tick.
-            let mut w_blockhash_queue = self.blockhash_queue.write().unwrap();
-            w_blockhash_queue.register_hash(hash, self.fee_rate_governor.lamports_per_signature);
-            self.update_recent_blockhashes_locked(&w_blockhash_queue);
+            self.register_recent_blockhash(hash);
         }
 
         // ReplayStage will start computing the accounts delta hash when it
@@ -3494,7 +3706,14 @@ impl Bank {
     }
 
     pub fn is_block_boundary(&self, tick_height: u64) -> bool {
-        tick_height % self.ticks_per_slot == 0
+        if self
+            .feature_set
+            .is_active(&feature_set::fix_recent_blockhashes::id())
+        {
+            tick_height == self.max_tick_height
+        } else {
+            tick_height % self.ticks_per_slot == 0
+        }
     }
 
     /// Prepare a transaction batch from a list of legacy transactions. Used for tests only.
@@ -3677,14 +3896,10 @@ impl Bank {
             .map(|(tx, lock_res)| match lock_res {
                 Ok(()) => {
                     let recent_blockhash = tx.message().recent_blockhash();
-                    let hash_age = hash_queue.check_hash_age(recent_blockhash, max_age);
-                    if hash_age == Some(true) {
+                    if hash_queue.is_hash_valid_for_age(recent_blockhash, max_age) {
                         (Ok(()), None)
                     } else if let Some((address, account)) = self.check_transaction_for_nonce(tx) {
                         (Ok(()), Some(NoncePartial::new(address, account)))
-                    } else if hash_age == Some(false) {
-                        error_counters.blockhash_too_old += 1;
-                        (Err(TransactionError::BlockhashNotFound), None)
                     } else {
                         error_counters.blockhash_not_found += 1;
                         (Err(TransactionError::BlockhashNotFound), None)
@@ -3734,11 +3949,11 @@ impl Bank {
         self.blockhash_queue.read().unwrap().get_hash_age(hash)
     }
 
-    pub fn check_hash_age(&self, hash: &Hash, max_age: usize) -> Option<bool> {
+    pub fn is_hash_valid_for_age(&self, hash: &Hash, max_age: usize) -> bool {
         self.blockhash_queue
             .read()
             .unwrap()
-            .check_hash_age(hash, max_age)
+            .is_hash_valid_for_age(hash, max_age)
     }
 
     fn check_message_for_nonce(&self, message: &SanitizedMessage) -> Option<TransactionAccount> {
@@ -3965,6 +4180,8 @@ impl Bank {
 
         let (blockhash, lamports_per_signature) = self.last_blockhash_and_lamports_per_signature();
 
+        let mut executed_units = 0u64;
+
         let mut process_message_time = Measure::start("process_message_time");
         let process_result = MessageProcessor::process_message(
             &self.builtin_programs.vec,
@@ -3981,8 +4198,10 @@ impl Bank {
             blockhash,
             lamports_per_signature,
             self.load_accounts_data_len(),
+            &mut executed_units,
         );
         process_message_time.stop();
+
         saturating_add_assign!(
             timings.execute_accessories.process_message_us,
             process_message_time.as_us()
@@ -4063,6 +4282,7 @@ impl Bank {
             inner_instructions,
             durable_nonce_fee,
             return_data,
+            executed_units,
         })
     }
 
@@ -4529,6 +4749,8 @@ impl Bank {
         );
         let rent_debits = self.collect_rent(&execution_results, loaded_txs);
 
+        // Cached vote and stake accounts are synchronized with accounts-db
+        // after each transaction.
         let mut update_stakes_cache_time = Measure::start("update_stakes_cache_time");
         self.update_stakes_cache(sanitized_txs, &execution_results, loaded_txs);
         update_stakes_cache_time.stop();
@@ -4769,7 +4991,12 @@ impl Bank {
         datapoint_info!(
             "collect_rent_eagerly",
             ("accounts", account_count, i64),
-            ("partitions", count, i64)
+            ("partitions", count, i64),
+            (
+                "skipped_rewrites",
+                self.rewrites_skipped_this_slot.read().unwrap().len(),
+                i64
+            ),
         );
         inc_new_counter_info!("collect_rent_eagerly-ms", measure.as_ms() as usize);
     }
@@ -4826,21 +5053,43 @@ impl Bank {
         // parallelize?
         let mut rent_debits = RentDebits::default();
         let mut total_collected = CollectedInfo::default();
-        for (pubkey, mut account) in accounts {
+        let bank_slot = self.slot();
+        let mut rewrites_skipped = Vec::with_capacity(accounts.len());
+        let can_skip_rewrites = self.rc.accounts.accounts_db.skip_rewrites;
+        for (pubkey, mut account, loaded_slot) in accounts {
+            let old_rent_epoch = account.rent_epoch();
             let collected = self.rent_collector.collect_from_existing_account(
                 &pubkey,
                 &mut account,
                 self.rc.accounts.accounts_db.filler_account_suffix.as_ref(),
             );
             total_collected += collected;
-            // Store all of them unconditionally to purge old AppendVec,
-            // even if collected rent is 0 (= not updated).
+            // only store accounts where we collected rent
+            // but get the hash for all these accounts even if collected rent is 0 (= not updated).
             // Also, there's another subtle side-effect from this: this
             // ensures we verify the whole on-chain state (= all accounts)
-            // via the account delta hash slowly once per an epoch.
-            self.store_account(&pubkey, &account);
+            // via the bank delta hash slowly once per an epoch.
+            if can_skip_rewrites
+                && Self::skip_rewrite(
+                    bank_slot,
+                    collected.rent_amount,
+                    loaded_slot,
+                    old_rent_epoch,
+                    &account,
+                )
+            {
+                // this would have been rewritten previously. Now we skip it.
+                // calculate the hash that we would have gotten if we did the rewrite.
+                // This will be needed to calculate the bank's hash.
+                let hash =
+                    crate::accounts_db::AccountsDb::hash_account(self.slot(), &account, &pubkey);
+                rewrites_skipped.push((pubkey, hash));
+            } else if !just_rewrites {
+                self.store_account(&pubkey, &account);
+            }
             rent_debits.insert(&pubkey, collected.rent_amount, account.lamports());
         }
+        self.remember_skipped_rewrites(rewrites_skipped);
         self.collected_rent
             .fetch_add(total_collected.rent_amount, Relaxed);
         self.rewards
@@ -4855,6 +5104,44 @@ impl Bank {
             .accounts
             .hold_range_in_memory(&subrange, false, thread_pool);
         account_count
+    }
+
+    // put 'rewrites_skipped' into 'self.rewrites_skipped_this_slot'
+    fn remember_skipped_rewrites(&self, rewrites_skipped: Vec<(Pubkey, Hash)>) {
+        if !rewrites_skipped.is_empty() {
+            let mut rewrites_skipped_this_slot = self.rewrites_skipped_this_slot.write().unwrap();
+            rewrites_skipped.into_iter().for_each(|(pubkey, hash)| {
+                rewrites_skipped_this_slot.insert(pubkey, hash);
+            });
+        }
+    }
+
+    /// return true iff storing this account is just a rewrite and can be skipped
+    fn skip_rewrite(
+        bank_slot: Slot,
+        rent_amount: u64,
+        loaded_slot: Slot,
+        old_rent_epoch: Epoch,
+        account: &AccountSharedData,
+    ) -> bool {
+        if rent_amount != 0 || account.rent_epoch() == 0 {
+            // rent was != 0
+            // or special case for default rent value
+            // these cannot be skipped and must be written
+            return false;
+        }
+        if old_rent_epoch != account.rent_epoch() && loaded_slot == bank_slot {
+            // account's rent_epoch should increment even though we're not collecting rent.
+            // and we already wrote this account in this slot, but we did not adjust rent_epoch (sys vars for example)
+            // so, force ourselves to rewrite account if account was already written in this slot
+            // Now, the account that was written IN this slot, where normally we would have collected rent, has the corrent 'rent_epoch'.
+            // Only this last store will remain in the append vec.
+            // Otherwise, later code would assume the account was written successfully in this slot with the correct 'rent_epoch'.
+            return false;
+        }
+
+        // rent was 0 and no reason to rewrite, so THIS is a rewrite we can skip
+        true
     }
 
     /// This is the inverse of pubkey_range_from_partition.
@@ -5767,9 +6054,7 @@ impl Bank {
         self.rc.accounts.account_indexes_include_key(key)
     }
 
-    pub fn get_all_accounts_with_modified_slots(
-        &self,
-    ) -> ScanResult<Vec<(Pubkey, AccountSharedData, Slot)>> {
+    pub fn get_all_accounts_with_modified_slots(&self) -> ScanResult<Vec<PubkeyAccountSlot>> {
         self.rc.accounts.load_all(&self.ancestors, self.bank_id)
     }
 
@@ -6499,17 +6784,14 @@ impl Bank {
         self.feature_set = Arc::new(feature_set);
     }
 
-    pub fn fill_bank_with_ticks(&self) {
-        let parent_distance = if self.slot() == 0 {
-            1
-        } else {
-            self.slot() - self.parent_slot()
-        };
-        for _ in 0..parent_distance {
+    pub fn fill_bank_with_ticks_for_tests(&self) {
+        if self.tick_height.load(Relaxed) < self.max_tick_height {
             let last_blockhash = self.last_blockhash();
             while self.last_blockhash() == last_blockhash {
                 self.register_tick(&Hash::new_unique())
             }
+        } else {
+            warn!("Bank already reached max tick height, cannot fill it with more ticks");
         }
     }
 
@@ -6929,6 +7211,7 @@ pub(crate) mod tests {
             inner_instructions: None,
             durable_nonce_fee: nonce.map(DurableNonceFee::from),
             return_data: None,
+            executed_units: 0u64,
         })
     }
 
@@ -8917,6 +9200,19 @@ pub(crate) mod tests {
 
     #[test]
     fn test_bank_update_vote_stake_rewards() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        check_bank_update_vote_stake_rewards(|bank: &Bank| {
+            bank.load_vote_and_stake_accounts_with_thread_pool(&thread_pool, null_tracer())
+        });
+        check_bank_update_vote_stake_rewards(|bank: &Bank| {
+            bank.load_vote_and_stake_accounts(&thread_pool, null_tracer())
+        });
+    }
+
+    fn check_bank_update_vote_stake_rewards<F>(load_vote_and_stake_accounts: F)
+    where
+        F: Fn(&Bank) -> LoadVoteAndStakeAccountsResult,
+    {
         solana_logger::setup();
 
         // create a bank that ticks really slowly...
@@ -8988,9 +9284,7 @@ pub(crate) mod tests {
         );
         assert!(bank0.rewards.read().unwrap().is_empty());
 
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let validator_points: u128 = bank0
-            .load_vote_and_stake_accounts_with_thread_pool(&thread_pool, null_tracer())
+        let validator_points: u128 = load_vote_and_stake_accounts(&bank0)
             .vote_with_stake_delegations_map
             .into_iter()
             .map(
@@ -9004,9 +9298,13 @@ pub(crate) mod tests {
                 )| {
                     delegations
                         .iter()
-                        .map(move |(_stake_pubkey, (stake_state, _stake_account))| {
-                            stake_state::calculate_points(stake_state, &vote_state, None)
-                                .unwrap_or(0)
+                        .map(move |(_stake_pubkey, stake_account)| {
+                            stake_state::calculate_points(
+                                stake_account.stake_state(),
+                                &vote_state,
+                                None, // stake_history
+                            )
+                            .unwrap_or_default()
                         })
                         .sum::<u128>()
                 },
@@ -11526,7 +11824,7 @@ pub(crate) mod tests {
             assert_eq!(recent_blockhashes.len(), i);
             let most_recent_hash = recent_blockhashes.iter().next().unwrap().blockhash;
             // Check order
-            assert_eq!(Some(true), bank.check_hash_age(&most_recent_hash, 0));
+            assert!(bank.is_hash_valid_for_age(&most_recent_hash, 0));
             goto_end_of_slot(Arc::get_mut(&mut bank).unwrap());
             bank = Arc::new(new_from_parent(&bank));
         }
@@ -15348,6 +15646,28 @@ pub(crate) mod tests {
 
     #[test]
     fn test_stake_vote_account_validity() {
+        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        check_stake_vote_account_validity(
+            true, // check owner change,
+            |bank: &Bank| {
+                bank.load_vote_and_stake_accounts_with_thread_pool(&thread_pool, null_tracer())
+            },
+        );
+        // TODO: stakes cache should be hardened for the case when the account
+        // owner is changed from vote/stake program to something else. see:
+        // https://github.com/solana-labs/solana/pull/24200#discussion_r849935444
+        check_stake_vote_account_validity(
+            false, // check owner change
+            |bank: &Bank| bank.load_vote_and_stake_accounts(&thread_pool, null_tracer()),
+        );
+    }
+
+    fn check_stake_vote_account_validity<F>(
+        check_owner_change: bool,
+        load_vote_and_stake_accounts: F,
+    ) where
+        F: Fn(&Bank) -> LoadVoteAndStakeAccountsResult,
+    {
         let validator_vote_keypairs0 = ValidatorVoteKeypairs::new_rand();
         let validator_vote_keypairs1 = ValidatorVoteKeypairs::new_rand();
         let validator_keypairs = vec![&validator_vote_keypairs0, &validator_vote_keypairs1];
@@ -15357,10 +15677,8 @@ pub(crate) mod tests {
             vec![10_000; 2],
         );
         let bank = Arc::new(Bank::new_for_tests(&genesis_config));
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let vote_and_stake_accounts = bank
-            .load_vote_and_stake_accounts_with_thread_pool(&thread_pool, null_tracer())
-            .vote_with_stake_delegations_map;
+        let vote_and_stake_accounts =
+            load_vote_and_stake_accounts(&bank).vote_with_stake_delegations_map;
         assert_eq!(vote_and_stake_accounts.len(), 2);
 
         let mut vote_account = bank
@@ -15399,11 +15717,12 @@ pub(crate) mod tests {
         );
 
         // Accounts must be valid stake and vote accounts
-        let thread_pool = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
-        let vote_and_stake_accounts = bank
-            .load_vote_and_stake_accounts_with_thread_pool(&thread_pool, null_tracer())
-            .vote_with_stake_delegations_map;
-        assert_eq!(vote_and_stake_accounts.len(), 0);
+        let vote_and_stake_accounts =
+            load_vote_and_stake_accounts(&bank).vote_with_stake_delegations_map;
+        assert_eq!(
+            vote_and_stake_accounts.len(),
+            if check_owner_change { 0 } else { 1 }
+        );
     }
 
     #[test]
@@ -17250,6 +17569,96 @@ pub(crate) mod tests {
                 assert_eq!(bank.load_accounts_data_len() as i64, initial + delta);
             }
         }
+    }
+
+    #[test]
+    fn test_skip_rewrite() {
+        solana_logger::setup();
+        let mut account = AccountSharedData::default();
+        let bank_slot = 10;
+        for account_rent_epoch in 0..3 {
+            account.set_rent_epoch(account_rent_epoch);
+            for rent_amount in [0, 1] {
+                for loaded_slot in (bank_slot - 1)..=bank_slot {
+                    for old_rent_epoch in account_rent_epoch.saturating_sub(1)..=account_rent_epoch
+                    {
+                        let skip = Bank::skip_rewrite(
+                            bank_slot,
+                            rent_amount,
+                            loaded_slot,
+                            old_rent_epoch,
+                            &account,
+                        );
+                        let mut should_skip = true;
+                        if rent_amount != 0
+                            || account_rent_epoch == 0
+                            || (account_rent_epoch != old_rent_epoch && loaded_slot == bank_slot)
+                        {
+                            should_skip = false;
+                        }
+                        assert_eq!(
+                            skip,
+                            should_skip,
+                            "{:?}",
+                            (
+                                account_rent_epoch,
+                                old_rent_epoch,
+                                rent_amount,
+                                loaded_slot,
+                                old_rent_epoch
+                            )
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_remember_skipped_rewrites() {
+        let GenesisConfigInfo {
+            mut genesis_config, ..
+        } = create_genesis_config_with_leader(1_000_000_000, &Pubkey::new_unique(), 42);
+        genesis_config.rent = Rent::default();
+        activate_all_features(&mut genesis_config);
+
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        assert!(bank.rewrites_skipped_this_slot.read().unwrap().is_empty());
+        bank.remember_skipped_rewrites(Vec::default());
+        assert!(bank.rewrites_skipped_this_slot.read().unwrap().is_empty());
+
+        // bank's map is initially empty
+        let mut test = vec![(Pubkey::new(&[4; 32]), Hash::new(&[5; 32]))];
+        bank.remember_skipped_rewrites(test.clone());
+        assert_eq!(
+            *bank.rewrites_skipped_this_slot.read().unwrap(),
+            test.clone().into_iter().collect()
+        );
+
+        // now there is already some stuff in the bank's map
+        test.push((Pubkey::new(&[6; 32]), Hash::new(&[7; 32])));
+        bank.remember_skipped_rewrites(test[1..].to_vec());
+        assert_eq!(
+            *bank.rewrites_skipped_this_slot.read().unwrap(),
+            test.clone().into_iter().collect()
+        );
+
+        // all contents are already in map
+        bank.remember_skipped_rewrites(test[1..].to_vec());
+        assert_eq!(
+            *bank.rewrites_skipped_this_slot.read().unwrap(),
+            test.clone().into_iter().collect()
+        );
+
+        // all contents are already in map, but we're changing hash values
+        test[0].1 = Hash::new(&[8; 32]);
+        test[1].1 = Hash::new(&[9; 32]);
+        bank.remember_skipped_rewrites(test.to_vec());
+        assert_eq!(
+            *bank.rewrites_skipped_this_slot.read().unwrap(),
+            test.into_iter().collect()
+        );
     }
 
     #[test]

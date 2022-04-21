@@ -65,7 +65,7 @@ mod tests {
             accounts_index::AccountSecondaryIndexes,
             bank::{Bank, BankSlotDelta},
             bank_forks::BankForks,
-            genesis_utils::{create_genesis_config, GenesisConfigInfo},
+            genesis_utils::{create_genesis_config_with_leader, GenesisConfigInfo},
             snapshot_archive_info::FullSnapshotArchiveInfo,
             snapshot_config::SnapshotConfig,
             snapshot_package::{
@@ -124,7 +124,15 @@ mod tests {
             let accounts_dir = TempDir::new().unwrap();
             let bank_snapshots_dir = TempDir::new().unwrap();
             let snapshot_archives_dir = TempDir::new().unwrap();
-            let mut genesis_config_info = create_genesis_config(10_000);
+            // validator_stake_lamports should be non-zero otherwise stake
+            // account will not be stored in accounts-db but still cached in
+            // bank stakes which results in mismatch when banks are loaded from
+            // snapshots.
+            let mut genesis_config_info = create_genesis_config_with_leader(
+                10_000,                          // mint_lamports
+                &solana_sdk::pubkey::new_rand(), // validator_pubkey
+                1,                               // validator_stake_lamports
+            );
             genesis_config_info.genesis_config.cluster_type = cluster_type;
             let bank0 = Bank::new_with_paths_for_tests(
                 &genesis_config_info.genesis_config,
@@ -241,8 +249,8 @@ mod tests {
         let bank_forks = &mut snapshot_test_config.bank_forks;
         let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
 
-        let (s, snapshot_request_receiver) = unbounded();
-        let request_sender = AbsRequestSender::new(Some(s));
+        let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
+        let request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_config: snapshot_test_config.snapshot_config.clone(),
             snapshot_request_receiver,
@@ -585,7 +593,7 @@ mod tests {
                 Slot::MAX,
             );
             let mut current_bank = snapshot_test_config.bank_forks[0].clone();
-            let request_sender = AbsRequestSender::new(Some(snapshot_sender));
+            let request_sender = AbsRequestSender::new(snapshot_sender);
             for _ in 0..num_set_roots {
                 for _ in 0..*add_root_interval {
                     let new_slot = current_bank.slot() + 1;
@@ -680,7 +688,7 @@ mod tests {
         let mint_keypair = &snapshot_test_config.genesis_config_info.mint_keypair;
 
         let (snapshot_request_sender, snapshot_request_receiver) = unbounded();
-        let request_sender = AbsRequestSender::new(Some(snapshot_request_sender));
+        let request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_request_handler = SnapshotRequestHandler {
             snapshot_config: snapshot_test_config.snapshot_config.clone(),
             snapshot_request_receiver,
@@ -918,7 +926,7 @@ mod tests {
             bank.set_callback(Some(Box::new(callback.clone())));
         }
 
-        let abs_request_sender = AbsRequestSender::new(Some(snapshot_request_sender));
+        let abs_request_sender = AbsRequestSender::new(snapshot_request_sender);
         let snapshot_request_handler = Some(SnapshotRequestHandler {
             snapshot_config: snapshot_test_config.snapshot_config.clone(),
             snapshot_request_receiver,
