@@ -5051,6 +5051,7 @@ dependencies = [
  "crossbeam-channel",
  "fs_extra",
  "futures 0.3.21",
+ "generic-array 0.14.5",
  "itertools",
  "lazy_static",
  "libc",
