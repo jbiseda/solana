@@ -511,7 +511,7 @@ impl BroadcastRun for StandardBroadcastRun {
             socket_sender,
             blockstore_sender,
             receive_results,
-            false,
+            true,
         )
     }
     fn transmit(
