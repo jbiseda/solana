@@ -110,6 +110,8 @@ impl FetchStage {
             }
         }
 
+        // filter packets if we're not close to being the leader
+
         if poh_recorder
             .lock()
             .unwrap()

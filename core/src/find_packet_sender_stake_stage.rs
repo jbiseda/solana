@@ -86,7 +86,7 @@ impl FindPacketSenderStakeStage {
         let thread_hdl = Builder::new()
             .name("find-packet-sender-stake".to_string())
             .spawn(move || loop {
-                match streamer::recv_packet_batches(&packet_receiver) {
+                match streamer::recv_packet_batches(&packet_receiver, Some(4 * MAX_FINDPACKETSENDERSTAKE_BATCH)) {
                     Ok((mut batches, num_packets, recv_duration)) => {
                         let num_batches = batches.len();
 

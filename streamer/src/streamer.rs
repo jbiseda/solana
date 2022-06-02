@@ -332,6 +332,7 @@ pub fn recv_vec_packet_batches(
 
 pub fn recv_packet_batches(
     recvr: &PacketBatchReceiver,
+    recv_limit: Option<usize>,
 ) -> Result<(Vec<PacketBatch>, usize, Duration)> {
     let timer = Duration::new(1, 0);
     let packet_batch = recvr.recv_timeout(timer)?;
@@ -343,6 +344,11 @@ pub fn recv_packet_batches(
         trace!("got more packets");
         num_packets += packet_batch.len();
         packet_batches.push(packet_batch);
+        if let Some(limit) = recv_limit {
+            if num_packets > limit {
+                break;
+            }
+        }
     }
     let recv_duration = recv_start.elapsed();
     trace!(
