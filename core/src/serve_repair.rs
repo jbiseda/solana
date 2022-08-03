@@ -75,7 +75,7 @@ pub const MAX_ANCESTOR_RESPONSES: usize =
 /// Number of bytes in the randomly generated token sent with ping messages.
 pub(crate) const REPAIR_PING_TOKEN_SIZE: usize = HASH_BYTES;
 pub const REPAIR_PING_CACHE_CAPACITY: usize = 65536;
-pub const REPAIR_PING_CACHE_TTL: Duration = Duration::from_secs(1280);
+pub const REPAIR_PING_CACHE_TTL: Duration = Duration::from_secs(4 /*1280*/);
 pub(crate) const REPAIR_RESPONSE_SERIALIZED_PING_BYTES: usize =
     4 /*enum discriminator*/ + PUBKEY_BYTES + REPAIR_PING_TOKEN_SIZE + SIGNATURE_BYTES;
 const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 min
@@ -454,10 +454,13 @@ impl ServeRepair {
         root_bank: &Bank,
         check_ping_ancestor_request_epoch: Option<Epoch>,
     ) -> bool {
+        /*
         match check_ping_ancestor_request_epoch {
             None => false,
             Some(feature_epoch) => feature_epoch < root_bank.epoch_schedule().get_epoch(slot),
         }
+        */
+        true
     }
 
     /// Process messages from the network
@@ -746,6 +749,7 @@ impl ServeRepair {
             }
             RepairProtocol::AncestorHashes { .. } => {
                 let ping = AncestorHashesResponse::Ping(ping);
+                error!("PING send ancestor ping {:?} {:?}", dest_addr, &ping);
                 Packet::from_data(Some(dest_addr), ping).ok()
             }
         }
@@ -810,6 +814,11 @@ impl ServeRepair {
                         pending_pings.push(pkt);
                     }
                 }
+
+                if let RepairProtocol::AncestorHashes { .. } = request {
+                    error!("PING ancestor check({}) {:?} {:?}", check, &from_addr, &request);
+                }
+
                 if !check {
                     stats.pings_required += 1;
                     continue;

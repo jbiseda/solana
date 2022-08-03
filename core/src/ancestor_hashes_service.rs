@@ -421,6 +421,7 @@ impl AncestorHashesService {
                 if packet_buf.len() != position {
                     stats.invalid_packets += 1;
                 } else if ping.verify() {
+                    error!("PING recv ancestor ping verified {:?} {:?}", &from_addr, &ping);
                     stats.ping_count += 1;
                     if let Ok(pong) = Pong::new(&ping, keypair) {
                         let pong = RepairProtocol::Pong(pong);
