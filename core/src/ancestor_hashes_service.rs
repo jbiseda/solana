@@ -561,17 +561,19 @@ impl AncestorHashesService {
                         .repair_peers(1_000_000);
                     let peers: Vec<&ContactInfo> = peers.iter().filter(|ci| ci.id != keypair.pubkey())
                         .collect();
-                    let addr = peers[0].serve_repair;
-                    let peer_pubkey = peers[0].id;
-                    let buf = serve_repair.ancestor_repair_request_bytes(
-                        &keypair,
-                        &repair_info.bank_forks.read().unwrap().root_bank(),
-                        &peer_pubkey,
-                        123, // slot
-                        456, // nonce
-                    ).unwrap();
-                    error!("PING sending ancestor request to {:?}", &addr);
-                    ancestor_hashes_request_socket.send_to(&buf, &addr);
+                    if peers.len() >= 1 {
+                        let addr = peers[0].serve_repair;
+                        let peer_pubkey = peers[0].id;
+                        let buf = serve_repair.ancestor_repair_request_bytes(
+                            &keypair,
+                            &repair_info.bank_forks.read().unwrap().root_bank(),
+                            &peer_pubkey,
+                            123, // slot
+                            456, // nonce
+                        ).unwrap();
+                        error!("PING sending ancestor request to {:?}", &addr);
+                        ancestor_hashes_request_socket.send_to(&buf, &addr);
+                    }
                 }
             })
             .unwrap()
