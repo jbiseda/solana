@@ -15,7 +15,7 @@ use {
     bincode::serialize,
     crossbeam_channel::{unbounded, Receiver, Sender},
     dashmap::{mapref::entry::Entry::Occupied, DashMap},
-    solana_gossip::{cluster_info::ClusterInfo, ping_pong::Pong},
+    solana_gossip::{contact_info::ContactInfo, cluster_info::ClusterInfo, ping_pong::Pong},
     solana_ledger::{blockstore::Blockstore, shred::SIZE_OF_NONCE},
     solana_perf::{
         packet::{deserialize_from_with_limit, Packet, PacketBatch},
@@ -25,7 +25,7 @@ use {
     solana_sdk::{
         clock::{Slot, SLOT_MS},
         pubkey::Pubkey,
-        signature::Signable,
+        signature::{Signable, Signer},
         signer::keypair::Keypair,
         timing::timestamp,
     },
@@ -421,7 +421,10 @@ impl AncestorHashesService {
                 if packet_buf.len() != position {
                     stats.invalid_packets += 1;
                 } else if ping.verify() {
-                    error!("PING recv ancestor ping verified {:?} {:?}", &from_addr, &ping);
+                    error!(
+                        "PING recv ancestor ping verified {:?} {:?}",
+                        &from_addr, &ping
+                    );
                     stats.ping_count += 1;
                     if let Ok(pong) = Pong::new(&ping, keypair) {
                         let pong = RepairProtocol::Pong(pong);
@@ -550,6 +553,26 @@ impl AncestorHashesService {
                 );
 
                 sleep(Duration::from_millis(SLOT_MS));
+
+                {
+                    let keypair = repair_info.cluster_info.keypair().clone();
+                    let peers: Vec<_> = repair_info
+                        .cluster_info
+                        .repair_peers(1_000_000);
+                    let peers: Vec<&ContactInfo> = peers.iter().filter(|ci| ci.id != keypair.pubkey())
+                        .collect();
+                    let addr = peers[0].serve_repair;
+                    let peer_pubkey = peers[0].id;
+                    let buf = serve_repair.ancestor_repair_request_bytes(
+                        &keypair,
+                        &repair_info.bank_forks.read().unwrap().root_bank(),
+                        &peer_pubkey,
+                        123, // slot
+                        456, // nonce
+                    ).unwrap();
+                    error!("PING sending ancestor request to {:?}", &addr);
+                    ancestor_hashes_request_socket.send_to(&buf, &addr);
+                }
             })
             .unwrap()
     }

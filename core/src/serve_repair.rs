@@ -816,7 +816,10 @@ impl ServeRepair {
                 }
 
                 if let RepairProtocol::AncestorHashes { .. } = request {
-                    error!("PING ancestor check({}) {:?} {:?}", check, &from_addr, &request);
+                    error!(
+                        "PING ancestor check({}) {:?} {:?}",
+                        check, &from_addr, &request
+                    );
                 }
 
                 if !check {
