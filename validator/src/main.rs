@@ -38,7 +38,7 @@ use {
     solana_perf::recycler::enable_recycler_warming,
     solana_poh::poh_service,
     solana_rpc::{
-        rpc::{JsonRpcConfig, RpcBigtableConfig},
+        rpc::{JsonRpcConfig, RpcBigtableConfig, MAX_REQUEST_BODY_SIZE},
         rpc_pubsub_service::PubSubConfig,
     },
     solana_runtime::{
@@ -469,6 +469,7 @@ pub fn main() {
     let default_rocksdb_fifo_shred_storage_size =
         &DEFAULT_ROCKS_FIFO_SHRED_STORAGE_SIZE_BYTES.to_string();
     let default_tpu_connection_pool_size = &DEFAULT_TPU_CONNECTION_POOL_SIZE.to_string();
+    let default_rpc_max_request_body_size = &MAX_REQUEST_BODY_SIZE.to_string();
 
     let matches = App::new(crate_name!()).about(crate_description!())
         .version(solana_version::version!())
@@ -1213,15 +1214,7 @@ pub fn main() {
             Arg::with_name("tpu_use_quic")
                 .long("tpu-use-quic")
                 .takes_value(false)
-                .hidden(true)
-                .conflicts_with("tpu_disable_quic")
                 .help("Use QUIC to send transactions."),
-        )
-        .arg(
-            Arg::with_name("tpu_disable_quic")
-                .long("tpu-disable-quic")
-                .takes_value(false)
-                .help("Do not use QUIC to send transactions."),
         )
         .arg(
             Arg::with_name("disable_quic_servers")
@@ -1474,6 +1467,15 @@ pub fn main() {
                 .takes_value(false)
                 .requires("enable_rpc_transaction_history")
                 .help("Verifies blockstore roots on boot and fixes any gaps"),
+        )
+        .arg(
+            Arg::with_name("rpc_max_request_body_size")
+                .long("rpc-max-request-body-size")
+                .value_name("BYTES")
+                .takes_value(true)
+                .validator(is_parsable::<usize>)
+                .default_value(default_rpc_max_request_body_size)
+                .help("The maximum request body size accepted by rpc service"),
         )
         .arg(
             Arg::with_name("enable_accountsdb_repl")
@@ -2322,7 +2324,7 @@ pub fn main() {
     let restricted_repair_only_mode = matches.is_present("restricted_repair_only_mode");
     let accounts_shrink_optimize_total_space =
         value_t_or_exit!(matches, "accounts_shrink_optimize_total_space", bool);
-    let tpu_use_quic = !matches.is_present("tpu_disable_quic");
+    let tpu_use_quic = matches.is_present("tpu_use_quic");
     let enable_quic_servers = !matches.is_present("disable_quic_servers");
     let tpu_connection_pool_size = value_t_or_exit!(matches, "tpu_connection_pool_size", usize);
 
@@ -2581,6 +2583,11 @@ pub fn main() {
             rpc_niceness_adj: value_t_or_exit!(matches, "rpc_niceness_adj", i8),
             account_indexes: account_indexes.clone(),
             rpc_scan_and_fix_roots: matches.is_present("rpc_scan_and_fix_roots"),
+            max_request_body_size: Some(value_t_or_exit!(
+                matches,
+                "rpc_max_request_body_size",
+                usize
+            )),
         },
         geyser_plugin_config_files,
         rpc_addrs: value_t!(matches, "rpc_port", u16).ok().map(|rpc_port| {

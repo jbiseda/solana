@@ -2898,7 +2898,7 @@ impl ReplayStage {
             newly_voted_pubkeys,
             cluster_slot_pubkeys,
             slot,
-            bank_forks,
+            &bank_forks.read().unwrap(),
         );
     }
 
@@ -3089,11 +3089,11 @@ impl ReplayStage {
         mut newly_voted_pubkeys: Vec<Pubkey>,
         mut cluster_slot_pubkeys: Vec<Pubkey>,
         fork_tip: Slot,
-        bank_forks: &RwLock<BankForks>,
+        bank_forks: &BankForks,
     ) {
         let mut current_leader_slot = progress.get_latest_leader_slot_must_exist(fork_tip);
         let mut did_newly_reach_threshold = false;
-        let root = bank_forks.read().unwrap().root();
+        let root = bank_forks.root();
         loop {
             // These cases mean confirmation of propagation on any earlier
             // leader blocks must have been reached
@@ -3124,8 +3124,6 @@ impl ReplayStage {
             // `progress` map
             assert!(leader_propagated_stats.is_leader_slot);
             let leader_bank = bank_forks
-                .read()
-                .unwrap()
                 .get(current_leader_slot.unwrap())
                 .expect("Entry in progress map must exist in BankForks")
                 .clone();
@@ -3414,7 +3412,7 @@ impl ReplayStage {
                     empty,
                     vec![leader],
                     parent_bank.slot(),
-                    bank_forks,
+                    &forks,
                 );
                 new_banks.insert(child_slot, child_bank);
             }
@@ -3524,7 +3522,7 @@ pub(crate) mod tests {
             hash::{hash, Hash},
             instruction::InstructionError,
             poh_config::PohConfig,
-            signature::{Keypair, Signer},
+            signature::{Keypair, KeypairInsecureClone, Signer},
             system_transaction,
             transaction::TransactionError,
         },
@@ -3604,7 +3602,7 @@ pub(crate) mod tests {
         let my_pubkey = my_keypairs.node_keypair.pubkey();
         let cluster_info = ClusterInfo::new(
             Node::new_localhost_with_pubkey(&my_pubkey).info,
-            Arc::new(Keypair::from_bytes(&my_keypairs.node_keypair.to_bytes()).unwrap()),
+            Arc::new(my_keypairs.node_keypair.clone()),
             SocketAddrSpace::Unspecified,
         );
         assert_eq!(my_pubkey, cluster_info.id());

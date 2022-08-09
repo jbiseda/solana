@@ -700,38 +700,12 @@ impl ServeRepair {
         }
     }
 
-    fn requires_ping_check(
+    fn ping_to_packet_mapper_by_request_variant(
         request: &RepairProtocol,
+        dest_addr: SocketAddr,
         root_bank: &Bank,
         check_ping_ancestor_request_epoch: Option<Epoch>,
-    ) -> bool {
-        match request {
-            RepairProtocol::LegacyWindowIndex(_, _, _)
-            | RepairProtocol::LegacyHighestWindowIndex(_, _, _)
-            | RepairProtocol::LegacyOrphan(_, _)
-            | RepairProtocol::LegacyWindowIndexWithNonce(_, _, _, _)
-            | RepairProtocol::LegacyHighestWindowIndexWithNonce(_, _, _, _)
-            | RepairProtocol::LegacyOrphanWithNonce(_, _, _)
-            | RepairProtocol::LegacyAncestorHashes(_, _, _)
-            | RepairProtocol::Pong(_) => false,
-            RepairProtocol::WindowIndex { .. }
-            | RepairProtocol::HighestWindowIndex { .. }
-            | RepairProtocol::Orphan { .. } => true,
-            RepairProtocol::AncestorHashes { slot, .. } => {
-                Self::should_check_ping_ancestor_request(
-                    *slot,
-                    root_bank,
-                    check_ping_ancestor_request_epoch,
-                )
-            }
-        }
-    }
-
-    fn request_to_ping_packet(
-        request: &RepairProtocol,
-        dest_addr: &SocketAddr,
-        ping: Ping,
-    ) -> Option<Packet> {
+    ) -> Option<Box<dyn FnOnce(Ping) -> Option<Packet>>> {
         match request {
             RepairProtocol::LegacyWindowIndex(_, _, _)
             | RepairProtocol::LegacyHighestWindowIndex(_, _, _)
@@ -743,14 +717,24 @@ impl ServeRepair {
             | RepairProtocol::Pong(_) => None,
             RepairProtocol::WindowIndex { .. }
             | RepairProtocol::HighestWindowIndex { .. }
-            | RepairProtocol::Orphan { .. } => {
+            | RepairProtocol::Orphan { .. } => Some(Box::new(move |ping| {
                 let ping = RepairResponse::Ping(ping);
-                Packet::from_data(Some(dest_addr), ping).ok()
-            }
-            RepairProtocol::AncestorHashes { .. } => {
-                let ping = AncestorHashesResponse::Ping(ping);
-                error!("PING send ancestor ping {:?} {:?}", dest_addr, &ping);
-                Packet::from_data(Some(dest_addr), ping).ok()
+                Packet::from_data(Some(&dest_addr), ping).ok()
+            })),
+            RepairProtocol::AncestorHashes { slot, .. } => {
+                if Self::should_check_ping_ancestor_request(
+                    *slot,
+                    root_bank,
+                    check_ping_ancestor_request_epoch,
+                ) {
+                    Some(Box::new(move |ping| {
+                        let ping = AncestorHashesResponse::Ping(ping);
+                        error!("PING send ancestor ping {:?} {:?}", dest_addr, &ping);
+                        Packet::from_data(Some(&dest_addr), ping).ok()
+                    }))
+                } else {
+                    None
+                }
             }
         }
     }
@@ -802,7 +786,12 @@ impl ServeRepair {
             }
 
             let from_addr = packet.meta.socket_addr();
-            if Self::requires_ping_check(&request, root_bank, check_ping_ancestor_request_epoch) {
+            if let Some(ping_to_pkt) = Self::ping_to_packet_mapper_by_request_variant(
+                &request,
+                from_addr,
+                root_bank,
+                check_ping_ancestor_request_epoch,
+            ) {
                 if !ContactInfo::is_valid_address(&from_addr, &socket_addr_space) {
                     stats.err_malformed += 1;
                     continue;
@@ -810,7 +799,7 @@ impl ServeRepair {
                 let (check, ping) =
                     Self::check_ping_cache(&request, &from_addr, &identity_keypair, ping_cache);
                 if let Some(ping) = ping {
-                    if let Some(pkt) = Self::request_to_ping_packet(&request, &from_addr, ping) {
+                    if let Some(pkt) = ping_to_pkt(ping) {
                         pending_pings.push(pkt);
                     }
                 }
