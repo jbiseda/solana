@@ -336,11 +336,11 @@ impl ServeRepair {
             Some(addr) => {
                 error!(">>> {:?} => {:?}", sender, &addr);
                 addr
-            },
+            }
             None => {
                 error!(">>> lookup({:?}) miss", sender);
                 *from_addr
-            },
+            }
         };
 
         let (res, label) = {
@@ -820,9 +820,9 @@ impl ServeRepair {
             }
 
             stats.processed += 1;
-            let rsp = match self.handle_repair(
-                recycler, &from_addr, blockstore, request, stats, ping_cache,
-            ) {
+            let rsp = match self
+                .handle_repair(recycler, &from_addr, blockstore, request, stats, ping_cache)
+            {
                 None => continue,
                 Some(rsp) => rsp,
             };

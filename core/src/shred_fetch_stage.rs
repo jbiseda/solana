@@ -7,7 +7,7 @@ use {
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         shred,
-        shred::{should_discard_shred, ShredFetchStats}
+        shred::{should_discard_shred, ShredFetchStats},
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PacketFlags},
     solana_runtime::bank_forks::BankForks,
