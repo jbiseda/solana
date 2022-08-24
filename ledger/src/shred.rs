@@ -650,14 +650,14 @@ pub mod layout {
             Some(buf) => buf,
             None => return false,
         };
-        let shred_type = match get_shred_type(&shred) {
+        let shred_type = match get_shred_type(shred) {
             Ok(shred_type) => shred_type,
             Err(_) => return false,
         };
         if shred_type != ShredType::Data {
             return false;
         }
-        let data_header_size = match get_data_header_size(&shred) {
+        let data_header_size = match get_data_header_size(shred) {
             Some(data_header_size) => data_header_size,
             None => return false,
         };
