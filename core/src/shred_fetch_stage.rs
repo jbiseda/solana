@@ -5,7 +5,10 @@ use {
     crossbeam_channel::{unbounded, Sender},
     lru::LruCache,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_ledger::shred::{should_discard_shred, ShredFetchStats},
+    solana_ledger::{
+        shred,
+        shred::{should_discard_shred, ShredFetchStats}
+    },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PacketFlags},
     solana_runtime::bank_forks::BankForks,
     solana_sdk::clock::{Slot, DEFAULT_MS_PER_SLOT},
@@ -86,6 +89,9 @@ impl ShredFetchStage {
             // Limit shreds to 2 epochs away.
             let max_slot = last_slot + 2 * slots_per_epoch;
             for packet in packet_batch.iter_mut() {
+                if shred::layout::infer_repair(packet) {
+                    packet.meta.flags.insert(PacketFlags::REPAIR);
+                }
                 if should_discard_packet(
                     packet,
                     last_root,

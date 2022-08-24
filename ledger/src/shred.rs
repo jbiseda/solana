@@ -601,6 +601,14 @@ pub mod layout {
             .ok()
     }
 
+    fn get_data_header_size(shred: &[u8]) -> Option<u16> {
+        const OFFSET_OF_SHRED_SIZE: usize = SIZE_OF_COMMON_SHRED_HEADER + 2 + 1;
+        debug_assert_eq!(get_shred_type(shred).unwrap(), ShredType::Data);
+        <[u8; 2]>::try_from(shred.get(OFFSET_OF_SHRED_SIZE..)?.get(..2)?)
+            .map(u16::from_le_bytes)
+            .ok()
+    }
+
     #[inline]
     pub fn get_shred_id(shred: &[u8]) -> Option<ShredId> {
         Some(ShredId(
@@ -635,6 +643,29 @@ pub mod layout {
             Some(flags) => flags,
         };
         Ok(flags & ShredFlags::SHRED_TICK_REFERENCE_MASK.bits())
+    }
+
+    pub fn infer_repair(packet: &Packet) -> bool {
+        let shred = match packet.data(..) {
+            Some(buf) => buf,
+            None => return false,
+        };
+        let shred_type = match get_shred_type(&shred) {
+            Ok(shred_type) => shred_type,
+            Err(_) => return false,
+        };
+        if shred_type != ShredType::Data {
+            return false;
+        }
+        let data_header_size = match get_data_header_size(&shred) {
+            Some(data_header_size) => data_header_size,
+            None => return false,
+        };
+        let meta_size = match u16::try_from(packet.meta.size) {
+            Ok(meta_size) => meta_size,
+            Err(_) => return false,
+        };
+        data_header_size + /*nonce*/4 == meta_size
     }
 }
 
