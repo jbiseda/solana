@@ -333,14 +333,8 @@ impl ServeRepair {
 
         let sender = request.sender();
         let return_addr = match self.cluster_info.lookup_contact_info(sender, |ci| ci.tvu) {
-            Some(addr) => {
-                error!(">>> {:?} => {:?}", sender, &addr);
-                addr
-            }
-            None => {
-                error!(">>> lookup({:?}) miss", sender);
-                *from_addr
-            }
+            Some(addr) => addr,
+            None => *from_addr,
         };
 
         let (res, label) = {
