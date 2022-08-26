@@ -667,7 +667,14 @@ pub mod layout {
             Ok(meta_size) => meta_size,
             Err(_) => return false,
         };
-        data_header_size + /*nonce*/4 == meta_size
+        let is_repair = data_header_size + /*nonce*/4 == meta_size;
+        error!(
+            ">>> {}: {} / {}",
+            if is_repair { "REPAIR" } else { "NOPE" },
+            data_header_size,
+            meta_size
+        );
+        is_repair
     }
 }
 
