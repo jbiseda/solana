@@ -331,11 +331,14 @@ impl ServeRepair {
     ) -> Option<PacketBatch> {
         let now = Instant::now();
 
+        /*
         let sender = request.sender();
         let return_addr = match self.cluster_info.lookup_contact_info(sender, |ci| ci.tvu) {
             Some(addr) => addr,
             None => *from_addr,
         };
+        */
+        let return_addr = *from_addr;
 
         let (res, label) = {
             match &request {

@@ -89,9 +89,17 @@ impl ShredFetchStage {
             // Limit shreds to 2 epochs away.
             let max_slot = last_slot + 2 * slots_per_epoch;
             for packet in packet_batch.iter_mut() {
+                /*
                 if shred::layout::infer_repair(packet) {
                     packet.meta.flags.insert(PacketFlags::REPAIR);
                 }
+                */
+
+                if flags.contains(PacketFlags::REPAIR) {
+                    let is_repair = shred::layout::infer_repair(packet);
+                    error!("REPAIR tested {}", is_repair);
+                }
+
                 if should_discard_packet(
                     packet,
                     last_root,
