@@ -96,8 +96,8 @@ impl ShredFetchStage {
                 */
 
                 if flags.contains(PacketFlags::REPAIR) {
-                    let is_repair = shred::layout::infer_repair(packet);
-                    error!("REPAIR tested {}", is_repair);
+                    let (is_repair, data_header_size, meta_size) = shred::layout::infer_repair(packet);
+                    error!("REPAIR tested {} data_header_size={}, meta_size={}", is_repair, data_header_size, meta_size);
                 }
 
                 if should_discard_packet(

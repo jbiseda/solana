@@ -647,25 +647,25 @@ pub mod layout {
         Ok(flags & ShredFlags::SHRED_TICK_REFERENCE_MASK.bits())
     }
 
-    pub fn infer_repair(packet: &Packet) -> bool {
+    pub fn infer_repair(packet: &Packet) -> (bool, u16, u16) {
         let shred = match packet.data(..) {
             Some(buf) => buf,
-            None => return false,
+            None => return (false, 0, 0),
         };
         let shred_type = match get_shred_type(shred) {
             Ok(shred_type) => shred_type,
-            Err(_) => return false,
+            Err(_) => return (false, 0, 0),
         };
         if shred_type != ShredType::Data {
-            return false;
+            return (false, 0, 0);
         }
         let data_header_size = match get_data_header_size(shred) {
             Some(data_header_size) => data_header_size,
-            None => return false,
+            None => return (false, 0, 0),
         };
         let meta_size = match u16::try_from(packet.meta.size) {
             Ok(meta_size) => meta_size,
-            Err(_) => return false,
+            Err(_) => return (false, 0, 0),
         };
         let is_repair = data_header_size + /*nonce*/4 == meta_size;
         error!(
@@ -674,7 +674,7 @@ pub mod layout {
             data_header_size,
             meta_size
         );
-        is_repair
+        (is_repair, data_header_size, meta_size)
     }
 }
 
