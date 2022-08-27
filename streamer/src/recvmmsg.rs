@@ -107,6 +107,9 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result</*num p
     };
     for (addr, hdr, pkt) in izip!(addrs, hdrs, packets.iter_mut()).take(nrecv) {
         pkt.meta.size = hdr.msg_len as usize;
+        if pkt.meta.size != 1232 {
+            error!(">>> recv meta.size={}", pkt.meta.size);
+        }
         if let Some(addr) = cast_socket_addr(&addr, &hdr) {
             pkt.meta.set_socket_addr(&addr.to_std());
         }
