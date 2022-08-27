@@ -6,7 +6,7 @@ use {
     lru::LruCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
-        //shred,
+        shred,
         shred::{should_discard_shred, ShredFetchStats},
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PacketFlags},
@@ -111,11 +111,19 @@ impl ShredFetchStage {
                 */
 
                 if repair_flag && packet.meta.size != 1232 {
-                    error!(">>> ASSUMPTION failed: repair_flag && packet.meta.size != 1232");
+                    let (_, header_size, _) = shred::layout::infer_repair(packet);
+                    error!(
+                        ">>> ASSUMPTION failed: repair_flag && packet.meta.size != 1232, meta_size={} header_size={}",
+                        packet.meta.size,
+                        header_size,
+                    );
                 }
 
                 if !repair_flag && packet.meta.size == 1232 {
-                    error!(">>> ASSUMPTION failed: !repair_flag && packet.meta.size == 1232");
+                    error!(
+                        ">>> ASSUMPTION failed: !repair_flag && packet.meta.size == 1232, meta_size={}",
+                        packet.meta.size,
+                    );
                 }
 
                 /*
