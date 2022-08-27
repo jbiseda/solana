@@ -96,7 +96,7 @@ impl ShredFetchStage {
                 */
 
                 let repair_flag = flags.contains(PacketFlags::REPAIR);
-                let (infer_repair, data_header_size, _) = shred::layout::infer_repair(packet);
+                //let (infer_repair, data_header_size, _) = shred::layout::infer_repair(packet);
 
                 /*
                 if repair_flag {
