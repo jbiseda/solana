@@ -138,6 +138,9 @@ where
     let mut addrs = vec![unsafe { std::mem::zeroed() }; size];
     let mut hdrs = vec![unsafe { std::mem::zeroed() }; size];
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
+        if pkt.len() != 1232 {
+            error!(">>> pkt.len={}", pkt.len());
+        }
         mmsghdr_for_packet(pkt.as_ref(), dest.borrow(), iov, addr, hdr);
     }
     sendmmsg_retry(sock, &mut hdrs)
