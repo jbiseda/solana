@@ -98,6 +98,7 @@ impl ShredFetchStage {
                 let repair_flag = flags.contains(PacketFlags::REPAIR);
                 let (infer_repair, data_header_size, _) = shred::layout::infer_repair(packet);
 
+                /*
                 if repair_flag {
                     error!(
                         ">>> MODIFIER meta.size={} data_header_size={} repair_flag={} infer_repair={}",
@@ -106,6 +107,15 @@ impl ShredFetchStage {
                         repair_flag,
                         infer_repair,
                     );
+                }
+                */
+
+                if repair_flag && packet.meta.size != 1232 {
+                    error!(">>> ASSUMPTION failed: repair_flag && packet.meta.size != 1232");
+                }
+
+                if !repair_flag && packet.meta.size == 1232 {
+                    error!(">>> ASSUMPTION failed: !repair_flag && packet.meta.size == 1232");
                 }
 
                 /*
