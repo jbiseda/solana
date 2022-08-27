@@ -116,7 +116,7 @@ impl ShredFetchStage {
                         ">>> ASSUMPTION failed: repair_flag && packet.meta.size != 1232, meta_size={} header_size={} discard={}",
                         packet.meta.size,
                         header_size,
-                        packet.discard(),
+                        packet.meta.discard(),
                     );
                 }
 
