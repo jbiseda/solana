@@ -87,7 +87,7 @@ impl ShredFetchStage {
             let max_slot = last_slot + 2 * slots_per_epoch;
             for packet in packet_batch.iter_mut() {
                 // infer repair packet
-                if !packet.meta.discard() && packet.meta.size == 1232 {
+                if !packet.meta.discard() && !flags.contains(PacketFlags::REPAIR) && packet.meta.size == 1232 {
                     error!(">>> inferring repair");
                     packet.meta.flags.insert(PacketFlags::REPAIR);
                 }
