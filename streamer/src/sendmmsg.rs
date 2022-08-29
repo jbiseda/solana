@@ -138,8 +138,8 @@ where
     let mut addrs = vec![unsafe { std::mem::zeroed() }; size];
     let mut hdrs = vec![unsafe { std::mem::zeroed() }; size];
     for ((pkt, dest), hdr, iov, addr) in izip!(packets, &mut hdrs, &mut iovs, &mut addrs) {
-        let pkt_len = pkt.as_ref().len();
         /*
+        let pkt_len = pkt.as_ref().len();
         if pkt_len != 1232 {
             error!(">>> pkt.len={}", pkt_len);
         }
