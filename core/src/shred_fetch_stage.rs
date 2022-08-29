@@ -6,7 +6,7 @@ use {
     lru::LruCache,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
-        shred,
+        //shred,
         shred::{should_discard_shred, ShredFetchStats},
     },
     solana_perf::packet::{Packet, PacketBatch, PacketBatchRecycler, PacketFlags},
@@ -89,50 +89,11 @@ impl ShredFetchStage {
             // Limit shreds to 2 epochs away.
             let max_slot = last_slot + 2 * slots_per_epoch;
             for packet in packet_batch.iter_mut() {
-                /*
-                if shred::layout::infer_repair(packet) {
+                // infer repair packet
+                if !packet.meta.discard() && packet.meta.size == 1232 {
+                    error!(">>> inferring repair");
                     packet.meta.flags.insert(PacketFlags::REPAIR);
                 }
-                */
-
-                let repair_flag = flags.contains(PacketFlags::REPAIR);
-                //let (infer_repair, data_header_size, _) = shred::layout::infer_repair(packet);
-
-                /*
-                if repair_flag {
-                    error!(
-                        ">>> MODIFIER meta.size={} data_header_size={} repair_flag={} infer_repair={}",
-                        packet.meta.size,
-                        data_header_size,
-                        repair_flag,
-                        infer_repair,
-                    );
-                }
-                */
-
-                if repair_flag && packet.meta.size != 1232 {
-                    let (_, header_size, _) = shred::layout::infer_repair(packet);
-                    error!(
-                        ">>> ASSUMPTION failed: repair_flag && packet.meta.size != 1232, meta_size={} header_size={} discard={}",
-                        packet.meta.size,
-                        header_size,
-                        packet.meta.discard(),
-                    );
-                }
-
-                if !repair_flag && packet.meta.size == 1232 {
-                    error!(
-                        ">>> ASSUMPTION failed: !repair_flag && packet.meta.size == 1232, meta_size={}",
-                        packet.meta.size,
-                    );
-                }
-
-                /*
-                if repair_flag {
-                    let (is_repair, data_header_size, meta_size) = shred::layout::infer_repair(packet);
-                    error!("REPAIR tested {} data_header_size={}, meta_size={}", is_repair, data_header_size, meta_size);
-                }
-                */
 
                 if should_discard_packet(
                     packet,
