@@ -882,10 +882,10 @@ impl ServeRepair {
             ShredRepairType::HighestShred(_slot, _index) => {
                 // TODO compute broadcast layers to get peers
                 // see broadcast_stage::broadcast_shreds for slot/index peer selection
-            },
+            }
             ShredRepairType::Shred(_slot, _index) => {
                 // TODO use index to guess at peers for subsequent indices
-            },
+            }
             ShredRepairType::Orphan(_slot) => {
                 // TODO anything to do with just slot?
             }
@@ -907,7 +907,9 @@ impl ServeRepair {
             return Err(Error::from(ClusterInfoError::NoPeers));
         } else {
             //self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone()).ok_or(ClusterInfoError::NoPeers)?
-            let x = self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone());
+            let x = self
+                .cluster_info
+                .lookup_contact_info(&slot_leader, |ci| ci.serve_repair);
             match x {
                 Some(addr) => addr,
                 None => {
@@ -934,7 +936,10 @@ impl ServeRepair {
 
         let (peer, addr) = (slot_leader, leader_repair_addr);
 
-        warn!(">>> repair using {:?} {:?} {:?}", &peer, &addr, &repair_request);
+        warn!(
+            ">>> repair using {:?} {:?} {:?}",
+            &peer, &addr, &repair_request
+        );
 
         let nonce = outstanding_requests.add_request(repair_request, timestamp());
         let out = self.map_repair_request(
