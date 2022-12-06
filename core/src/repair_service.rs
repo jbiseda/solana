@@ -13,7 +13,10 @@ use {
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lru::LruCache,
     solana_gossip::cluster_info::ClusterInfo,
-    solana_ledger::blockstore::{Blockstore, SlotMeta},
+    solana_ledger::{
+        blockstore::{Blockstore, SlotMeta},
+        leader_schedule_cache::LeaderScheduleCache,
+    },
     solana_measure::measure::Measure,
     solana_runtime::{bank_forks::BankForks, contains::Contains},
     solana_sdk::{
@@ -174,6 +177,7 @@ pub struct RepairInfo {
     pub epoch_schedule: EpochSchedule,
     pub duplicate_slots_reset_sender: DuplicateSlotsResetSender,
     pub repair_validators: Option<HashSet<Pubkey>>,
+    pub leader_schedule_cache: Arc<LeaderScheduleCache>,
 }
 
 pub struct RepairSlotRange {
@@ -251,6 +255,7 @@ impl RepairService {
         let serve_repair = ServeRepair::new(
             repair_info.cluster_info.clone(),
             repair_info.bank_forks.clone(),
+            repair_info.leader_schedule_cache.clone(),
         );
         let id = repair_info.cluster_info.id();
         let mut repair_stats = RepairStats::default();

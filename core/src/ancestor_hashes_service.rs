@@ -523,6 +523,7 @@ impl AncestorHashesService {
         let serve_repair = ServeRepair::new(
             repair_info.cluster_info.clone(),
             repair_info.bank_forks.clone(),
+            repair_info.leader_schedule_cache.clone(),
         );
         let mut repair_stats = AncestorRepairRequestsStats::default();
 

@@ -191,6 +191,7 @@ impl Tvu {
                 repair_validators: tvu_config.repair_validators,
                 cluster_info: cluster_info.clone(),
                 cluster_slots: cluster_slots.clone(),
+                leader_schedule_cache: leader_schedule_cache.clone(),
             };
             WindowService::new(
                 blockstore.clone(),

@@ -22,6 +22,7 @@ use {
     solana_ledger::{
         ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
         blockstore::Blockstore,
+        leader_schedule_cache::LeaderScheduleCache,
         shred::{Nonce, Shred, ShredFetchStats, SIZE_OF_NONCE},
     },
     solana_metrics::inc_new_counter_debug,
@@ -281,6 +282,7 @@ impl RepairProtocol {
 pub struct ServeRepair {
     cluster_info: Arc<ClusterInfo>,
     bank_forks: Arc<RwLock<BankForks>>,
+    leader_schedule_cache: Arc<LeaderScheduleCache>,
 }
 
 // Cache entry for repair peers for a slot.
@@ -317,10 +319,15 @@ impl RepairPeers {
 }
 
 impl ServeRepair {
-    pub fn new(cluster_info: Arc<ClusterInfo>, bank_forks: Arc<RwLock<BankForks>>) -> Self {
+    pub fn new(
+        cluster_info: Arc<ClusterInfo>,
+        bank_forks: Arc<RwLock<BankForks>>,
+        leader_schedule_cache: Arc<LeaderScheduleCache>,
+    ) -> Self {
         Self {
             cluster_info,
             bank_forks,
+            leader_schedule_cache,
         }
     }
 
@@ -862,6 +869,45 @@ impl ServeRepair {
         // find a peer that appears to be accepting replication and has the desired slot, as indicated
         // by a valid tvu port location
         let slot = repair_request.slot();
+
+        /*
+        let (working_bank, root_bank) = {
+            let bank_forks = self.bank_forks.read().unwrap();
+            (bank_forks.working_bank(), bank_forks.root_bank())
+        };
+        */
+        let working_bank = self.bank_forks.read().unwrap().working_bank();
+
+        match repair_request {
+            ShredRepairType::HighestShred(_slot, _index) => {
+                // TODO compute broadcast layers to get peers
+                // see broadcast_stage::broadcast_shreds for slot/index peer selection
+            },
+            ShredRepairType::Shred(_slot, _index) => {
+                // TODO use index to guess at peers for subsequent indices
+            },
+            ShredRepairType::Orphan(_slot) => {
+                // TODO anything to do with just slot?
+            }
+        }
+
+        let slot_leader = match self
+            .leader_schedule_cache
+            .slot_leader_at(slot, Some(&working_bank))
+        {
+            Some(pubkey) => pubkey,
+            None => {
+                return Err(Error::from(ClusterInfoError::NoLeader));
+            }
+        };
+
+        let leader_repair_addr = if slot_leader == self.my_id() {
+            return Err(Error::from(ClusterInfoError::NoPeers));
+        } else {
+            self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone()).ok_or(ClusterInfoError::NoPeers)?
+        };
+
+        /*
         let repair_peers = match peers_cache.get(&slot) {
             Some(entry) if entry.asof.elapsed() < REPAIR_PEERS_CACHE_TTL => entry,
             _ => {
@@ -874,6 +920,10 @@ impl ServeRepair {
             }
         };
         let (peer, addr) = repair_peers.sample(&mut rand::thread_rng());
+        */
+
+        let (peer, addr) = (slot_leader, leader_repair_addr);
+
         let nonce = outstanding_requests.add_request(repair_request, timestamp());
         let out = self.map_repair_request(
             &repair_request,

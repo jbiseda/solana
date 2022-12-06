@@ -877,7 +877,11 @@ impl Validator {
             Some(stats_reporter_sender.clone()),
             &exit,
         );
-        let serve_repair = ServeRepair::new(cluster_info.clone(), bank_forks.clone());
+        let serve_repair = ServeRepair::new(
+            cluster_info.clone(),
+            bank_forks.clone(),
+            leader_schedule_cache.clone(),
+        );
         let serve_repair_service = ServeRepairService::new(
             serve_repair,
             blockstore.clone(),
