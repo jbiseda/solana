@@ -897,14 +897,24 @@ impl ServeRepair {
         {
             Some(pubkey) => pubkey,
             None => {
+                error!("failed to get slot_leader");
                 return Err(Error::from(ClusterInfoError::NoLeader));
             }
         };
 
         let leader_repair_addr = if slot_leader == self.my_id() {
+            error!("failed to get leader addr");
             return Err(Error::from(ClusterInfoError::NoPeers));
         } else {
-            self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone()).ok_or(ClusterInfoError::NoPeers)?
+            //self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone()).ok_or(ClusterInfoError::NoPeers)?
+            let x = self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone());
+            match x {
+                Some(addr) => addr,
+                None => {
+                    error!("failed to get repair addr");
+                    return Err(Error::from(ClusterInfoError::NoPeers));
+                }
+            }
         };
 
         /*
@@ -923,6 +933,8 @@ impl ServeRepair {
         */
 
         let (peer, addr) = (slot_leader, leader_repair_addr);
+
+        warn!(">>> repair using {:?} {:?} {:?}", &peer, &addr, &repair_request);
 
         let nonce = outstanding_requests.add_request(repair_request, timestamp());
         let out = self.map_repair_request(
