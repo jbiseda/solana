@@ -133,7 +133,7 @@ impl<T> ClusterNodes<T> {
 impl ClusterNodes<BroadcastStage> {
     // TODO only used for tests?
     pub fn new2(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
-        new_cluster_nodes(cluster_info, stakes)
+        new_cluster_nodes(cluster_info, stakes, None)
     }
 
     pub(crate) fn get_broadcast_peer(&self, shred: &ShredId) -> Option<&ContactInfo> {
@@ -289,8 +289,9 @@ impl ClusterNodes<RetransmitStage> {
 pub fn new_cluster_nodes<T: 'static>(
     cluster_info: &ClusterInfo,
     stakes: &HashMap<Pubkey, u64>,
+    leader: Option<Pubkey>,
 ) -> ClusterNodes<T> {
-    let self_pubkey = cluster_info.id();
+    let self_pubkey = leader.unwrap_or(cluster_info.id());
     let nodes = get_nodes(cluster_info, stakes);
     let index: HashMap<_, _> = nodes
         .iter()
@@ -410,6 +411,7 @@ impl<T: 'static> ClusterNodesCache<T> {
         root_bank: &Bank,
         working_bank: &Bank,
         cluster_info: &ClusterInfo,
+        leader: Option<Pubkey>,
     ) -> Arc<ClusterNodes<T>> {
         let epoch = root_bank.get_leader_schedule_epoch(shred_slot);
         let entry = self.get_cache_entry(epoch);
@@ -427,13 +429,20 @@ impl<T: 'static> ClusterNodesCache<T> {
         if epoch_staked_nodes.is_none() {
             inc_new_counter_info!("cluster_nodes-unknown_epoch_staked_nodes", 1);
             if epoch != root_bank.get_leader_schedule_epoch(root_bank.slot()) {
-                return self.get(root_bank.slot(), root_bank, working_bank, cluster_info);
+                return self.get(
+                    root_bank.slot(),
+                    root_bank,
+                    working_bank,
+                    cluster_info,
+                    leader,
+                );
             }
             inc_new_counter_info!("cluster_nodes-unknown_epoch_staked_nodes_root", 1);
         }
         let nodes = Arc::new(new_cluster_nodes::<T>(
             cluster_info,
             &epoch_staked_nodes.unwrap_or_default(),
+            leader,
         ));
         *entry = Some((Instant::now(), Arc::clone(&nodes)));
         nodes

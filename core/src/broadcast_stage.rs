@@ -409,7 +409,7 @@ pub fn broadcast_shreds(
         .into_iter()
         .flat_map(|(slot, shreds)| {
             let cluster_nodes =
-                cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info);
+                cluster_nodes_cache.get(slot, &root_bank, &working_bank, cluster_info, None);
             update_peer_stats(&cluster_nodes, last_datapoint_submit);
             shreds.flat_map(move |shred| {
                 let node = cluster_nodes.get_broadcast_peer(&shred.id())?;

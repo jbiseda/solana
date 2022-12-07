@@ -893,11 +893,23 @@ impl ServeRepair {
             (bank_forks.working_bank(), bank_forks.root_bank())
         };
 
+        let slot_leader = match self
+            .leader_schedule_cache
+            .slot_leader_at(slot, Some(&working_bank))
+        {
+            Some(pubkey) => pubkey,
+            None => {
+                error!("failed to get slot_leader");
+                return Err(Error::from(ClusterInfoError::NoLeader));
+            }
+        };
+
         let cluster_nodes = self.cluster_nodes_cache.get(
             repair_request.slot(),
             &root_bank,
             &working_bank,
             &self.cluster_info,
+            Some(slot_leader),
         );
 
         //let shred_id = ShredId::new(slot, index, ShredType::Data);
@@ -946,6 +958,7 @@ impl ServeRepair {
         let (peer, addr) = if let Some(shred_id) = shred_id {
             let x = cluster_nodes.get_broadcast_peer(&shred_id);
             if let Some(ci) = x {
+                error!(">>> found ci for {:?}", &shred_id);
                 (ci.id, ci.serve_repair)
             } else {
                 error!(
@@ -956,16 +969,6 @@ impl ServeRepair {
                 return Err(Error::from(ClusterInfoError::NoPeers));
             }
         } else {
-            let slot_leader = match self
-                .leader_schedule_cache
-                .slot_leader_at(slot, Some(&working_bank))
-            {
-                Some(pubkey) => pubkey,
-                None => {
-                    error!("failed to get slot_leader");
-                    return Err(Error::from(ClusterInfoError::NoLeader));
-                }
-            };
             let leader_repair_addr = if slot_leader == self.my_id() {
                 error!("failed to get leader addr");
                 return Err(Error::from(ClusterInfoError::NoPeers));
