@@ -52,7 +52,7 @@ pub struct ClusterNodes<T> {
     pubkey: Pubkey, // The local node itself.
     // All staked nodes + other known tvu-peers + the node itself;
     // sorted by (stake, pubkey) in descending order.
-    nodes: Vec<Node>,
+    pub nodes: Vec<Node>,
     // Reverse index from nodes pubkey to their index in self.nodes.
     index: HashMap<Pubkey, /*index:*/ usize>,
     weighted_shuffle: WeightedShuffle</*stake:*/ u64>,
@@ -129,7 +129,8 @@ impl<T> ClusterNodes<T> {
 }
 
 impl ClusterNodes<BroadcastStage> {
-    pub fn new(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
+    // TODO only used for tests?
+    pub fn new2(cluster_info: &ClusterInfo, stakes: &HashMap<Pubkey, u64>) -> Self {
         new_cluster_nodes(cluster_info, stakes)
     }
 

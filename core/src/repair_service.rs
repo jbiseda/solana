@@ -252,7 +252,7 @@ impl RepairService {
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
     ) {
         let mut repair_weight = RepairWeight::new(repair_info.bank_forks.read().unwrap().root());
-        let serve_repair = ServeRepair::new(
+        let mut serve_repair = ServeRepair::new(
             repair_info.cluster_info.clone(),
             repair_info.bank_forks.clone(),
             repair_info.leader_schedule_cache.clone(),

@@ -1,5 +1,9 @@
 use {
     crate::{
+        broadcast_stage::{
+            BroadcastStage, CLUSTER_NODES_CACHE_NUM_EPOCH_CAP, CLUSTER_NODES_CACHE_TTL,
+        },
+        cluster_nodes::ClusterNodesCache,
         cluster_slots::ClusterSlots,
         duplicate_repair_status::ANCESTOR_HASH_REPAIR_SAMPLE_SIZE,
         repair_response,
@@ -278,11 +282,19 @@ impl RepairProtocol {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ServeRepairDebug {
+    count_highest_shred: u64,
+    count_shred: u64,
+    count_orphan: u64,
+}
+
 #[derive(Clone)]
 pub struct ServeRepair {
     cluster_info: Arc<ClusterInfo>,
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
+    debug: ServeRepairDebug,
 }
 
 // Cache entry for repair peers for a slot.
@@ -328,6 +340,7 @@ impl ServeRepair {
             cluster_info,
             bank_forks,
             leader_schedule_cache,
+            debug: ServeRepairDebug::default(),
         }
     }
 
@@ -857,7 +870,7 @@ impl ServeRepair {
     }
 
     pub(crate) fn repair_request(
-        &self,
+        &mut self,
         cluster_slots: &ClusterSlots,
         repair_request: ShredRepairType,
         peers_cache: &mut LruCache<Slot, RepairPeers>,
@@ -870,25 +883,52 @@ impl ServeRepair {
         // by a valid tvu port location
         let slot = repair_request.slot();
 
-        /*
         let (working_bank, root_bank) = {
             let bank_forks = self.bank_forks.read().unwrap();
             (bank_forks.working_bank(), bank_forks.root_bank())
         };
-        */
-        let working_bank = self.bank_forks.read().unwrap().working_bank();
+
+        let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
+            CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
+            CLUSTER_NODES_CACHE_TTL,
+        ));
+
+        let cluster_nodes = cluster_nodes_cache.get(
+            repair_request.slot(),
+            &root_bank,
+            &working_bank,
+            &self.cluster_info,
+        );
+
+        warn!(
+            ">>> cluster_nodes len={} for slot={}",
+            cluster_nodes.nodes.len(),
+            repair_request.slot()
+        );
+
+        // TODO use cluster_nodes for repair targets
 
         match repair_request {
             ShredRepairType::HighestShred(_slot, _index) => {
                 // TODO compute broadcast layers to get peers
                 // see broadcast_stage::broadcast_shreds for slot/index peer selection
+                self.debug.count_highest_shred += 1;
             }
             ShredRepairType::Shred(_slot, _index) => {
                 // TODO use index to guess at peers for subsequent indices
+                self.debug.count_shred += 1;
             }
             ShredRepairType::Orphan(_slot) => {
                 // TODO anything to do with just slot?
+                self.debug.count_orphan += 1;
             }
+        }
+
+        if self.debug.count_highest_shred + self.debug.count_shred + self.debug.count_orphan
+            >= 1_000
+        {
+            error!(">>> REPAIR counts {:?}", &self.debug);
+            self.debug = ServeRepairDebug::default();
         }
 
         let slot_leader = match self
@@ -936,10 +976,12 @@ impl ServeRepair {
 
         let (peer, addr) = (slot_leader, leader_repair_addr);
 
+        /*
         warn!(
             ">>> repair using {:?} {:?} {:?}",
             &peer, &addr, &repair_request
         );
+        */
 
         let nonce = outstanding_requests.add_request(repair_request, timestamp());
         let out = self.map_repair_request(
