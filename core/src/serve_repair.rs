@@ -904,6 +904,23 @@ impl ServeRepair {
             }
         };
 
+        let leader_repair_addr = if slot_leader == self.my_id() {
+            error!("failed to get leader addr");
+            return Err(Error::from(ClusterInfoError::NoPeers));
+        } else {
+            //self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone()).ok_or(ClusterInfoError::NoPeers)?
+            let x = self
+                .cluster_info
+                .lookup_contact_info(&slot_leader, |ci| ci.serve_repair);
+            match x {
+                Some(addr) => addr,
+                None => {
+                    error!("failed to get repair addr");
+                    return Err(Error::from(ClusterInfoError::NoPeers));
+                }
+            }
+        };
+
         let cluster_nodes = self.cluster_nodes_cache.get(
             repair_request.slot(),
             &root_bank,
@@ -911,17 +928,6 @@ impl ServeRepair {
             &self.cluster_info,
             Some(slot_leader),
         );
-
-        //let shred_id = ShredId::new(slot, index, ShredType::Data);
-        //let x = cluster_nodes.get_broadcast_peer(shred_id);
-
-        /*
-        warn!(
-            ">>> cluster_nodes len={} for slot={}",
-            cluster_nodes.nodes.len(),
-            repair_request.slot()
-        );
-        */
 
         // TODO use cluster_nodes for repair targets
 
@@ -958,7 +964,7 @@ impl ServeRepair {
         let (peer, addr) = if let Some(shred_id) = shred_id {
             let x = cluster_nodes.get_broadcast_peer(&shred_id);
             if let Some(ci) = x {
-                error!(">>> found ci for {:?}", &shred_id);
+                error!(">>> found ci for {:?}: {:?}", &shred_id, &ci.id);
                 (ci.id, ci.serve_repair)
             } else {
                 error!(
@@ -966,25 +972,9 @@ impl ServeRepair {
                     cluster_nodes.nodes.len(),
                     &cluster_nodes.pubkey,
                 );
-                return Err(Error::from(ClusterInfoError::NoPeers));
+                (slot_leader, leader_repair_addr)
             }
         } else {
-            let leader_repair_addr = if slot_leader == self.my_id() {
-                error!("failed to get leader addr");
-                return Err(Error::from(ClusterInfoError::NoPeers));
-            } else {
-                //self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone()).ok_or(ClusterInfoError::NoPeers)?
-                let x = self
-                    .cluster_info
-                    .lookup_contact_info(&slot_leader, |ci| ci.serve_repair);
-                match x {
-                    Some(addr) => addr,
-                    None => {
-                        error!("failed to get repair addr");
-                        return Err(Error::from(ClusterInfoError::NoPeers));
-                    }
-                }
-            };
             (slot_leader, leader_repair_addr)
         };
 
