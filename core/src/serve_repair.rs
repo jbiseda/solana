@@ -949,8 +949,9 @@ impl ServeRepair {
                 (ci.id, ci.serve_repair)
             } else {
                 error!(
-                    "get_broadcast_peer no results, nodes.len={}",
-                    cluster_nodes.nodes.len()
+                    "get_broadcast_peer no results, nodes.len={} clusternodes_leader={:?}",
+                    cluster_nodes.nodes.len(),
+                    &cluster_nodes.pubkey,
                 );
                 return Err(Error::from(ClusterInfoError::NoPeers));
             }

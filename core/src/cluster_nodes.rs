@@ -36,6 +36,7 @@ use {
 };
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 enum NodeId {
     // TVU node obtained through gossip (staked or not).
     ContactInfo(ContactInfo),
@@ -43,13 +44,14 @@ enum NodeId {
     Pubkey(Pubkey),
 }
 
+#[derive(Debug)]
 pub struct Node {
     node: NodeId,
     stake: u64,
 }
 
 pub struct ClusterNodes<T> {
-    pubkey: Pubkey, // The local node itself.
+    pub pubkey: Pubkey, // The local node itself.
     // All staked nodes + other known tvu-peers + the node itself;
     // sorted by (stake, pubkey) in descending order.
     pub nodes: Vec<Node>,
@@ -147,7 +149,15 @@ impl ClusterNodes<BroadcastStage> {
         };
 
         //let index = self.weighted_shuffle.first(&mut rng)?;
-        self.nodes[index].contact_info()
+        //self.nodes[index].contact_info()
+
+        let node = &self.nodes[index];
+
+        let ci = node.contact_info();
+        if ci.is_none() {
+            error!(">>> node does not have contact info {:?}", &node);
+        }
+        ci
     }
 }
 
