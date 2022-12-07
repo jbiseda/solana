@@ -948,7 +948,10 @@ impl ServeRepair {
             if let Some(ci) = x {
                 (ci.id, ci.serve_repair)
             } else {
-                error!("get_broadcast_peer no results");
+                error!(
+                    "get_broadcast_peer no results, nodes.len={}",
+                    cluster_nodes.nodes.len()
+                );
                 return Err(Error::from(ClusterInfoError::NoPeers));
             }
         } else {
