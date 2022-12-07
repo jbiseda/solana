@@ -27,7 +27,7 @@ use {
         ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
         blockstore::Blockstore,
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{Nonce, Shred, ShredFetchStats, SIZE_OF_NONCE},
+        shred::{Nonce, Shred, ShredFetchStats, ShredId, ShredType, SIZE_OF_NONCE},
     },
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
@@ -294,6 +294,7 @@ pub struct ServeRepair {
     cluster_info: Arc<ClusterInfo>,
     bank_forks: Arc<RwLock<BankForks>>,
     leader_schedule_cache: Arc<LeaderScheduleCache>,
+    cluster_nodes_cache: Arc<ClusterNodesCache<BroadcastStage>>,
     debug: ServeRepairDebug,
 }
 
@@ -340,6 +341,10 @@ impl ServeRepair {
             cluster_info,
             bank_forks,
             leader_schedule_cache,
+            cluster_nodes_cache: Arc::new(ClusterNodesCache::<BroadcastStage>::new(
+                CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
+                CLUSTER_NODES_CACHE_TTL,
+            )),
             debug: ServeRepairDebug::default(),
         }
     }
@@ -888,19 +893,15 @@ impl ServeRepair {
             (bank_forks.working_bank(), bank_forks.root_bank())
         };
 
-        let cluster_nodes_cache = Arc::new(ClusterNodesCache::<BroadcastStage>::new(
-            CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
-            CLUSTER_NODES_CACHE_TTL,
-        ));
-
-        /*
-        let cluster_nodes = cluster_nodes_cache.get(
+        let cluster_nodes = self.cluster_nodes_cache.get(
             repair_request.slot(),
             &root_bank,
             &working_bank,
             &self.cluster_info,
         );
-        */
+
+        //let shred_id = ShredId::new(slot, index, ShredType::Data);
+        //let x = cluster_nodes.get_broadcast_peer(shred_id);
 
         /*
         warn!(
@@ -912,21 +913,28 @@ impl ServeRepair {
 
         // TODO use cluster_nodes for repair targets
 
-        match repair_request {
+        let shred_id = match repair_request {
             ShredRepairType::HighestShred(_slot, _index) => {
                 // TODO compute broadcast layers to get peers
                 // see broadcast_stage::broadcast_shreds for slot/index peer selection
                 self.debug.count_highest_shred += 1;
+                None
             }
-            ShredRepairType::Shred(_slot, _index) => {
+            ShredRepairType::Shred(slot, index) => {
                 // TODO use index to guess at peers for subsequent indices
                 self.debug.count_shred += 1;
+                Some(ShredId::new(
+                    slot,
+                    index.try_into().unwrap(),
+                    ShredType::Data,
+                ))
             }
             ShredRepairType::Orphan(_slot) => {
                 // TODO anything to do with just slot?
                 self.debug.count_orphan += 1;
+                None
             }
-        }
+        };
 
         if self.debug.count_highest_shred + self.debug.count_shred + self.debug.count_orphan
             >= 1_000
@@ -935,32 +943,42 @@ impl ServeRepair {
             self.debug = ServeRepairDebug::default();
         }
 
-        let slot_leader = match self
-            .leader_schedule_cache
-            .slot_leader_at(slot, Some(&working_bank))
-        {
-            Some(pubkey) => pubkey,
-            None => {
-                error!("failed to get slot_leader");
-                return Err(Error::from(ClusterInfoError::NoLeader));
+        let (peer, addr) = if let Some(shred_id) = shred_id {
+            let x = cluster_nodes.get_broadcast_peer(&shred_id);
+            if let Some(ci) = x {
+                (ci.id, ci.serve_repair)
+            } else {
+                error!("get_broadcast_peer no results");
+                return Err(Error::from(ClusterInfoError::NoPeers));
             }
-        };
-
-        let leader_repair_addr = if slot_leader == self.my_id() {
-            error!("failed to get leader addr");
-            return Err(Error::from(ClusterInfoError::NoPeers));
         } else {
-            //self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone()).ok_or(ClusterInfoError::NoPeers)?
-            let x = self
-                .cluster_info
-                .lookup_contact_info(&slot_leader, |ci| ci.serve_repair);
-            match x {
-                Some(addr) => addr,
+            let slot_leader = match self
+                .leader_schedule_cache
+                .slot_leader_at(slot, Some(&working_bank))
+            {
+                Some(pubkey) => pubkey,
                 None => {
-                    error!("failed to get repair addr");
-                    return Err(Error::from(ClusterInfoError::NoPeers));
+                    error!("failed to get slot_leader");
+                    return Err(Error::from(ClusterInfoError::NoLeader));
                 }
-            }
+            };
+            let leader_repair_addr = if slot_leader == self.my_id() {
+                error!("failed to get leader addr");
+                return Err(Error::from(ClusterInfoError::NoPeers));
+            } else {
+                //self.cluster_info.lookup_contact_info(&slot_leader, |ci| ci.repair.clone()).ok_or(ClusterInfoError::NoPeers)?
+                let x = self
+                    .cluster_info
+                    .lookup_contact_info(&slot_leader, |ci| ci.serve_repair);
+                match x {
+                    Some(addr) => addr,
+                    None => {
+                        error!("failed to get repair addr");
+                        return Err(Error::from(ClusterInfoError::NoPeers));
+                    }
+                }
+            };
+            (slot_leader, leader_repair_addr)
         };
 
         /*
@@ -978,7 +996,7 @@ impl ServeRepair {
         let (peer, addr) = repair_peers.sample(&mut rand::thread_rng());
         */
 
-        let (peer, addr) = (slot_leader, leader_repair_addr);
+        //let (peer, addr) = (slot_leader, leader_repair_addr);
 
         /*
         warn!(
