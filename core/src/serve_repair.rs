@@ -893,18 +893,22 @@ impl ServeRepair {
             CLUSTER_NODES_CACHE_TTL,
         ));
 
+        /*
         let cluster_nodes = cluster_nodes_cache.get(
             repair_request.slot(),
             &root_bank,
             &working_bank,
             &self.cluster_info,
         );
+        */
 
+        /*
         warn!(
             ">>> cluster_nodes len={} for slot={}",
             cluster_nodes.nodes.len(),
             repair_request.slot()
         );
+        */
 
         // TODO use cluster_nodes for repair targets
 
