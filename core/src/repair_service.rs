@@ -19,6 +19,7 @@ use {
     solana_sdk::{
         clock::Slot, epoch_schedule::EpochSchedule, hash::Hash, pubkey::Pubkey,
         signer::keypair::Keypair,
+        timing::timestamp,
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     std::{
@@ -524,6 +525,9 @@ impl RepairService {
         } else if slot_meta.consumed == slot_meta.received {
             vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
         } else {
+            let time_diff = timestamp() - slot_meta.first_shred_timestamp;
+            error!(">>> slot={} time_diff={} skip? {:?}", slot, time_diff, time_diff > 100);
+
             let reqs = blockstore.find_missing_data_indexes(
                 slot,
                 slot_meta.first_shred_timestamp,
