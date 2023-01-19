@@ -80,6 +80,7 @@ pub fn get_best_repair_shreds<'a>(
     repairs: &mut Vec<ShredRepairType>,
     max_new_shreds: usize,
     ignore_slots: &impl Contains<'a, Slot>,
+    counts: &mut (usize, usize),
 ) {
     let initial_len = repairs.len();
     let max_repairs = initial_len + max_new_shreds;
@@ -106,6 +107,7 @@ pub fn get_best_repair_shreds<'a>(
                             slot,
                             slot_meta,
                             max_repairs - repairs.len(),
+                            counts,
                         );
                         repairs.extend(new_repairs);
                     }
@@ -127,6 +129,7 @@ pub fn get_best_repair_shreds<'a>(
                                 max_repairs,
                                 *new_child_slot,
                                 ignore_slots,
+                                counts,
                             );
                         }
                         visited_set.insert(*new_child_slot);

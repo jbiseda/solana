@@ -274,6 +274,8 @@ impl RepairService {
             HashMap::new();
         let mut peers_cache = LruCache::new(REPAIR_PEERS_CACHE_CAPACITY);
 
+        let mut counts = (0, 0);
+
         loop {
             if exit.load(Ordering::Relaxed) {
                 break;
@@ -345,6 +347,7 @@ impl RepairService {
                     &duplicate_slot_repair_statuses,
                     Some(&mut repair_timing),
                     Some(&mut best_repairs_stats),
+                    &mut counts,
                 );
 
                 repairs
@@ -519,6 +522,7 @@ impl RepairService {
         slot: Slot,
         slot_meta: &SlotMeta,
         max_repairs: usize,
+        (process_count, skip_count): &mut (usize, usize),
     ) -> Vec<ShredRepairType> {
         if max_repairs == 0 || slot_meta.is_full() {
             vec![]
@@ -528,10 +532,18 @@ impl RepairService {
             let time_diff = timestamp() - slot_meta.first_shred_timestamp;
             error!(">>> slot={} time_diff={}", slot, time_diff);
 
+            if *process_count + *skip_count >= 100 {
+                error!(":-> skip {} / {}", skip_count, *process_count + *skip_count);
+                *process_count = 0;
+                *skip_count = 0;
+            }
+
             if time_diff < 300 {
+                *skip_count += 1;
                 error!(">>> skipping slot={}", slot);
                 return vec![];
             }
+            *process_count += 1;
 
             let reqs = blockstore.find_missing_data_indexes(
                 slot,
@@ -553,6 +565,7 @@ impl RepairService {
         max_repairs: usize,
         slot: Slot,
         duplicate_slot_repair_statuses: &impl Contains<'a, Slot>,
+        counts: &mut (usize, usize),
     ) {
         let mut pending_slots = vec![slot];
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
@@ -567,6 +580,7 @@ impl RepairService {
                     slot,
                     &slot_meta,
                     max_repairs - repairs.len(),
+                    counts,
                 );
                 repairs.extend(new_repairs);
                 let next_slots = slot_meta.next_slots;
@@ -604,6 +618,7 @@ impl RepairService {
                 slot,
                 &meta,
                 max_repairs - repairs.len(),
+                &mut (0, 0),
             );
             repairs.extend(new_repairs);
         }
@@ -626,6 +641,7 @@ impl RepairService {
                     slot,
                     &slot_meta,
                     MAX_REPAIR_PER_DUPLICATE,
+                    &mut (0, 0),
                 ))
             }
         } else {
