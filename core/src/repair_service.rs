@@ -541,7 +541,7 @@ impl RepairService {
             if time_diff < 300 {
                 *skip_count += 1;
                 error!(">>> skipping slot={}", slot);
-                return vec![];
+                //return vec![];
             }
             *process_count += 1;
 
