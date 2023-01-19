@@ -526,7 +526,12 @@ impl RepairService {
             vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
         } else {
             let time_diff = timestamp() - slot_meta.first_shred_timestamp;
-            error!(">>> slot={} time_diff={} skip? {:?}", slot, time_diff, time_diff < 200);
+            error!(">>> slot={} time_diff={}", slot, time_diff);
+
+            if time_diff < 300 {
+                error!(">>> skipping slot={}", slot);
+                return vec![];
+            }
 
             let reqs = blockstore.find_missing_data_indexes(
                 slot,
