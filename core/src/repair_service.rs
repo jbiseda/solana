@@ -530,7 +530,7 @@ impl RepairService {
             vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
         } else {
             let time_diff = timestamp() - slot_meta.first_shred_timestamp;
-            error!(">>> slot={} time_diff={}", slot, time_diff);
+            //error!(">>> slot={} time_diff={}", slot, time_diff);
 
             if *process_count + *skip_count >= 100 {
                 error!(":-> skip {} / {}", skip_count, *process_count + *skip_count);
