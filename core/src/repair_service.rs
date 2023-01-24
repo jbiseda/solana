@@ -430,6 +430,8 @@ impl RepairService {
                         ("repair-highest-slot", repair_stats.highest_shred.max, i64),
                         ("repair-orphan", repair_stats.orphan.max, i64),
                     );
+                } else {
+                    error!("!!! no repairs");
                 }
                 datapoint_info!(
                     "repair_service-repair_timing",
