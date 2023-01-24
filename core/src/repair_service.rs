@@ -275,6 +275,7 @@ impl RepairService {
         let mut peers_cache = LruCache::new(REPAIR_PEERS_CACHE_CAPACITY);
 
         let mut counts = (0, 0);
+        let mut skipped_slots = LruCache::new(100);
 
         loop {
             if exit.load(Ordering::Relaxed) {
@@ -348,6 +349,7 @@ impl RepairService {
                     Some(&mut repair_timing),
                     Some(&mut best_repairs_stats),
                     &mut counts,
+                    &mut skipped_slots,
                 );
 
                 repairs
@@ -523,6 +525,7 @@ impl RepairService {
         slot_meta: &SlotMeta,
         max_repairs: usize,
         (process_count, skip_count): &mut (usize, usize),
+        skipped_slots: &mut LruCache<Slot, usize>,
     ) -> Vec<ShredRepairType> {
         if max_repairs == 0 || slot_meta.is_full() {
             vec![]
@@ -539,11 +542,19 @@ impl RepairService {
             }
 
             if time_diff < 300 {
+                if let Some(count) = skipped_slots.get_mut(&slot) {
+                    *count += 1;
+                } else {
+                    skipped_slots.put(slot, 1);
+                }
                 *skip_count += 1;
                 error!(">>> skipping slot={}", slot);
-                //return vec![];
+                return vec![];
             }
             *process_count += 1;
+            if let Some(count) = skipped_slots.pop(&slot) {
+                error!(">>> repairing slot {} previosly skipped {} times", slot, count);
+            }
 
             let reqs = blockstore.find_missing_data_indexes(
                 slot,
@@ -566,6 +577,7 @@ impl RepairService {
         slot: Slot,
         duplicate_slot_repair_statuses: &impl Contains<'a, Slot>,
         counts: &mut (usize, usize),
+        skipped_slots: &mut LruCache<Slot, usize>,
     ) {
         let mut pending_slots = vec![slot];
         while repairs.len() < max_repairs && !pending_slots.is_empty() {
@@ -581,6 +593,7 @@ impl RepairService {
                     &slot_meta,
                     max_repairs - repairs.len(),
                     counts,
+                    skipped_slots,
                 );
                 repairs.extend(new_repairs);
                 let next_slots = slot_meta.next_slots;

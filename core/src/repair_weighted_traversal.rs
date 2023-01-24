@@ -3,6 +3,7 @@ use {
         heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice, repair_service::RepairService,
         serve_repair::ShredRepairType, tree_diff::TreeDiff,
     },
+    lru::LruCache,
     solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMeta},
     solana_runtime::contains::Contains,
     solana_sdk::{clock::Slot, hash::Hash},
@@ -81,6 +82,7 @@ pub fn get_best_repair_shreds<'a>(
     max_new_shreds: usize,
     ignore_slots: &impl Contains<'a, Slot>,
     counts: &mut (usize, usize),
+    skipped_slots: &mut LruCache<Slot, usize>,
 ) {
     let initial_len = repairs.len();
     let max_repairs = initial_len + max_new_shreds;
@@ -108,6 +110,7 @@ pub fn get_best_repair_shreds<'a>(
                             slot_meta,
                             max_repairs - repairs.len(),
                             counts,
+                            skipped_slots,
                         );
                         repairs.extend(new_repairs);
                     }
@@ -130,6 +133,7 @@ pub fn get_best_repair_shreds<'a>(
                                 *new_child_slot,
                                 ignore_slots,
                                 counts,
+                                skipped_slots,
                             );
                         }
                         visited_set.insert(*new_child_slot);

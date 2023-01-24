@@ -3,6 +3,7 @@ use {
         heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice, repair_service::RepairService,
         serve_repair::ShredRepairType, tree_diff::TreeDiff,
     },
+    lru::LruCache,
     solana_ledger::{blockstore::Blockstore, blockstore_meta::SlotMeta},
     solana_sdk::{clock::Slot, hash::Hash},
     std::collections::{HashMap, HashSet},
@@ -115,6 +116,7 @@ pub fn get_closest_completion(
     processed_slots: &mut HashSet<Slot>,
     limit: usize,
     counts: &mut (usize, usize),
+    skipped_slots: &mut LruCache<Slot, usize>,
 ) -> Vec<ShredRepairType> {
     let mut v: Vec<(Slot, u64)> = Vec::default();
     let iter = GenericTraversal::new(tree);
@@ -189,6 +191,7 @@ pub fn get_closest_completion(
                 slot_meta,
                 limit - repairs.len(),
                 counts,
+                skipped_slots,
             );
             repairs.extend(new_repairs);
         }

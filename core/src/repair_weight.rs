@@ -7,6 +7,7 @@ use {
         serve_repair::ShredRepairType,
         tree_diff::TreeDiff,
     },
+    lru::LruCache,
     solana_ledger::{
         ancestor_iterator::AncestorIterator, blockstore::Blockstore, blockstore_meta::SlotMeta,
     },
@@ -160,6 +161,7 @@ impl RepairWeight {
         repair_timing: Option<&mut RepairTiming>,
         stats: Option<&mut BestRepairsStats>,
         counts: &mut (usize, usize),
+        skipped_slots: &mut LruCache<Slot, usize>,
     ) -> Vec<ShredRepairType> {
         let mut repairs = vec![];
         let mut processed_slots: HashSet<Slot> = vec![self.root].into_iter().collect();
@@ -189,6 +191,7 @@ impl RepairWeight {
             max_new_shreds,
             ignore_slots,
             counts,
+            skipped_slots,
         );
         let num_best_shreds_repairs = best_shreds_repairs.len();
         let repair_slots_set: HashSet<Slot> =
@@ -224,6 +227,7 @@ impl RepairWeight {
             &mut processed_slots,
             max_closest_completion_repairs,
             counts,
+            skipped_slots,
         );
         let num_closest_completion_repairs = closest_completion_repairs.len();
         let num_closest_completion_slots = processed_slots.len() - pre_num_slots;
@@ -357,6 +361,7 @@ impl RepairWeight {
         max_new_shreds: usize,
         ignore_slots: &impl Contains<'a, Slot>,
         counts: &mut (usize, usize),
+        skipped_slots: &mut LruCache<Slot, usize>,
     ) {
         let root_tree = self.trees.get(&self.root).expect("Root tree must exist");
         repair_weighted_traversal::get_best_repair_shreds(
@@ -367,6 +372,7 @@ impl RepairWeight {
             max_new_shreds,
             ignore_slots,
             counts,
+            skipped_slots,
         );
     }
 
@@ -476,6 +482,7 @@ impl RepairWeight {
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
         counts: &mut (usize, usize),
+        skipped_slots: &mut LruCache<Slot, usize>,
     ) -> Vec<ShredRepairType> {
         let mut repairs = Vec::default();
         for (_slot, tree) in self.trees.iter() {
@@ -489,6 +496,7 @@ impl RepairWeight {
                 processed_slots,
                 max_new_repairs - repairs.len(),
                 counts,
+                skipped_slots,
             );
             repairs.extend(new_repairs);
         }
