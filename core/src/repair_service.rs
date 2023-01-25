@@ -551,7 +551,7 @@ impl RepairService {
                 }
                 *skip_count += 1;
                 error!(">>> repair less than threshold slot={}", slot);
-                //return vec![];
+                return vec![];
             }
             *process_count += 1;
             if let Some(count) = skipped_slots.pop(&slot) {
