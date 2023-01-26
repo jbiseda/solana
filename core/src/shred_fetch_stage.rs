@@ -1,5 +1,4 @@
 //! The `shred_fetch_stage` pulls shreds from UDP sockets and sends it to a channel.
-
 use {
     crate::{
         cluster_nodes::check_feature_activation, packet_hasher::PacketHasher,
@@ -15,11 +14,13 @@ use {
         clock::{Slot, DEFAULT_MS_PER_SLOT},
         feature_set,
         genesis_config::ClusterType,
+        pubkey::Pubkey,
     },
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerReceiveStats},
     std::{
+        collections::HashMap,
         net::UdpSocket,
-        sync::{atomic::AtomicBool, Arc, RwLock},
+        sync::{atomic::AtomicBool, Arc, Mutex, RwLock},
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
@@ -31,6 +32,12 @@ pub(crate) struct ShredFetchStage {
     thread_hdls: Vec<JoinHandle<()>>,
 }
 
+struct RepairContext {
+    socket: Arc<UdpSocket>,
+    cluster_info: Arc<ClusterInfo>,
+    ping_peers: Arc<Mutex<HashMap<Pubkey, Instant>>>,
+}
+
 impl ShredFetchStage {
     // updates packets received on a channel and sends them on another channel
     fn modify_packets(
@@ -40,14 +47,14 @@ impl ShredFetchStage {
         shred_version: u16,
         name: &'static str,
         flags: PacketFlags,
-        repair_context: Option<(&UdpSocket, &ClusterInfo)>,
+        repair_context: Option<RepairContext>,
     ) {
         const STATS_SUBMIT_CADENCE: Duration = Duration::from_secs(1);
         let mut shreds_received = LruCache::new(DEFAULT_LRU_SIZE);
         let mut last_updated = Instant::now();
         let mut keypair = repair_context
             .as_ref()
-            .map(|(_, cluster_info)| cluster_info.keypair().clone());
+            .map(|ctx| ctx.cluster_info.keypair().clone());
 
         // In the case of bank_forks=None, setup to accept any slot range
         let mut root_bank = bank_forks.read().unwrap().root_bank();
@@ -57,6 +64,8 @@ impl ShredFetchStage {
 
         let mut stats = ShredFetchStats::default();
         let mut packet_hasher = PacketHasher::default();
+
+        let mut last_ping_peers_report = Instant::now();
 
         for mut packet_batch in recvr {
             if last_updated.elapsed().as_millis() as u64 > DEFAULT_MS_PER_SLOT {
@@ -73,20 +82,38 @@ impl ShredFetchStage {
                 }
                 keypair = repair_context
                     .as_ref()
-                    .map(|(_, cluster_info)| cluster_info.keypair().clone());
+                    .map(|ctx| ctx.cluster_info.keypair().clone());
             }
+
+            if last_ping_peers_report.elapsed().as_millis() as u64 > 1_000 {
+                last_ping_peers_report = Instant::now();
+                if let Some(ref ctx) = repair_context {
+                    error!(
+                        ">>> num ping peers {}",
+                        ctx.ping_peers.lock().unwrap().len()
+                    );
+                }
+            }
+
             stats.shred_count += packet_batch.len();
 
-            if let Some((udp_socket, _)) = repair_context {
+            if let Some(ref repair_context) = repair_context {
                 debug_assert_eq!(flags, PacketFlags::REPAIR);
                 debug_assert!(keypair.is_some());
                 if let Some(ref keypair) = keypair {
-                    ServeRepair::handle_repair_response_pings(
-                        udp_socket,
+                    let peers = ServeRepair::handle_repair_response_pings(
+                        &repair_context.socket,
                         keypair,
                         &mut packet_batch,
                         &mut stats,
                     );
+                    if !peers.is_empty() {
+                        let now = Instant::now();
+                        let mut ping_peers = repair_context.ping_peers.lock().unwrap();
+                        peers.into_iter().for_each(|id| {
+                            ping_peers.insert(id, now);
+                        });
+                    }
                 }
             }
 
@@ -126,7 +153,7 @@ impl ShredFetchStage {
         shred_version: u16,
         name: &'static str,
         flags: PacketFlags,
-        repair_context: Option<(Arc<UdpSocket>, Arc<ClusterInfo>)>,
+        repair_context: Option<RepairContext>,
     ) -> (Vec<JoinHandle<()>>, JoinHandle<()>) {
         let (packet_sender, packet_receiver) = unbounded();
         let streamers = sockets
@@ -147,9 +174,6 @@ impl ShredFetchStage {
         let modifier_hdl = Builder::new()
             .name("solTvuFetchPMod".to_string())
             .spawn(move || {
-                let repair_context = repair_context
-                    .as_ref()
-                    .map(|(socket, cluster_info)| (socket.as_ref(), cluster_info.as_ref()));
                 Self::modify_packets(
                     packet_receiver,
                     sender,
@@ -200,8 +224,14 @@ impl ShredFetchStage {
             None, // repair_context
         );
 
+        let repair_context = RepairContext {
+            socket: repair_socket.clone(),
+            cluster_info,
+            ping_peers: Arc::new(Mutex::new(HashMap::default())),
+        };
+
         let (repair_receiver, repair_handler) = Self::packet_modifier(
-            vec![repair_socket.clone()],
+            vec![repair_socket],
             exit,
             sender,
             recycler,
@@ -209,7 +239,7 @@ impl ShredFetchStage {
             shred_version,
             "shred_fetch_repair",
             PacketFlags::REPAIR,
-            Some((repair_socket, cluster_info)),
+            Some(repair_context),
         );
 
         tvu_threads.extend(tvu_forwards_threads.into_iter());

@@ -1038,7 +1038,8 @@ impl ServeRepair {
         keypair: &Keypair,
         packet_batch: &mut PacketBatch,
         stats: &mut ShredFetchStats,
-    ) {
+    ) -> HashSet<Pubkey> {
+        let mut ping_peers: HashSet<Pubkey> = HashSet::default();
         let mut pending_pongs = Vec::default();
         for packet in packet_batch.iter_mut() {
             if packet.meta().size != REPAIR_RESPONSE_SERIALIZED_PING_BYTES {
@@ -1055,6 +1056,7 @@ impl ServeRepair {
                     stats.ping_err_verify_count += 1;
                     continue;
                 }
+                ping_peers.insert(ping.pubkey());
                 packet.meta_mut().set_discard(true);
                 stats.ping_count += 1;
                 if let Ok(pong) = Pong::new(&ping, keypair) {
@@ -1078,6 +1080,7 @@ impl ServeRepair {
                 );
             }
         }
+        ping_peers
     }
 
     pub fn repair_proto_to_bytes(request: &RepairProtocol, keypair: &Keypair) -> Result<Vec<u8>> {
