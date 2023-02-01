@@ -173,16 +173,19 @@ impl ClusterSlots {
         if repair_peers.is_empty() {
             return Vec::default();
         }
+        let mut max_stake = 0;
         let stakes = {
             let validator_stakes = self.validator_stakes.read().unwrap();
             repair_peers
                 .iter()
                 .map(|peer| {
-                    validator_stakes
+                    let peer_stake = validator_stakes
                         .get(&peer.id)
                         .map(|node| node.total_stake)
                         .unwrap_or(0)
-                        + 1
+                        + 1;
+                    max_stake = std::cmp::max(max_stake, peer_stake);
+                    peer_stake
                 })
                 .collect()
         };
@@ -193,9 +196,17 @@ impl ClusterSlots {
         let slot_peers = slot_peers.read().unwrap();
         repair_peers
             .iter()
-            .map(|peer| slot_peers.get(&peer.id).cloned().unwrap_or(0))
+            //.map(|peer| slot_peers.get(&peer.id).cloned().unwrap_or(0))
+            .map(|peer| slot_peers.contains_key(&peer.id))
             .zip(stakes)
-            .map(|(a, b)| (a / 2 + b / 2).max(1u64))
+            //.map(|(a, b)| (a / 2 + b / 2).max(1u64))
+            .map(|(did_complete_slot, peer_stake)| {
+                if did_complete_slot {
+                    peer_stake.saturating_add(max_stake)
+                } else {
+                    peer_stake
+                }
+            })
             .collect()
     }
 
