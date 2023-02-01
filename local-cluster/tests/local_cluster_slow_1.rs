@@ -14,10 +14,7 @@ use {
         replay_stage::DUPLICATE_THRESHOLD,
         validator::ValidatorConfig,
     },
-    solana_gossip::{
-        crds::Cursor,
-        gossip_service::{self, discover_cluster},
-    },
+    solana_gossip::gossip_service::discover_cluster,
     solana_ledger::{
         ancestor_iterator::AncestorIterator, blockstore_meta::DuplicateSlotProof,
         leader_schedule::FixedSchedule, shred::Shred,
@@ -42,6 +39,10 @@ use {
         collections::{BTreeSet, HashSet},
         net::UdpSocket,
         path::Path,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
         thread::sleep,
         time::Duration,
     },
