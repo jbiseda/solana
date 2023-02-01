@@ -1536,8 +1536,8 @@ pub struct CliLockout {
 impl From<&Lockout> for CliLockout {
     fn from(lockout: &Lockout) -> Self {
         Self {
-            slot: lockout.slot,
-            confirmation_count: lockout.confirmation_count,
+            slot: lockout.slot(),
+            confirmation_count: lockout.confirmation_count(),
         }
     }
 }
@@ -2412,7 +2412,11 @@ impl fmt::Display for CliBlock {
             self.encoded_confirmed_block.previous_blockhash
         )?;
         if let Some(block_time) = self.encoded_confirmed_block.block_time {
-            writeln!(f, "Block Time: {:?}", Local.timestamp(block_time, 0))?;
+            writeln!(
+                f,
+                "Block Time: {:?}",
+                Local.timestamp_opt(block_time, 0).unwrap()
+            )?;
         }
         if let Some(block_height) = self.encoded_confirmed_block.block_height {
             writeln!(f, "Block Height: {block_height:?}")?;
@@ -2922,10 +2926,10 @@ mod tests {
         }
 
         let present: Box<dyn Signer> = Box::new(keypair_from_seed(&[2u8; 32]).unwrap());
-        let absent: Box<dyn Signer> = Box::new(NullSigner::new(&Pubkey::new(&[3u8; 32])));
-        let bad: Box<dyn Signer> = Box::new(BadSigner::new(Pubkey::new(&[4u8; 32])));
-        let to = Pubkey::new(&[5u8; 32]);
-        let nonce = Pubkey::new(&[6u8; 32]);
+        let absent: Box<dyn Signer> = Box::new(NullSigner::new(&Pubkey::from([3u8; 32])));
+        let bad: Box<dyn Signer> = Box::new(BadSigner::new(Pubkey::from([4u8; 32])));
+        let to = Pubkey::from([5u8; 32]);
+        let nonce = Pubkey::from([6u8; 32]);
         let from = present.pubkey();
         let fee_payer = absent.pubkey();
         let nonce_auth = bad.pubkey();

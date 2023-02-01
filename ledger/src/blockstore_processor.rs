@@ -327,21 +327,17 @@ fn execute_batches(
 
     let mut minimal_tx_cost = u64::MAX;
     let mut total_cost: u64 = 0;
-    let mut total_cost_without_bpf: u64 = 0;
     // Allowing collect here, since it also computes the minimal tx cost, and aggregate cost.
     // These two values are later used for checking if the tx_costs vector needs to be iterated over.
-    // The collection is a pair of (full cost, cost without estimated-bpf-code-costs).
     #[allow(clippy::needless_collect)]
     let tx_costs = sanitized_txs
         .iter()
         .map(|tx| {
             let tx_cost = CostModel::calculate_cost(tx, &bank.feature_set);
             let cost = tx_cost.sum();
-            let cost_without_bpf = tx_cost.sum_without_bpf();
             minimal_tx_cost = std::cmp::min(minimal_tx_cost, cost);
             total_cost = total_cost.saturating_add(cost);
-            total_cost_without_bpf = total_cost_without_bpf.saturating_add(cost_without_bpf);
-            (cost, cost_without_bpf)
+            cost
         })
         .collect::<Vec<_>>();
 
@@ -351,30 +347,24 @@ fn execute_batches(
     let rebatched_txs = if total_cost > target_batch_count.saturating_mul(minimal_tx_cost) {
         let target_batch_cost = total_cost / target_batch_count;
         let mut batch_cost: u64 = 0;
-        let mut batch_cost_without_bpf: u64 = 0;
         let mut slice_start = 0;
-        tx_costs
-            .into_iter()
-            .enumerate()
-            .for_each(|(index, cost_pair)| {
-                let next_index = index + 1;
-                batch_cost = batch_cost.saturating_add(cost_pair.0);
-                batch_cost_without_bpf = batch_cost_without_bpf.saturating_add(cost_pair.1);
-                if batch_cost >= target_batch_cost || next_index == sanitized_txs.len() {
-                    let tx_batch = rebatch_transactions(
-                        &lock_results,
-                        bank,
-                        &sanitized_txs,
-                        slice_start,
-                        index,
-                        &transaction_indexes,
-                    );
-                    slice_start = next_index;
-                    tx_batches.push(tx_batch);
-                    batch_cost = 0;
-                    batch_cost_without_bpf = 0;
-                }
-            });
+        tx_costs.into_iter().enumerate().for_each(|(index, cost)| {
+            let next_index = index + 1;
+            batch_cost = batch_cost.saturating_add(cost);
+            if batch_cost >= target_batch_cost || next_index == sanitized_txs.len() {
+                let tx_batch = rebatch_transactions(
+                    &lock_results,
+                    bank,
+                    &sanitized_txs,
+                    slice_start,
+                    index,
+                    &transaction_indexes,
+                );
+                slice_start = next_index;
+                tx_batches.push(tx_batch);
+                batch_cost = 0;
+            }
+        });
         &tx_batches[..]
     } else {
         batches
@@ -3727,13 +3717,15 @@ pub mod tests {
         // Create an transaction that references the new blockhash, should still
         // be able to find the blockhash if we process transactions all in the same
         // batch
-        let mut expected_signatures = BTreeSet::new();
+        let mut expected_successful_voter_pubkeys = BTreeSet::new();
         let vote_txs: Vec<_> = validator_keypairs
             .iter()
             .enumerate()
             .map(|(i, validator_keypairs)| {
-                let vote_tx = if i % 3 == 0 {
+                if i % 3 == 0 {
                     // These votes are correct
+                    expected_successful_voter_pubkeys
+                        .insert(validator_keypairs.vote_keypair.pubkey());
                     vote_transaction::new_vote_transaction(
                         vec![0],
                         bank0.hash(),
@@ -3765,20 +3757,18 @@ pub mod tests {
                         &validator_keypairs.vote_keypair,
                         None,
                     )
-                };
-                expected_signatures.insert(vote_tx.signatures[0]);
-                vote_tx
+                }
             })
             .collect();
         let entry = next_entry(&bank_1_blockhash, 1, vote_txs);
         let (replay_vote_sender, replay_vote_receiver) = crossbeam_channel::unbounded();
         let _ =
             process_entries_for_tests(&bank1, vec![entry], true, None, Some(&replay_vote_sender));
-        let signatures: BTreeSet<_> = replay_vote_receiver
+        let successes: BTreeSet<Pubkey> = replay_vote_receiver
             .try_iter()
-            .map(|(.., signature)| signature)
+            .map(|(vote_pubkey, ..)| vote_pubkey)
             .collect();
-        assert_eq!(signatures, expected_signatures);
+        assert_eq!(successes, expected_successful_voter_pubkeys);
     }
 
     fn make_slot_with_vote_tx(

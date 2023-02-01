@@ -1,6 +1,7 @@
 use {
     crate::{
         cluster_info::MAX_SNAPSHOT_HASHES,
+        contact_info::ContactInfo,
         deprecated,
         duplicate_shred::{DuplicateShred, DuplicateShredIndex, MAX_DUPLICATE_SHREDS},
         epoch_slots::EpochSlots,
@@ -92,6 +93,7 @@ pub enum CrdsData {
     NodeInstance(NodeInstance),
     DuplicateShred(DuplicateShredIndex, DuplicateShred),
     IncrementalSnapshotHashes(IncrementalSnapshotHashes),
+    ContactInfo(ContactInfo),
 }
 
 impl Sanitize for CrdsData {
@@ -129,6 +131,7 @@ impl Sanitize for CrdsData {
                 }
             }
             CrdsData::IncrementalSnapshotHashes(val) => val.sanitize(),
+            CrdsData::ContactInfo(node) => node.sanitize(),
         }
     }
 }
@@ -359,7 +362,7 @@ impl<'de> Deserialize<'de> for Vote {
 pub struct LegacyVersion {
     pub from: Pubkey,
     pub wallclock: u64,
-    pub version: solana_version::LegacyVersion,
+    pub version: solana_version::LegacyVersion1,
 }
 
 impl Sanitize for LegacyVersion {
@@ -374,7 +377,7 @@ impl Sanitize for LegacyVersion {
 pub struct Version {
     pub from: Pubkey,
     pub wallclock: u64,
-    pub version: solana_version::Version,
+    pub version: solana_version::LegacyVersion2,
 }
 
 impl Sanitize for Version {
@@ -390,7 +393,7 @@ impl Version {
         Self {
             from,
             wallclock: timestamp(),
-            version: solana_version::Version::default(),
+            version: solana_version::LegacyVersion2::default(),
         }
     }
 
@@ -399,7 +402,7 @@ impl Version {
         Self {
             from: pubkey.unwrap_or_else(pubkey::new_rand),
             wallclock: new_rand_timestamp(rng),
-            version: solana_version::Version {
+            version: solana_version::LegacyVersion2 {
                 major: rng.gen(),
                 minor: rng.gen(),
                 patch: rng.gen(),
@@ -492,6 +495,7 @@ pub enum CrdsValueLabel {
     NodeInstance(Pubkey),
     DuplicateShred(DuplicateShredIndex, Pubkey),
     IncrementalSnapshotHashes(Pubkey),
+    ContactInfo(Pubkey),
 }
 
 impl fmt::Display for CrdsValueLabel {
@@ -512,6 +516,7 @@ impl fmt::Display for CrdsValueLabel {
             CrdsValueLabel::IncrementalSnapshotHashes(_) => {
                 write!(f, "IncrementalSnapshotHashes({})", self.pubkey())
             }
+            CrdsValueLabel::ContactInfo(_) => write!(f, "ContactInfo({})", self.pubkey()),
         }
     }
 }
@@ -530,6 +535,7 @@ impl CrdsValueLabel {
             CrdsValueLabel::NodeInstance(p) => *p,
             CrdsValueLabel::DuplicateShred(_, p) => *p,
             CrdsValueLabel::IncrementalSnapshotHashes(p) => *p,
+            CrdsValueLabel::ContactInfo(pubkey) => *pubkey,
         }
     }
 }
@@ -579,6 +585,7 @@ impl CrdsValue {
             CrdsData::NodeInstance(node) => node.wallclock,
             CrdsData::DuplicateShred(_, shred) => shred.wallclock,
             CrdsData::IncrementalSnapshotHashes(hash) => hash.wallclock,
+            CrdsData::ContactInfo(node) => node.wallclock(),
         }
     }
     pub fn pubkey(&self) -> Pubkey {
@@ -594,6 +601,7 @@ impl CrdsValue {
             CrdsData::NodeInstance(node) => node.from,
             CrdsData::DuplicateShred(_, shred) => shred.from,
             CrdsData::IncrementalSnapshotHashes(hash) => hash.from,
+            CrdsData::ContactInfo(node) => *node.pubkey(),
         }
     }
     pub fn label(&self) -> CrdsValueLabel {
@@ -611,6 +619,7 @@ impl CrdsValue {
             CrdsData::IncrementalSnapshotHashes(_) => {
                 CrdsValueLabel::IncrementalSnapshotHashes(self.pubkey())
             }
+            CrdsData::ContactInfo(node) => CrdsValueLabel::ContactInfo(*node.pubkey()),
         }
     }
     pub fn contact_info(&self) -> Option<&LegacyContactInfo> {

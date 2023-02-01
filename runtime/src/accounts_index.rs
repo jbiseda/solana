@@ -1487,6 +1487,27 @@ impl<T: IndexValue> AccountsIndex<T> {
         }
     }
 
+    pub fn get_largest_keys(
+        &self,
+        index: &AccountIndex,
+        max_entries: usize,
+    ) -> Vec<(usize, Pubkey)> {
+        match index {
+            AccountIndex::ProgramId => self
+                .program_id_index
+                .key_size_index
+                .get_largest_keys(max_entries),
+            AccountIndex::SplTokenOwner => self
+                .spl_token_owner_index
+                .key_size_index
+                .get_largest_keys(max_entries),
+            AccountIndex::SplTokenMint => self
+                .spl_token_mint_index
+                .key_size_index
+                .get_largest_keys(max_entries),
+        }
+    }
+
     /// log any secondary index counts, if non-zero
     pub(crate) fn log_secondary_indexes(&self) {
         if !self.program_id_index.index.is_empty() {
@@ -3929,8 +3950,8 @@ pub mod tests {
         );
         assert_eq!((0, usize::MAX), iter.bin_start_and_range());
 
-        let key_0 = Pubkey::new(&[0; 32]);
-        let key_ff = Pubkey::new(&[0xff; 32]);
+        let key_0 = Pubkey::from([0; 32]);
+        let key_ff = Pubkey::from([0xff; 32]);
 
         let iter = AccountsIndexIterator::new(
             &index,
@@ -4207,7 +4228,7 @@ pub mod tests {
         assert_eq!(iter.start_bin(), 0); // no range, so 0
         assert_eq!(iter.end_bin_inclusive(), usize::MAX); // no range, so max
 
-        let key = Pubkey::new(&[0; 32]);
+        let key = Pubkey::from([0; 32]);
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&RangeInclusive::new(key, key)),
@@ -4230,7 +4251,7 @@ pub mod tests {
         assert_eq!(iter.start_bin(), 0); // start at pubkey 0, so 0
         assert_eq!(iter.end_bin_inclusive(), 0); // end at pubkey 0, so 0
 
-        let key = Pubkey::new(&[0xff; 32]);
+        let key = Pubkey::from([0xff; 32]);
         let iter = AccountsIndexIterator::new(
             &index,
             Some(&RangeInclusive::new(key, key)),
