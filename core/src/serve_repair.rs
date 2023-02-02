@@ -88,11 +88,14 @@ const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 
 static_assertions::const_assert_eq!(MAX_ANCESTOR_RESPONSES, 30);
 
 fn repair_peer_selection_experiments_enabled(bank: &Bank) -> bool {
+    /*
     bank.feature_set
         .is_active(&feature_set::enable_repair_peer_selection_experiments::id())
         && !bank
             .feature_set
             .is_active(&feature_set::disable_repair_peer_selection_experiments::id())
+    */
+    true
 }
 
 #[derive(Error, Debug)]
