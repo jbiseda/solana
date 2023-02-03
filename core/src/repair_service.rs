@@ -541,6 +541,13 @@ impl RepairService {
             let ticks_since_first_insert =
                 DEFAULT_TICKS_PER_SECOND * (timestamp() - slot_meta.first_shred_timestamp) / 1000;
             if ticks_since_first_insert < reference_tick + DEFER_REPAIR_THRESHOLD_TICKS {
+                error!(
+                    "deferring HighestShred slot={} received={} ticks: {} < {}",
+                    slot,
+                    slot_meta.received,
+                    ticks_since_first_insert,
+                    reference_tick + DEFER_REPAIR_THRESHOLD_TICKS
+                );
                 vec![]
             } else {
                 vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
