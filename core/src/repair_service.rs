@@ -534,7 +534,7 @@ impl RepairService {
         } else if slot_meta.consumed == slot_meta.received {
             // check delay time of last shred
             let shred_data = blockstore
-                .get_data_shred(slot, slot_meta.consumed)
+                .get_data_shred(slot, slot_meta.received - 1)
                 .unwrap()
                 .expect("should have last received shred");
             let reference_tick = u64::from(shred::layout::get_reference_tick(&shred_data).unwrap());
