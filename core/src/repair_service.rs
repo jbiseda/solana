@@ -533,25 +533,32 @@ impl RepairService {
             vec![]
         } else if slot_meta.consumed == slot_meta.received {
             // check delay time of last shred
-            let shred_data = blockstore
-                .get_data_shred(slot, slot_meta.received - 1)
-                .unwrap()
-                .expect("should have last received shred");
-            let reference_tick = u64::from(shred::layout::get_reference_tick(&shred_data).unwrap());
-            let ticks_since_first_insert =
-                DEFAULT_TICKS_PER_SECOND * (timestamp() - slot_meta.first_shred_timestamp) / 1000;
-            if ticks_since_first_insert < reference_tick + DEFER_REPAIR_THRESHOLD_TICKS {
-                error!(
-                    "deferring HighestShred slot={} received={} ticks: {} < {}",
-                    slot,
-                    slot_meta.received,
-                    ticks_since_first_insert,
-                    reference_tick + DEFER_REPAIR_THRESHOLD_TICKS
-                );
-                vec![]
-            } else {
-                vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
+            if slot_meta.received == 0 {
+                error!(">>> generate repairs slot {} has received 0 shreds", slot);
             }
+            if slot_meta.received > 0 {
+                if let Some(shred_data) = blockstore
+                    .get_data_shred(slot, slot_meta.received - 1)
+                    .unwrap()
+                {
+                    let reference_tick =
+                        u64::from(shred::layout::get_reference_tick(&shred_data).unwrap());
+                    let ticks_since_first_insert = DEFAULT_TICKS_PER_SECOND
+                        * (timestamp() - slot_meta.first_shred_timestamp)
+                        / 1000;
+                    if ticks_since_first_insert < reference_tick + DEFER_REPAIR_THRESHOLD_TICKS {
+                        error!(
+                            "deferring HighestShred slot={} received={} ticks: {} < {}",
+                            slot,
+                            slot_meta.received,
+                            ticks_since_first_insert,
+                            reference_tick + DEFER_REPAIR_THRESHOLD_TICKS
+                        );
+                        return vec![];
+                    }
+                }
+            }
+            vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
         } else {
             blockstore
                 .find_missing_data_indexes(
