@@ -199,10 +199,8 @@ pub fn get_closest_completion(
 pub mod test {
     use {
         super::*,
-        solana_ledger::{
-            blockstore::{Blockstore, MAX_TURBINE_PROPAGATION},
-            get_tmp_ledger_path,
-        },
+        crate::repair_service::DEFER_REPAIR_THRESHOLD,
+        solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path},
         solana_sdk::hash::Hash,
         std::thread::sleep,
         trees::{tr, Tree, TreeWalk},
@@ -256,7 +254,7 @@ pub mod test {
             Hash::default(),
         );
         let heaviest_subtree_fork_choice = HeaviestSubtreeForkChoice::new_from_tree(forks);
-        sleep(MAX_TURBINE_PROPAGATION);
+        sleep(DEFER_REPAIR_THRESHOLD);
         let mut slot_meta_cache = HashMap::default();
         let mut processed_slots = HashSet::default();
         let repairs = get_closest_completion(
