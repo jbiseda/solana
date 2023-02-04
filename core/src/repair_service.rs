@@ -532,8 +532,7 @@ impl RepairService {
         if max_repairs == 0 || slot_meta.is_full() {
             return vec![];
         }
-
-        if slot_meta.consumed == slot_meta.received && slot_meta.received > 0 {
+        if slot_meta.consumed == slot_meta.received {
             // check delay time of last shred
             if let Some(shred_data) = blockstore
                 .get_data_shred(slot, slot_meta.received - 1)
@@ -544,13 +543,7 @@ impl RepairService {
                 let ticks_since_first_insert = DEFAULT_TICKS_PER_SECOND
                     * (timestamp() - slot_meta.first_shred_timestamp)
                     / 1000;
-                if ticks_since_first_insert >= reference_tick + DEFER_REPAIR_THRESHOLD_TICKS {
-                    error!(
-                        "highest shred slot={} received={}",
-                        slot, slot_meta.received
-                    );
-                    return vec![ShredRepairType::HighestShred(slot, slot_meta.received)];
-                } else {
+                if ticks_since_first_insert < reference_tick + DEFER_REPAIR_THRESHOLD_TICKS {
                     error!(
                         "deferring HighestShred slot={} received={} ticks: {} < {}",
                         slot,
@@ -558,10 +551,15 @@ impl RepairService {
                         ticks_since_first_insert,
                         reference_tick + DEFER_REPAIR_THRESHOLD_TICKS
                     );
+                    return vec![];
                 }
             }
+            error!(
+                "highest shred slot={} received={}",
+                slot, slot_meta.received
+            );
+            return vec![ShredRepairType::HighestShred(slot, slot_meta.received)];
         }
-
         blockstore
             .find_missing_data_indexes(
                 slot,
