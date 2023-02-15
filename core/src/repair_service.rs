@@ -40,7 +40,7 @@ use {
     },
 };
 #[cfg(test)]
-use {solana_ledger::shred::Nonce, solana_sdk::clock::DEFAULT_MS_PER_SLOT};
+use {solana_ledger::shred::Nonce, solana_sdk::{clock::DEFAULT_MS_PER_SLOT, timing::timestamp}};
 
 // Time to defer repair requests to allow for turbine propagation
 const DEFER_REPAIR_THRESHOLD: Duration = Duration::from_millis(200);
@@ -849,7 +849,7 @@ mod test {
                     MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                     MAX_CLOSEST_COMPLETION_REPAIRS,
                     &HashSet::default(),
-                    timestamp(),
+                    None,
                     &mut RepairTiming::default(),
                     &mut BestRepairsStats::default(),
                 ),
@@ -887,7 +887,7 @@ mod test {
                     MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                     MAX_CLOSEST_COMPLETION_REPAIRS,
                     &HashSet::default(),
-                    timestamp(),
+                    None,
                     &mut RepairTiming::default(),
                     &mut BestRepairsStats::default(),
                 ),
@@ -948,7 +948,7 @@ mod test {
                     MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                     MAX_CLOSEST_COMPLETION_REPAIRS,
                     &HashSet::default(),
-                    post_shred_deferment_timestamp(),
+                    Some(post_shred_deferment_timestamp()),
                     &mut RepairTiming::default(),
                     &mut BestRepairsStats::default(),
                 ),
@@ -965,7 +965,7 @@ mod test {
                     MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                     MAX_CLOSEST_COMPLETION_REPAIRS,
                     &HashSet::default(),
-                    post_shred_deferment_timestamp(),
+                    Some(post_shred_deferment_timestamp()),
                     &mut RepairTiming::default(),
                     &mut BestRepairsStats::default(),
                 )[..],
@@ -1012,7 +1012,7 @@ mod test {
                     MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                     MAX_CLOSEST_COMPLETION_REPAIRS,
                     &HashSet::default(),
-                    post_shred_deferment_timestamp(),
+                    Some(post_shred_deferment_timestamp()),
                     &mut RepairTiming::default(),
                     &mut BestRepairsStats::default(),
                 ),
