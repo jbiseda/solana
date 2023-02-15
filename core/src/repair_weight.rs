@@ -178,6 +178,7 @@ impl RepairWeight {
         let num_orphan_slots = processed_slots.len() - 1;
         let num_orphan_repairs = repairs.len();
         get_best_orphans_elapsed.stop();
+        let mut elapsed = get_best_orphans_elapsed.as_duration();
 
         let mut get_best_shreds_elapsed = Measure::start("get_best_shreds");
         let mut best_shreds_repairs = Vec::default();
@@ -188,7 +189,7 @@ impl RepairWeight {
             &mut best_shreds_repairs,
             max_new_shreds,
             ignore_slots,
-            now_timestamp,
+            now_timestamp.saturating_add(elapsed.as_millis() as u64),
         );
         let num_best_shreds_repairs = best_shreds_repairs.len();
         let repair_slots_set: HashSet<Slot> =
@@ -197,6 +198,7 @@ impl RepairWeight {
         processed_slots.extend(repair_slots_set);
         repairs.extend(best_shreds_repairs);
         get_best_shreds_elapsed.stop();
+        elapsed += get_best_orphans_elapsed.as_duration();
 
         // Although we have generated repairs for orphan roots and slots in the rooted subtree,
         // if we have space we should generate repairs for slots in orphan trees in preparation for
@@ -215,6 +217,7 @@ impl RepairWeight {
         let num_unknown_last_index_slots = processed_slots.len() - pre_num_slots;
         repairs.extend(unknown_last_index_repairs);
         get_unknown_last_index_elapsed.stop();
+        elapsed += get_unknown_last_index_elapsed.as_duration();
 
         let mut get_closest_completion_elapsed = Measure::start("get_closest_completion");
         let pre_num_slots = processed_slots.len();
@@ -223,7 +226,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut processed_slots,
             max_closest_completion_repairs,
-            now_timestamp,
+            now_timestamp.saturating_add(elapsed.as_millis() as u64),
         );
         let num_closest_completion_repairs = closest_completion_repairs.len();
         let num_closest_completion_slots = processed_slots.len() - pre_num_slots;
