@@ -17,6 +17,7 @@ use {
         epoch_schedule::{Epoch, EpochSchedule},
         hash::Hash,
         pubkey::Pubkey,
+        timing::timestamp,
     },
     std::collections::{BTreeSet, HashMap, HashSet, VecDeque},
 };
@@ -157,7 +158,7 @@ impl RepairWeight {
         max_unknown_last_index_repairs: usize,
         max_closest_completion_repairs: usize,
         ignore_slots: &impl Contains<'a, Slot>,
-        now_timestamp: u64,
+        now_timestamp: Option<u64>,
         repair_timing: &mut RepairTiming,
         stats: &mut BestRepairsStats,
     ) -> Vec<ShredRepairType> {
@@ -188,7 +189,7 @@ impl RepairWeight {
             &mut best_shreds_repairs,
             max_new_shreds,
             ignore_slots,
-            now_timestamp,
+            now_timestamp.unwrap_or(timestamp()),
         );
         let num_best_shreds_repairs = best_shreds_repairs.len();
         let repair_slots_set: HashSet<Slot> =
@@ -223,7 +224,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut processed_slots,
             max_closest_completion_repairs,
-            now_timestamp,
+            now_timestamp.unwrap_or(timestamp()),
         );
         let num_closest_completion_repairs = closest_completion_repairs.len();
         let num_closest_completion_slots = processed_slots.len() - pre_num_slots;

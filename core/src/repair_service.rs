@@ -25,7 +25,6 @@ use {
         hash::Hash,
         pubkey::Pubkey,
         signer::keypair::Keypair,
-        timing::timestamp,
     },
     solana_streamer::sendmmsg::{batch_send, SendPktsError},
     std::{
@@ -353,7 +352,7 @@ impl RepairService {
                     MAX_UNKNOWN_LAST_INDEX_REPAIRS,
                     MAX_CLOSEST_COMPLETION_REPAIRS,
                     &duplicate_slot_repair_statuses,
-                    timestamp(),
+                    None,
                     &mut repair_timing,
                     &mut best_repairs_stats,
                 );
