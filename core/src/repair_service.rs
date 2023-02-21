@@ -839,6 +839,7 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
+                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,
@@ -876,6 +877,7 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
+                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,
@@ -937,6 +939,7 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
+                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,
@@ -953,6 +956,7 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
+                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,
@@ -1000,6 +1004,7 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
+                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,

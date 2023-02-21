@@ -240,6 +240,7 @@ pub mod test {
         let repairs = get_closest_completion(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            0, // root_slot
             &mut slot_meta_cache,
             &mut processed_slots,
             10,
@@ -264,6 +265,7 @@ pub mod test {
         let repairs = get_closest_completion(
             &heaviest_subtree_fork_choice,
             &blockstore,
+            0, // root_slot
             &mut slot_meta_cache,
             &mut processed_slots,
             2,
