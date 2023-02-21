@@ -99,6 +99,7 @@ fn get_unrepaired_path(
                 path.push(slot);
                 if let Some(parent_slot) = slot_meta.parent_slot {
                     if parent_slot < root_slot {
+                        error!(">>> breaking parent_slot={} root_slot={}", parent_slot, root_slot);
                         break;
                     }
                     slot = parent_slot
