@@ -84,6 +84,7 @@ pub fn get_unknown_last_index(
 fn get_unrepaired_path(
     start_slot: Slot,
     blockstore: &Blockstore,
+    root_slot: Slot,
     slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
     visited: &mut HashSet<Slot>,
 ) -> Vec<Slot> {
@@ -97,6 +98,9 @@ fn get_unrepaired_path(
             if !slot_meta.is_full() {
                 path.push(slot);
                 if let Some(parent_slot) = slot_meta.parent_slot {
+                    if parent_slot < root_slot {
+                        break;
+                    }
                     slot = parent_slot
                 }
             }
@@ -111,6 +115,7 @@ fn get_unrepaired_path(
 pub fn get_closest_completion(
     tree: &HeaviestSubtreeForkChoice,
     blockstore: &Blockstore,
+    root_slot: Slot,
     slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
     processed_slots: &mut HashSet<Slot>,
     limit: usize,
@@ -176,7 +181,7 @@ pub fn get_closest_completion(
             break;
         }
         // attempt to repair heaviest slots starting with their parents
-        let path = get_unrepaired_path(slot, blockstore, slot_meta_cache, &mut visited);
+        let path = get_unrepaired_path(slot, blockstore, root_slot, slot_meta_cache, &mut visited);
         for slot in path {
             if repairs.len() >= limit {
                 break;

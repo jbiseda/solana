@@ -346,6 +346,7 @@ impl RepairService {
 
                 let repairs = repair_weight.get_best_weighted_repairs(
                     blockstore,
+                    new_root,
                     root_bank.epoch_stakes_map(),
                     root_bank.epoch_schedule(),
                     MAX_ORPHANS,
