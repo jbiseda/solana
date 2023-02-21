@@ -98,7 +98,7 @@ fn get_unrepaired_path(
             if !slot_meta.is_full() {
                 path.push(slot);
                 if let Some(parent_slot) = slot_meta.parent_slot {
-                    if parent_slot < root_slot {
+                    if parent_slot <= root_slot {
                         error!(">>> breaking parent_slot={} root_slot={}", parent_slot, root_slot);
                         break;
                     }
@@ -187,6 +187,9 @@ pub fn get_closest_completion(
             if repairs.len() >= limit {
                 break;
             }
+            if processed_slots.contains(&slot) {
+                continue;
+            }
             let slot_meta = slot_meta_cache.get(&slot).unwrap().as_ref().unwrap();
             let new_repairs = RepairService::generate_repairs_for_slot(
                 blockstore,
@@ -195,6 +198,7 @@ pub fn get_closest_completion(
                 limit - repairs.len(),
             );
             repairs.extend(new_repairs);
+            processed_slots.insert(slot);
         }
     }
 
