@@ -145,7 +145,13 @@ pub fn get_closest_completion(
             break;
         }
         // attempt to repair heaviest slots starting with their parents
-        let path = get_unrepaired_path(outer_slot, blockstore, root_slot, slot_meta_cache, &mut visited);
+        let path = get_unrepaired_path(
+            outer_slot,
+            blockstore,
+            root_slot,
+            slot_meta_cache,
+            &mut visited,
+        );
         for path_slot in path {
             if repairs.len() >= limit {
                 break;
