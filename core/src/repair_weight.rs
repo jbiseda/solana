@@ -197,7 +197,8 @@ impl RepairWeight {
 
         // Although we have generated repairs for orphan roots and slots in the rooted subtree,
         // if we have space we should generate repairs for slots in orphan trees in preparation for
-        // when they are no longer rooted. Here we generate repairs for slots that are close to completion.
+        // when they are no longer rooted. Here we generate repairs for slots that are close to
+        // completion.
         let mut get_closest_completion_elapsed = Measure::start("get_closest_completion");
         let pre_num_slots = processed_slots.len();
         let closest_completion_repairs = self.get_best_closest_completion(
