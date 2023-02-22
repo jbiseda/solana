@@ -150,9 +150,6 @@ pub fn get_closest_completion(
             if repairs.len() >= limit {
                 break;
             }
-            if processed_slots.contains(&slot) {
-                continue;
-            }
             let slot_meta = slot_meta_cache.get(&slot).unwrap().as_ref().unwrap();
             let new_repairs = RepairService::generate_repairs_for_slot(
                 blockstore,
@@ -161,7 +158,6 @@ pub fn get_closest_completion(
                 limit - repairs.len(),
             );
             repairs.extend(new_repairs);
-            processed_slots.insert(slot);
         }
     }
 
