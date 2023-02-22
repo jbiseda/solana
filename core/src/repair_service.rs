@@ -346,7 +346,6 @@ impl RepairService {
 
                 let repairs = repair_weight.get_best_weighted_repairs(
                     blockstore,
-                    new_root,
                     root_bank.epoch_stakes_map(),
                     root_bank.epoch_schedule(),
                     MAX_ORPHANS,
@@ -839,7 +838,6 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
-                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,
@@ -877,7 +875,6 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
-                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,
@@ -939,7 +936,6 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
-                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,
@@ -956,7 +952,6 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
-                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,
@@ -1004,7 +999,6 @@ mod test {
             assert_eq!(
                 repair_weight.get_best_weighted_repairs(
                     &blockstore,
-                    0, // root_slot
                     &HashMap::new(),
                     &EpochSchedule::default(),
                     MAX_ORPHANS,

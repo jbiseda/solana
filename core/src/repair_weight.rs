@@ -150,7 +150,6 @@ impl RepairWeight {
     pub fn get_best_weighted_repairs<'a>(
         &mut self,
         blockstore: &Blockstore,
-        root_slot: Slot,
         epoch_stakes: &HashMap<Epoch, EpochStakes>,
         epoch_schedule: &EpochSchedule,
         max_new_orphans: usize,
@@ -219,7 +218,6 @@ impl RepairWeight {
         let pre_num_slots = processed_slots.len();
         let closest_completion_repairs = self.get_best_closest_completion(
             blockstore,
-            root_slot,
             &mut slot_meta_cache,
             &mut processed_slots,
             max_closest_completion_repairs,
@@ -466,7 +464,6 @@ impl RepairWeight {
     fn get_best_closest_completion(
         &mut self,
         blockstore: &Blockstore,
-        root_slot: Slot,
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
@@ -479,7 +476,7 @@ impl RepairWeight {
             let new_repairs = get_closest_completion(
                 tree,
                 blockstore,
-                root_slot,
+                self.root,
                 slot_meta_cache,
                 processed_slots,
                 max_new_repairs - repairs.len(),
