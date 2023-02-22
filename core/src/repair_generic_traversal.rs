@@ -140,20 +140,24 @@ pub fn get_closest_completion(
 
     let mut visited = HashSet::new();
     let mut repairs = Vec::new();
-    for (slot, _) in v {
+    for (outer_slot, _) in v {
         if repairs.len() >= limit {
             break;
         }
         // attempt to repair heaviest slots starting with their parents
-        let path = get_unrepaired_path(slot, blockstore, root_slot, slot_meta_cache, &mut visited);
-        for slot in path {
+        let path = get_unrepaired_path(outer_slot, blockstore, root_slot, slot_meta_cache, &mut visited);
+        for path_slot in path {
             if repairs.len() >= limit {
                 break;
             }
-            let slot_meta = slot_meta_cache.get(&slot).unwrap().as_ref().unwrap();
+            if path_slot != outer_slot && processed_slots.contains(&path_slot) {
+                continue;
+            }
+            processed_slots.insert(path_slot);
+            let slot_meta = slot_meta_cache.get(&path_slot).unwrap().as_ref().unwrap();
             let new_repairs = RepairService::generate_repairs_for_slot(
                 blockstore,
-                slot,
+                path_slot,
                 slot_meta,
                 limit - repairs.len(),
             );
