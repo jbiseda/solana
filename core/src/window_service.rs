@@ -17,7 +17,7 @@ use {
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics},
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{self, Nonce, ReedSolomonCache, Shred, ShredId},
+        shred::{self, Nonce, ReedSolomonCache, Shred},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
@@ -222,7 +222,7 @@ fn run_insert<F>(
     retransmit_sender: &Sender<Vec<ShredPayload>>,
     outstanding_requests: &RwLock<OutstandingShredRepairs>,
     reed_solomon_cache: &ReedSolomonCache,
-    slot_time_window: &mut LruCache<ShredId, (Instant, Instant)>,
+    slot_time_window: &mut LruCache<Slot, (Instant, Instant)>,
 ) -> Result<()>
 where
     F: Fn(Shred),
@@ -280,11 +280,11 @@ where
 
     for i in 0..shreds.len() {
         if !repairs[i] {
-            if let Some(val) = slot_time_window.get_mut(&shreds[i].id()) {
+            if let Some(val) = slot_time_window.get_mut(&shreds[i].slot()) {
                 val.1 = Instant::now();
             } else {
                 let now = Instant::now();
-                if let Some((key, val)) = slot_time_window.push(shreds[i].id(), (now, now)) {
+                if let Some((key, val)) = slot_time_window.push(shreds[i].slot(), (now, now)) {
                     error!(
                         ">>> evicting {:?} time_span_ms={:?} since_start={:?} since_end={:?}",
                         &key,
@@ -441,7 +441,7 @@ impl WindowService {
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
-                let mut slot_time_window: LruCache<ShredId, (Instant, Instant)> =
+                let mut slot_time_window: LruCache<Slot, (Instant, Instant)> =
                     LruCache::new(100);
 
                 while !exit.load(Ordering::Relaxed) {
