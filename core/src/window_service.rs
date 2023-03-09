@@ -11,12 +11,13 @@ use {
         result::{Error, Result},
     },
     crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender},
+    lru::LruCache,
     rayon::{prelude::*, ThreadPool},
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, BlockstoreInsertionMetrics},
         leader_schedule_cache::LeaderScheduleCache,
-        shred::{self, Nonce, ReedSolomonCache, Shred},
+        shred::{self, Nonce, ReedSolomonCache, Shred, ShredId},
     },
     solana_measure::measure::Measure,
     solana_metrics::inc_new_counter_error,
@@ -221,6 +222,7 @@ fn run_insert<F>(
     retransmit_sender: &Sender<Vec<ShredPayload>>,
     outstanding_requests: &RwLock<OutstandingShredRepairs>,
     reed_solomon_cache: &ReedSolomonCache,
+    slot_time_window: &mut LruCache<ShredId, (Instant, Instant)>,
 ) -> Result<()>
 where
     F: Fn(Shred),
@@ -275,6 +277,25 @@ where
         .collect();
     prune_shreds_elapsed.stop();
     ws_metrics.prune_shreds_elapsed_us += prune_shreds_elapsed.as_us();
+
+    for i in 0..shreds.len() {
+        if !repairs[i] {
+            if let Some(val) = slot_time_window.get_mut(&shreds[i].id()) {
+                val.1 = Instant::now();
+            } else {
+                let now = Instant::now();
+                if let Some((key, val)) = slot_time_window.push(shreds[i].id(), (now, now)) {
+                    error!(
+                        ">>> evicting {:?} time_span_ms={:?} since_start={:?} since_end={:?}",
+                        &key,
+                        (val.1 - val.0).as_millis(),
+                        val.0.elapsed().as_millis(),
+                        val.1.elapsed().as_millis(),
+                    );
+                }
+            }
+        }
+    }
 
     let completed_data_sets = blockstore.insert_shreds_handle_duplicate(
         shreds,
@@ -420,6 +441,9 @@ impl WindowService {
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
+                let mut slot_time_window: LruCache<ShredId, (Instant, Instant)> =
+                    LruCache::new(100);
+
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(e) = run_insert(
                         &thread_pool,
@@ -433,6 +457,7 @@ impl WindowService {
                         &retransmit_sender,
                         &outstanding_requests,
                         &reed_solomon_cache,
+                        &mut slot_time_window,
                     ) {
                         ws_metrics.record_error(&e);
                         if Self::should_exit_on_error(e, &handle_error) {
