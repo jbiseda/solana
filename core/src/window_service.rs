@@ -324,12 +324,12 @@ where
     shreds = shreds
         .into_iter()
         .zip(to_drop.iter().copied())
-        .filter_map(|(x, is_drop)| is_drop.then_some(x))
+        .filter_map(|(x, is_drop)| (!is_drop).then_some(x))
         .collect();
     let repairs: Vec<_> = repairs
         .into_iter()
         .zip(to_drop.into_iter())
-        .filter_map(|(x, is_drop)| is_drop.then_some(x))
+        .filter_map(|(x, is_drop)| (!is_drop).then_some(x))
         .collect();
 
     let completed_data_sets = blockstore.insert_shreds_handle_duplicate(
