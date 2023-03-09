@@ -4,7 +4,6 @@
 use {
     crate::{
         cluster_nodes::{self, ClusterNodes, ClusterNodesCache, Error, MAX_NUM_TURBINE_HOPS},
-        packet_hasher::PacketHasher,
     },
     crossbeam_channel::{Receiver, RecvTimeoutError},
     itertools::{izip, Itertools},
@@ -18,6 +17,7 @@ use {
         shred::{self, ShredId},
     },
     solana_measure::measure::Measure,
+    solana_perf::deduper::Deduper,
     solana_rayon_threadlimit::get_thread_count,
     solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions},
     solana_rpc_client_api::response::SlotUpdate,
@@ -41,8 +41,6 @@ use {
     },
 };
 
-const MAX_DUPLICATE_COUNT: usize = 2;
-const DEFAULT_LRU_SIZE: usize = 1 << 20;
 // Minimum number of shreds to use rayon parallel iterators.
 const PAR_ITER_MIN_NUM_SHREDS: usize = 2;
 
@@ -131,48 +129,6 @@ impl RetransmitStats {
     }
 }
 
-// Map of shred (slot, index, type) => list of hash values seen for that key.
-type ShredFilter = LruCache<ShredId, Vec<u64>>;
-
-// Returns true if shred is already received and should skip retransmit.
-fn should_skip_retransmit(
-    key: ShredId,
-    shred: &[u8],
-    shreds_received: &mut ShredFilter,
-    packet_hasher: &PacketHasher,
-) -> bool {
-    match shreds_received.get_mut(&key) {
-        Some(sent) if sent.len() >= MAX_DUPLICATE_COUNT => true,
-        Some(sent) => {
-            let hash = packet_hasher.hash_shred(shred);
-            if sent.contains(&hash) {
-                true
-            } else {
-                sent.push(hash);
-                false
-            }
-        }
-        None => {
-            let hash = packet_hasher.hash_shred(shred);
-            shreds_received.put(key, vec![hash]);
-            false
-        }
-    }
-}
-
-fn maybe_reset_shreds_received_cache(
-    shreds_received: &mut ShredFilter,
-    packet_hasher: &mut PacketHasher,
-    hasher_reset_ts: &mut Instant,
-) {
-    const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
-    if hasher_reset_ts.elapsed() >= UPDATE_INTERVAL {
-        *hasher_reset_ts = Instant::now();
-        shreds_received.clear();
-        packet_hasher.reset();
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn retransmit(
     thread_pool: &ThreadPool,
@@ -183,9 +139,7 @@ fn retransmit(
     sockets: &[UdpSocket],
     stats: &mut RetransmitStats,
     cluster_nodes_cache: &ClusterNodesCache<RetransmitStage>,
-    hasher_reset_ts: &mut Instant,
-    shreds_received: &mut ShredFilter,
-    packet_hasher: &mut PacketHasher,
+    deduper: &mut Deduper,
     max_slots: &MaxSlots,
     rpc_subscriptions: Option<&RpcSubscriptions>,
 ) -> Result<(), RecvTimeoutError> {
@@ -205,7 +159,7 @@ fn retransmit(
     stats.epoch_fetch += epoch_fetch.as_us();
 
     let mut epoch_cache_update = Measure::start("retransmit_epoch_cache_update");
-    maybe_reset_shreds_received_cache(shreds_received, packet_hasher, hasher_reset_ts);
+    deduper.reset();
     epoch_cache_update.stop();
     stats.epoch_cache_update += epoch_cache_update.as_us();
     // Lookup slot leader and cluster nodes for each slot.
@@ -213,7 +167,7 @@ fn retransmit(
         .into_iter()
         .filter_map(|shred| {
             let key = shred::layout::get_shred_id(&shred)?;
-            if should_skip_retransmit(key, &shred, shreds_received, packet_hasher) {
+            if deduper.dedup_bytes(&shred) == 1 {
                 stats.num_shreds_skipped += 1;
                 None
             } else {
@@ -377,10 +331,8 @@ pub fn retransmitter(
         CLUSTER_NODES_CACHE_NUM_EPOCH_CAP,
         CLUSTER_NODES_CACHE_TTL,
     );
-    let mut hasher_reset_ts = Instant::now();
     let mut stats = RetransmitStats::new(Instant::now());
-    let mut shreds_received = LruCache::<ShredId, _>::new(DEFAULT_LRU_SIZE);
-    let mut packet_hasher = PacketHasher::default();
+    let mut deduper = Deduper::new(1_000_000, Duration::from_secs(15));
     #[allow(clippy::manual_clamp)]
     let num_threads = get_thread_count().min(8).max(sockets.len());
     let thread_pool = ThreadPoolBuilder::new()
@@ -400,9 +352,7 @@ pub fn retransmitter(
                 &sockets,
                 &mut stats,
                 &cluster_nodes_cache,
-                &mut hasher_reset_ts,
-                &mut shreds_received,
-                &mut packet_hasher,
+                &mut deduper,
                 &max_slots,
                 rpc_subscriptions.as_deref(),
             ) {

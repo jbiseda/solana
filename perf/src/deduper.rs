@@ -51,9 +51,9 @@ impl Deduper {
     }
 
     /// Compute hash from packet data, returns (hash, bin_pos).
-    fn compute_hash(&self, packet: &Packet) -> (u64, usize) {
+    fn compute_hash(&self, bytes: &[u8]) -> (u64, usize) {
         let mut hasher = AHasher::new_with_keys(self.seed.0, self.seed.1);
-        hasher.write(packet.data(..).unwrap_or_default());
+        hasher.write(bytes);
         let h = hasher.finish();
         let len = self.filter.len();
         let pos = (usize::try_from(h).unwrap()).wrapping_rem(len);
@@ -66,7 +66,16 @@ impl Deduper {
         if packet.meta().discard() {
             return 1;
         }
-        let (hash, pos) = self.compute_hash(packet);
+        let dup = self.dedup_bytes(packet.data(..).unwrap_or_default());
+        if dup == 1 {
+            packet.meta_mut().set_discard(true);
+        }
+        dup
+    }
+
+    #[inline(always)]
+    pub fn dedup_bytes(&self, bytes: &[u8]) -> u64 {
+        let (hash, pos) = self.compute_hash(bytes);
         // saturate each position with or
         let prev = self.filter[pos].fetch_or(hash, Ordering::Relaxed);
         if prev == u64::MAX {
@@ -75,7 +84,6 @@ impl Deduper {
             self.filter[pos].store(hash, Ordering::Relaxed);
         }
         if hash == prev & hash {
-            packet.meta_mut().set_discard(true);
             return 1;
         }
         0
