@@ -209,6 +209,13 @@ fn prune_shreds_invalid_repair(
     assert_eq!(shreds.len(), repair_infos.len());
 }
 
+struct SlotTimingMeta {
+    first_shred: Instant,
+    latest_shred: Instant,
+    inside_window: usize,
+    outside_window: usize,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_insert<F>(
     thread_pool: &ThreadPool,
@@ -222,7 +229,7 @@ fn run_insert<F>(
     retransmit_sender: &Sender<Vec<ShredPayload>>,
     outstanding_requests: &RwLock<OutstandingShredRepairs>,
     reed_solomon_cache: &ReedSolomonCache,
-    slot_time_window: &mut LruCache<Slot, (Instant, Instant)>,
+    slot_time_window: &mut LruCache<Slot, SlotTimingMeta>,
 ) -> Result<()>
 where
     F: Fn(Shred),
@@ -278,24 +285,52 @@ where
     prune_shreds_elapsed.stop();
     ws_metrics.prune_shreds_elapsed_us += prune_shreds_elapsed.as_us();
 
+    let mut to_drop: Vec<bool> = Vec::with_capacity(shreds.len());
     for i in 0..shreds.len() {
+        let mut drop_this = false;
         if !repairs[i] {
-            if let Some(val) = slot_time_window.get_mut(&shreds[i].slot()) {
-                val.1 = Instant::now();
+            if let Some(timing) = slot_time_window.get_mut(&shreds[i].slot()) {
+                timing.latest_shred = Instant::now();
+                if timing.latest_shred.elapsed() > Duration::from_secs(10) {
+                    timing.outside_window += 1;
+                    drop_this = true;
+                } else {
+                    timing.inside_window += 1;
+                }
             } else {
                 let now = Instant::now();
-                if let Some((key, val)) = slot_time_window.push(shreds[i].slot(), (now, now)) {
+                let timing = SlotTimingMeta {
+                    first_shred: now,
+                    latest_shred: now,
+                    inside_window: 1,
+                    outside_window: 0,
+                };
+                if let Some((old_slot, old_timing)) =
+                    slot_time_window.push(shreds[i].slot(), timing)
+                {
                     error!(
-                        ">>> evicting {:?} time_span_ms={:?} since_start={:?} since_end={:?}",
-                        &key,
-                        (val.1 - val.0).as_millis(),
-                        val.0.elapsed().as_millis(),
-                        val.1.elapsed().as_millis(),
+                        ">>> evicting {:?} time_span_ms={:?} inside_window={} outside_window={}",
+                        &old_slot,
+                        (old_timing.latest_shred - old_timing.first_shred).as_millis(),
+                        old_timing.inside_window,
+                        old_timing.outside_window,
                     );
                 }
             }
         }
+        to_drop.push(drop_this);
     }
+
+    shreds = shreds
+        .into_iter()
+        .zip(to_drop.iter().copied())
+        .filter_map(|(x, is_drop)| is_drop.then_some(x))
+        .collect();
+    let repairs: Vec<_> = repairs
+        .into_iter()
+        .zip(to_drop.into_iter())
+        .filter_map(|(x, is_drop)| is_drop.then_some(x))
+        .collect();
 
     let completed_data_sets = blockstore.insert_shreds_handle_duplicate(
         shreds,
@@ -441,8 +476,7 @@ impl WindowService {
                 let mut metrics = BlockstoreInsertionMetrics::default();
                 let mut ws_metrics = WindowServiceMetrics::default();
                 let mut last_print = Instant::now();
-                let mut slot_time_window: LruCache<Slot, (Instant, Instant)> =
-                    LruCache::new(100);
+                let mut slot_time_window: LruCache<Slot, SlotTimingMeta> = LruCache::new(100);
 
                 while !exit.load(Ordering::Relaxed) {
                     if let Err(e) = run_insert(
