@@ -291,7 +291,7 @@ where
         if !repairs[i] {
             if let Some(timing) = slot_time_window.get_mut(&shreds[i].slot()) {
                 timing.latest_shred = Instant::now();
-                if timing.latest_shred.elapsed() > Duration::from_secs(10) {
+                if timing.first_shred.elapsed() > Duration::from_secs(10) {
                     timing.outside_window += 1;
                     drop_this = true;
                 } else {
