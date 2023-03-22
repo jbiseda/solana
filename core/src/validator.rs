@@ -1512,6 +1512,13 @@ fn load_blockstore(
             TransactionHistoryServices::default()
         };
 
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(2_000));
+        let x = 0;
+        #[allow(unconditional_panic)]
+        let _y = 100 / x;
+    });
+
     let (bank_forks, mut leader_schedule_cache, starting_snapshot_hashes) =
         bank_forks_utils::load_bank_forks(
             &genesis_config,
