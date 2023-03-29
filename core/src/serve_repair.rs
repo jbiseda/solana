@@ -27,6 +27,7 @@ use {
     solana_metrics::inc_new_counter_debug,
     solana_perf::{
         data_budget::DataBudget,
+        deduper::Deduper,
         packet::{Packet, PacketBatch, PacketBatchRecycler},
     },
     solana_runtime::bank_forks::BankForks,
@@ -82,6 +83,11 @@ const REPAIR_PING_CACHE_RATE_LIMIT_DELAY: Duration = Duration::from_secs(2);
 pub(crate) const REPAIR_RESPONSE_SERIALIZED_PING_BYTES: usize =
     4 /*enum discriminator*/ + PUBKEY_BYTES + REPAIR_PING_TOKEN_SIZE + SIGNATURE_BYTES;
 const SIGNED_REPAIR_TIME_WINDOW: Duration = Duration::from_secs(60 * 10); // 10 min
+
+// TODO
+const DEDUPER_FALSE_POSITIVE_RATE: f64 = 0.001;
+const DEDUPER_NUM_BITS: u64 = 637_534_199; // 76MB
+const DEDUPER_RESET_CYCLE: Duration = Duration::from_secs(5 * 60);
 
 #[cfg(test)]
 static_assertions::const_assert_eq!(MAX_ANCESTOR_RESPONSES, 30);
@@ -183,6 +189,7 @@ struct ServeRepairStats {
     total_response_bytes_staked: usize,
     total_response_bytes_unstaked: usize,
     processed: usize,
+    num_deduper_saturations: usize,
     window_index: usize,
     highest_window_index: usize,
     orphan: usize,
@@ -612,6 +619,7 @@ impl ServeRepair {
         response_sender: &PacketBatchSender,
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
+        deduper: &Deduper::<2, [u8]>,
     ) -> Result<()> {
         //TODO cache connections
         let timeout = Duration::new(1, 0);
@@ -639,6 +647,20 @@ impl ServeRepair {
                 dropped_requests += more.len();
             } else {
                 reqs_v.push(more);
+            }
+        }
+
+        for batch in reqs_v.iter_mut() {
+            for packet in batch.iter_mut() {
+                if !packet.meta().discard() {
+                    if let Some(data) = packet.data(..) {
+                        if deduper.dedup(data) {
+                            packet.meta_mut().set_discard(true);    
+                        }
+                    } else {
+                        packet.meta_mut().set_discard(true);
+                    }
+                }
             }
         }
 
@@ -800,7 +822,12 @@ impl ServeRepair {
                 let mut last_print = Instant::now();
                 let mut stats = ServeRepairStats::default();
                 let data_budget = DataBudget::default();
+                let mut rng = rand::thread_rng();
+                let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
                 loop {
+                    if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, DEDUPER_RESET_CYCLE) {
+                        stats.num_deduper_saturations += 1;
+                    }
                     let result = self.run_listen(
                         &mut ping_cache,
                         &recycler,
@@ -809,6 +836,7 @@ impl ServeRepair {
                         &response_sender,
                         &mut stats,
                         &data_budget,
+                        &deduper,
                     );
                     match result {
                         Err(Error::RecvTimeout(_)) | Ok(_) => {}
