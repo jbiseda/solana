@@ -619,7 +619,7 @@ impl ServeRepair {
         response_sender: &PacketBatchSender,
         stats: &mut ServeRepairStats,
         data_budget: &DataBudget,
-        deduper: &Deduper::<2, [u8]>,
+        deduper: &Deduper<2, [u8]>,
     ) -> Result<()> {
         //TODO cache connections
         let timeout = Duration::new(1, 0);
@@ -655,7 +655,7 @@ impl ServeRepair {
                 if !packet.meta().discard() {
                     if let Some(data) = packet.data(..) {
                         if deduper.dedup(data) {
-                            packet.meta_mut().set_discard(true);    
+                            packet.meta_mut().set_discard(true);
                         }
                     } else {
                         packet.meta_mut().set_discard(true);
@@ -747,6 +747,11 @@ impl ServeRepair {
                 i64
             ),
             ("processed", stats.processed, i64),
+            (
+                "stats.num_deduper_saturations",
+                stats.num_deduper_saturations,
+                i64
+            ),
             ("total_response_packets", stats.total_response_packets, i64),
             (
                 "total_response_bytes_staked",
@@ -825,7 +830,11 @@ impl ServeRepair {
                 let mut rng = rand::thread_rng();
                 let mut deduper = Deduper::<2, [u8]>::new(&mut rng, DEDUPER_NUM_BITS);
                 loop {
-                    if deduper.maybe_reset(&mut rng, DEDUPER_FALSE_POSITIVE_RATE, DEDUPER_RESET_CYCLE) {
+                    if deduper.maybe_reset(
+                        &mut rng,
+                        DEDUPER_FALSE_POSITIVE_RATE,
+                        DEDUPER_RESET_CYCLE,
+                    ) {
                         stats.num_deduper_saturations += 1;
                     }
                     let result = self.run_listen(
