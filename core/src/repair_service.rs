@@ -607,6 +607,7 @@ impl RepairService {
                 if ticks_since_first_insert
                     < reference_tick.saturating_add(DEFER_REPAIR_THRESHOLD_TICKS)
                 {
+                    // TODO bypass this
                     return vec![];
                 }
             }

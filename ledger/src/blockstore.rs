@@ -3474,9 +3474,12 @@ fn update_slot_meta(
     // so received = index + 1 for the same shred.
     slot_meta.received = cmp::max(u64::from(index) + 1, slot_meta.received);
     if first_insert {
+        /*
         // predict the timestamp of what would have been the first shred in this slot
         let slot_time_elapsed = u64::from(reference_tick) * 1000 / DEFAULT_TICKS_PER_SECOND;
         slot_meta.first_shred_timestamp = timestamp() - slot_time_elapsed;
+        */
+        slot_meta.first_shred_timestamp = timestamp();
     }
     slot_meta.consumed = new_consumed;
     // If the last index in the slot hasn't been set before, then
