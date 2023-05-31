@@ -120,6 +120,18 @@ macro_rules! create_datapoint {
 
     (@fields $point:ident) => {};
 
+    (@fields $point:ident ($name:expr, $value:expr, Option<$type:ident>) , $($rest:tt)*) => {
+        if let Some(value) = $value {
+            $crate::create_datapoint!(@field $point $name, value, $type);
+        }
+        $crate::create_datapoint!(@fields $point $($rest)*);
+    };
+    (@fields $point:ident ($name:expr, $value:expr, Option<$type:ident>) $(,)?) => {
+        if let Some(value) = $value {
+            $crate::create_datapoint!(@field $point $name, value, $type);
+        }
+    };
+
     // process tags
     (@fields $point:ident $tag_name:expr => $tag_value:expr, $($rest:tt)*) => {
         $crate::create_datapoint!(@tag $point $tag_name, $tag_value);
