@@ -93,7 +93,11 @@ impl RepairStatsGroup {
         // Update the max requested shred index for this slot
         slot_repairs.highest_shred_index =
             std::cmp::max(slot_repairs.highest_shred_index, shred_index);
-        self.min = std::cmp::min(self.min, slot);
+        if self.min == 0 {
+            self.min = slot;
+        } else {
+            self.min = std::cmp::min(self.min, slot);
+        }
         self.max = std::cmp::max(self.max, slot);
     }
 }
