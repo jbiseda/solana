@@ -213,6 +213,7 @@ impl RepairWeight {
         max_closest_completion_repairs: usize,
         repair_timing: &mut RepairTiming,
         stats: &mut BestRepairsStats,
+        root_slot: Slot,
     ) -> Vec<ShredRepairType> {
         let mut repairs = vec![];
         let mut processed_slots = HashSet::from([self.root]);
@@ -241,6 +242,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut best_shreds_repairs,
             max_new_shreds,
+            root_slot,
         );
         let num_best_shreds_repairs = best_shreds_repairs.len();
         let repair_slots_set: HashSet<Slot> =
@@ -262,6 +264,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut processed_slots,
             max_unknown_last_index_repairs,
+            root_slot,
         );
         let num_unknown_last_index_repairs = unknown_last_index_repairs.len();
         let num_unknown_last_index_slots = processed_slots.len() - pre_num_slots;
@@ -275,6 +278,7 @@ impl RepairWeight {
             &mut slot_meta_cache,
             &mut processed_slots,
             max_closest_completion_repairs,
+            root_slot,
         );
         let num_closest_completion_repairs = closest_completion_repairs.len();
         let num_closest_completion_slots = processed_slots.len() - pre_num_slots;
@@ -466,7 +470,7 @@ impl RepairWeight {
             .drain()
             .flat_map(|(tree_root, mut pruned_tree)| {
                 if tree_root < new_root {
-                    trace!("pruning tree {} with {}", tree_root, new_root);
+                    error!("pruning tree {} with {}", tree_root, new_root);
                     let (removed, pruned) = pruned_tree.purge_prune((new_root, Hash::default()));
                     for (slot, _) in removed {
                         self.slot_to_tree.remove(&slot);
@@ -505,6 +509,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         repairs: &mut Vec<ShredRepairType>,
         max_new_shreds: usize,
+        root_slot: Slot,
     ) {
         let root_tree = self.trees.get(&self.root).expect("Root tree must exist");
         repair_weighted_traversal::get_best_repair_shreds(
@@ -513,6 +518,7 @@ impl RepairWeight {
             slot_meta_cache,
             repairs,
             max_new_shreds,
+            root_slot,
         );
     }
 
@@ -593,6 +599,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
+        root_slot: Slot,
     ) -> Vec<ShredRepairType> {
         let mut repairs = Vec::default();
         for (_slot, tree) in self.trees.iter() {
@@ -605,6 +612,7 @@ impl RepairWeight {
                 slot_meta_cache,
                 processed_slots,
                 max_new_repairs - repairs.len(),
+                root_slot,
             );
             repairs.extend(new_repairs);
         }
@@ -621,6 +629,7 @@ impl RepairWeight {
         slot_meta_cache: &mut HashMap<Slot, Option<SlotMeta>>,
         processed_slots: &mut HashSet<Slot>,
         max_new_repairs: usize,
+        top_level_root_slot: Slot,
     ) -> (Vec<ShredRepairType>, /* processed slots */ usize) {
         let mut repairs = Vec::default();
         let mut total_processed_slots = 0;
@@ -635,6 +644,7 @@ impl RepairWeight {
                 slot_meta_cache,
                 processed_slots,
                 max_new_repairs - repairs.len(),
+                top_level_root_slot,
             );
             repairs.extend(new_repairs);
             total_processed_slots += new_processed_slots;
