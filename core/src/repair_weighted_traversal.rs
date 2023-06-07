@@ -87,14 +87,14 @@ pub fn get_best_repair_shreds(
 
     {
         let weighted_iter = RepairWeightTraversal::new(tree);
-        let mut weighted_slots: Vec<_> = weighted_iter.map(|v| v.slot()).collect();
-        weighted_slots.sort();
+        let weighted_slots: Vec<_> = weighted_iter.collect();
+        //weighted_slots.sort();
         let tree_root_slot = tree.tree_root().0;
         let tree_root_meta = blockstore.meta(tree_root_slot).unwrap();
         error!(
-            "get_best_repair_shreds\n
-                root_slot={root_slot} tree_root_slot={tree_root_slot}\n
-                tree_root_meta={tree_root_meta:?}\n
+            "get_best_repair_shreds
+                root_slot={root_slot} tree_root_slot={tree_root_slot}
+                tree_root_meta={tree_root_meta:?}
                 slots: {weighted_slots:?}"
         );
     }
