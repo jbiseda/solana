@@ -1943,6 +1943,36 @@ impl Blockstore {
         }
     }
 
+    /// Find missing coding shreds for the given `slot`.
+    ///
+    /// For more details on the arguments, see [`find_missing_indexes`].
+    pub fn find_missing_code_indexes(
+        &self,
+        slot: Slot,
+        first_timestamp: u64,
+        defer_threshold_ticks: u64,
+        start_index: u64,
+        end_index: u64,
+        max_missing: usize,
+    ) -> Vec<u64> {
+        if let Ok(mut db_iterator) = self
+            .db
+            .raw_iterator_cf(self.db.cf_handle::<cf::ShredCode>())
+        {
+            Self::find_missing_indexes::<cf::ShredCode>(
+                &mut db_iterator,
+                slot,
+                first_timestamp,
+                defer_threshold_ticks,
+                start_index,
+                end_index,
+                max_missing,
+            )
+        } else {
+            vec![]
+        }
+    }
+
     pub fn get_block_time(&self, slot: Slot) -> Result<Option<UnixTimestamp>> {
         datapoint_info!("blockstore-rpc-api", ("method", "get_block_time", String));
         let _lock = self.check_lowest_cleanup_slot(slot)?;

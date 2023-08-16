@@ -96,14 +96,17 @@ pub enum ShredRepairType {
     HighestShred(Slot, u64),
     /// Requesting the missing shred at a particular index
     Shred(Slot, u64),
+    /// Requesting the missing coding shred at a particular index
+    CodingIndex(Slot, u64),
 }
 
 impl ShredRepairType {
     pub fn slot(&self) -> Slot {
         match self {
-            ShredRepairType::Orphan(slot) => *slot,
-            ShredRepairType::HighestShred(slot, _) => *slot,
-            ShredRepairType::Shred(slot, _) => *slot,
+            ShredRepairType::Orphan(slot)
+            | ShredRepairType::HighestShred(slot, _)
+            | ShredRepairType::Shred(slot, _)
+            | ShredRepairType::CodingIndex(slot, _) => *slot,
         }
     }
 }
@@ -113,8 +116,9 @@ impl RequestResponse for ShredRepairType {
     fn num_expected_responses(&self) -> u32 {
         match self {
             ShredRepairType::Orphan(_) => (MAX_ORPHAN_REPAIR_RESPONSES) as u32,
-            ShredRepairType::HighestShred(_, _) => 1,
-            ShredRepairType::Shred(_, _) => 1,
+            ShredRepairType::HighestShred(_, _)
+            | ShredRepairType::Shred(_, _)
+            | ShredRepairType::CodingIndex(_, _) => 1,
         }
     }
     fn verify_response(&self, response_shred: &Shred) -> bool {
@@ -123,7 +127,7 @@ impl RequestResponse for ShredRepairType {
             ShredRepairType::HighestShred(slot, index) => {
                 response_shred.slot() == *slot && response_shred.index() as u64 >= *index
             }
-            ShredRepairType::Shred(slot, index) => {
+            ShredRepairType::Shred(slot, index) | ShredRepairType::CodingIndex(slot, index) => {
                 response_shred.slot() == *slot && response_shred.index() as u64 == *index
             }
         }
@@ -1175,6 +1179,14 @@ impl ServeRepair {
                 RepairProtocol::Orphan {
                     header,
                     slot: *slot,
+                }
+            }
+            ShredRepairType::CodingIndex(slot, index) => {
+                repair_stats.shred.update(repair_peer_id, *slot, *index);
+                RepairProtocol::CodingIndex {
+                    header,
+                    slot: *slot,
+                    index: *index,
                 }
             }
         };

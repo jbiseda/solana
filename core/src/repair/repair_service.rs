@@ -109,6 +109,7 @@ pub struct RepairStats {
     pub shred: RepairStatsGroup,
     pub highest_shred: RepairStatsGroup,
     pub orphan: RepairStatsGroup,
+    pub coding_index: RepairStatsGroup,
     pub get_best_orphans_us: u64,
     pub get_best_shreds_us: u64,
 }
@@ -472,13 +473,15 @@ impl RepairService {
             if last_stats.elapsed().as_secs() > 2 {
                 let repair_total = repair_stats.shred.count
                     + repair_stats.highest_shred.count
-                    + repair_stats.orphan.count;
+                    + repair_stats.orphan.count
+                    + repair_stats.coding_index.count;
                 let slot_to_count: Vec<_> = repair_stats
                     .shred
                     .slot_pubkeys
                     .iter()
                     .chain(repair_stats.highest_shred.slot_pubkeys.iter())
                     .chain(repair_stats.orphan.slot_pubkeys.iter())
+                    .chain(repair_stats.coding_index.slot_pubkeys.iter())
                     .map(|(slot, slot_repairs)| {
                         (slot, slot_repairs.pubkey_repairs.values().sum::<u64>())
                     })
@@ -492,6 +495,7 @@ impl RepairService {
                         ("shred-count", repair_stats.shred.count, i64),
                         ("highest-shred-count", repair_stats.highest_shred.count, i64),
                         ("orphan-count", repair_stats.orphan.count, i64),
+                        ("coding-index-count", repair_stats.coding_index.count, i64),
                         ("shred-slot-max", nonzero_num(repair_stats.shred.max), Option<i64>),
                         ("shred-slot-min", nonzero_num(repair_stats.shred.min), Option<i64>),
                         ("repair-highest-slot", repair_stats.highest_shred.max, i64), // deprecated
@@ -500,6 +504,8 @@ impl RepairService {
                         ("repair-orphan", repair_stats.orphan.max, i64), // deprecated
                         ("orphan-slot-max", nonzero_num(repair_stats.orphan.max), Option<i64>),
                         ("orphan-slot-min", nonzero_num(repair_stats.orphan.min), Option<i64>),
+                        ("coding-index-slot-max", nonzero_num(repair_stats.coding_index.max), Option<i64>),
+                        ("coding-index-slot-min", nonzero_num(repair_stats.coding_index.min), Option<i64>),
                     );
                 }
                 datapoint_info!(
@@ -625,7 +631,7 @@ impl RepairService {
             }
             vec![ShredRepairType::HighestShred(slot, slot_meta.received)]
         } else {
-            blockstore
+            let mut repairs: Vec<_> = blockstore
                 .find_missing_data_indexes(
                     slot,
                     slot_meta.first_shred_timestamp,
@@ -636,7 +642,23 @@ impl RepairService {
                 )
                 .into_iter()
                 .map(|i| ShredRepairType::Shred(slot, i))
-                .collect()
+                .collect();
+            if repairs.len() < max_repairs {
+                let max_repairs = max_repairs - repairs.len();
+                let coding_repairs = blockstore
+                    .find_missing_code_indexes(
+                        slot,
+                        slot_meta.first_shred_timestamp,
+                        DEFER_REPAIR_THRESHOLD_TICKS,
+                        0,  // TODO
+                        32, // TODO
+                        max_repairs,
+                    )
+                    .into_iter()
+                    .map(|i| ShredRepairType::CodingIndex(slot, i));
+                repairs.extend(coding_repairs);
+            }
+            repairs
         }
     }
 
