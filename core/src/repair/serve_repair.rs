@@ -175,6 +175,8 @@ struct ServeRepairStats {
     pong: usize,
     ancestor_hashes: usize,
     window_index_misses: usize,
+    coding_index: usize,
+    coding_index_misses: usize,
     ping_cache_check_failed: usize,
     pings_sent: usize,
     decode_time_us: u64,
@@ -242,6 +244,11 @@ pub enum RepairProtocol {
         header: RepairRequestHeader,
         slot: Slot,
     },
+    CodingIndex {
+        header: RepairRequestHeader,
+        slot: Slot,
+        index: u64,
+    },
 }
 
 const REPAIR_REQUEST_PONG_SERIALIZED_BYTES: usize = PUBKEY_BYTES + HASH_BYTES + SIGNATURE_BYTES;
@@ -284,6 +291,7 @@ impl RepairProtocol {
             Self::HighestWindowIndex { header, .. } => &header.sender,
             Self::Orphan { header, .. } => &header.sender,
             Self::AncestorHashes { header, .. } => &header.sender,
+            Self::CodingIndex { header, .. } => &header.sender,
         }
     }
 
@@ -300,7 +308,8 @@ impl RepairProtocol {
             | Self::WindowIndex { .. }
             | Self::HighestWindowIndex { .. }
             | Self::Orphan { .. }
-            | Self::AncestorHashes { .. } => true,
+            | Self::AncestorHashes { .. }
+            | Self::CodingIndex { .. } => true,
         }
     }
 
@@ -311,7 +320,8 @@ impl RepairProtocol {
             | RepairProtocol::HighestWindowIndex { .. }
             | RepairProtocol::LegacyHighestWindowIndexWithNonce(_, _, _, _)
             | RepairProtocol::AncestorHashes { .. }
-            | RepairProtocol::LegacyAncestorHashes(_, _, _) => 1,
+            | RepairProtocol::LegacyAncestorHashes(_, _, _)
+            | RepairProtocol::CodingIndex { .. } => 1,
             RepairProtocol::Orphan { .. } | RepairProtocol::LegacyOrphanWithNonce(_, _, _) => {
                 MAX_ORPHAN_REPAIR_RESPONSES
             }
@@ -474,6 +484,20 @@ impl ServeRepair {
                     stats.pong += 1;
                     ping_cache.add(pong, *from_addr, Instant::now());
                     (None, "Pong")
+                }
+                RepairProtocol::CodingIndex {
+                    header: RepairRequestHeader { nonce, .. },
+                    slot,
+                    index,
+                } => {
+                    stats.coding_index += 1;
+                    let batch = Self::run_coding_index_request(
+                        recycler, from_addr, blockstore, *slot, *index, *nonce,
+                    );
+                    if batch.is_none() {
+                        stats.coding_index_misses += 1;
+                    }
+                    (batch, "CodingIndex")
                 }
                 RepairProtocol::LegacyWindowIndex(_, _, _)
                 | RepairProtocol::LegacyWindowIndexWithNonce(_, _, _, _)
@@ -859,7 +883,8 @@ impl ServeRepair {
             RepairProtocol::WindowIndex { header, .. }
             | RepairProtocol::HighestWindowIndex { header, .. }
             | RepairProtocol::Orphan { header, .. }
-            | RepairProtocol::AncestorHashes { header, .. } => {
+            | RepairProtocol::AncestorHashes { header, .. }
+            | RepairProtocol::CodingIndex { header, .. } => {
                 if &header.recipient != my_id {
                     return Err(Error::from(RepairVerifyError::IdMismatch));
                 }
@@ -905,7 +930,8 @@ impl ServeRepair {
             match request {
                 RepairProtocol::WindowIndex { .. }
                 | RepairProtocol::HighestWindowIndex { .. }
-                | RepairProtocol::Orphan { .. } => {
+                | RepairProtocol::Orphan { .. }
+                | RepairProtocol::CodingIndex { .. } => {
                     let ping = RepairResponse::Ping(ping);
                     Packet::from_data(Some(from_addr), ping).ok()
                 }
@@ -1253,6 +1279,25 @@ impl ServeRepair {
         Some(PacketBatch::new_unpinned_with_recycler_data(
             recycler,
             "run_window_request",
+            vec![packet],
+        ))
+    }
+
+    fn run_coding_index_request(
+        recycler: &PacketBatchRecycler,
+        from_addr: &SocketAddr,
+        blockstore: &Blockstore,
+        slot: Slot,
+        index: u64,
+        nonce: Nonce,
+    ) -> Option<PacketBatch> {
+        // Try to find the requested index in one of the slots
+        let packet = repair_response::repair_coding_response_packet(
+            blockstore, slot, index, from_addr, nonce,
+        )?;
+        Some(PacketBatch::new_unpinned_with_recycler_data(
+            recycler,
+            "run_coding_index_request",
             vec![packet],
         ))
     }
