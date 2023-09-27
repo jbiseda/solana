@@ -10,10 +10,9 @@ use {
     log::*,
     serde::{de::Deserializer, Deserialize, Serialize},
     solana_accounts_db::accounts_index::AccountIndex,
+    solana_consensus::{consensus::Tower, tower_storage::TowerStorage},
     solana_core::{
-        admin_rpc_post_init::AdminRpcRequestMetadataPostInit,
-        consensus::{tower_storage::TowerStorage, Tower},
-        validator::ValidatorStartProgress,
+        admin_rpc_post_init::AdminRpcRequestMetadataPostInit, validator::ValidatorStartProgress,
     },
     solana_geyser_plugin_manager::GeyserPluginManagerRequest,
     solana_gossip::contact_info::{ContactInfo, Protocol, SOCKET_ADDR_UNSPECIFIED},

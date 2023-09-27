@@ -8,12 +8,12 @@
 //! command-line tools to spin up validators and a Rust library
 //!
 
-mod cluster_slots;
+pub mod cluster_slots;
 pub mod cluster_slots_service;
 pub mod consensus;
 pub mod fork_choice;
 pub mod heaviest_subtree_fork_choice;
-pub(crate) mod latest_validator_votes_for_frozen_banks;
+pub mod latest_validator_votes_for_frozen_banks;
 pub mod progress_map;
 pub mod tower1_14_11;
 pub mod tower1_7_14;

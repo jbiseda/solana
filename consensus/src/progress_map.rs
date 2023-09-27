@@ -1,9 +1,8 @@
 use {
     crate::{
-        cluster_info_vote_listener::SlotVoteTracker,
-        cluster_slots_service::cluster_slots::SlotPubkeys,
-        consensus::{Stake, ThresholdDecision, VotedStakes},
-        replay_stage::SUPERMINORITY_THRESHOLD,
+        cluster_slots::SlotPubkeys,
+        consensus::{Stake, ThresholdDecision, VotedStakes, SUPERMINORITY_THRESHOLD},
+        vote_stake_tracker::SlotVoteTracker,
     },
     solana_ledger::blockstore_processor::{ConfirmationProgress, ConfirmationTiming},
     solana_program_runtime::{report_execute_timings, timings::ExecuteTimingType},
@@ -173,6 +172,10 @@ pub struct RetransmitInfo {
 }
 
 impl RetransmitInfo {
+    pub fn retry_iteration(&self) -> u32 {
+        self.retry_iteration
+    }
+
     pub fn reached_retransmit_threshold(&self) -> bool {
         let backoff = std::cmp::min(self.retry_iteration, RETRANSMIT_BACKOFF_CAP);
         let backoff_duration_ms = (1_u64 << backoff) * RETRANSMIT_BASE_DELAY_MS;

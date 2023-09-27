@@ -9,9 +9,7 @@ use {
             GossipDuplicateConfirmedSlotsReceiver, GossipVerifiedVoteHashReceiver,
             VerifiedVoteReceiver, VoteTracker,
         },
-        cluster_slots_service::{cluster_slots::ClusterSlots, ClusterSlotsService},
         completed_data_sets_service::CompletedDataSetsSender,
-        consensus::tower_storage::TowerStorage,
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
         ledger_cleanup_service::LedgerCleanupService,
@@ -27,6 +25,10 @@ use {
     bytes::Bytes,
     crossbeam_channel::{unbounded, Receiver, Sender},
     solana_client::connection_cache::ConnectionCache,
+    solana_consensus::{
+        cluster_slots::ClusterSlots, cluster_slots_service::ClusterSlotsService,
+        tower_storage::TowerStorage,
+    },
     solana_geyser_plugin_manager::block_metadata_notifier_interface::BlockMetadataNotifierLock,
     solana_gossip::{
         cluster_info::ClusterInfo, duplicate_shred_handler::DuplicateShredHandler,

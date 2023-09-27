@@ -1,21 +1,21 @@
 use {
     crate::{
         cluster_info_vote_listener::VoteTracker,
-        cluster_slots_service::cluster_slots::ClusterSlots,
-        consensus::{
-            fork_choice::SelectVoteAndResetForkResult,
-            heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
-            latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
-            progress_map::{ForkProgress, ProgressMap},
-            Tower,
-        },
         repair::cluster_slot_state_verifier::{
             DuplicateSlotsTracker, EpochSlotsFrozenSlots, GossipDuplicateConfirmedSlots,
         },
-        replay_stage::{HeaviestForkFailures, ReplayStage},
+        replay_stage::ReplayStage,
         unfrozen_gossip_verified_vote_hashes::UnfrozenGossipVerifiedVoteHashes,
     },
     crossbeam_channel::unbounded,
+    solana_consensus::{
+        cluster_slots::ClusterSlots,
+        consensus::Tower,
+        fork_choice::{HeaviestForkFailures, SelectVoteAndResetForkResult},
+        heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
+        latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
+        progress_map::{ForkProgress, ProgressMap},
+    },
     solana_runtime::{
         accounts_background_service::AbsRequestSender,
         bank::Bank,
