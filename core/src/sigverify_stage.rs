@@ -349,7 +349,7 @@ impl SigVerifyStage {
         // Pre-shrink packet batches if many packets are discarded from dedup / discard
         let (pre_shrink_time_us, pre_shrink_total) = Self::maybe_shrink_batches(&mut batches);
 
-        let pre_sigverify_valid_count = count_valid_packets(&batches, || {});
+        let pre_sigverify_valid_count = count_valid_packets(&batches, |_| {});
 
         let mut verify_time = Measure::start("sigverify_batch_time");
         let mut batches = verifier.verify_batches(batches, num_packets_to_verify);
