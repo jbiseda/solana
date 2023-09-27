@@ -167,8 +167,8 @@ pub const RETRANSMIT_BACKOFF_CAP: u32 = 6;
 
 #[derive(Debug)]
 pub struct RetransmitInfo {
-    pub(crate) retry_time: Instant,
-    pub(crate) retry_iteration: u32,
+    pub retry_time: Instant,
+    pub retry_iteration: u32,
 }
 
 impl RetransmitInfo {

@@ -947,8 +947,9 @@ pub(crate) fn check_slot_agrees_with_cluster(
 mod test {
     use {
         super::*,
-        crate::{consensus::progress_map::ProgressMap, replay_stage::tests::setup_forks_from_tree},
+        crate::replay_stage::tests::setup_forks_from_tree,
         crossbeam_channel::unbounded,
+        solana_consensus::progress_map::ProgressMap,
         solana_runtime::bank_forks::BankForks,
         std::{
             collections::{HashMap, HashSet},

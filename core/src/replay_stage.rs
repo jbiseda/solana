@@ -3959,17 +3959,17 @@ pub(crate) mod tests {
     use {
         super::*,
         crate::{
-            consensus::{
-                progress_map::{ValidatorStakeInfo, RETRANSMIT_BASE_DELAY_MS},
-                tower_storage::NullTowerStorage,
-                tree_diff::TreeDiff,
-                Tower,
-            },
             replay_stage::ReplayStage,
             vote_simulator::{self, VoteSimulator},
         },
         crossbeam_channel::unbounded,
         itertools::Itertools,
+        solana_consensus::{
+            consensus::Tower,
+            progress_map::{ValidatorStakeInfo, RETRANSMIT_BASE_DELAY_MS},
+            tower_storage::NullTowerStorage,
+            tree_diff::TreeDiff,
+        },
         solana_entry::entry::{self, Entry},
         solana_gossip::{cluster_info::Node, crds::Cursor},
         solana_ledger::{

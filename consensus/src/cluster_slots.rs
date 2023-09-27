@@ -134,8 +134,8 @@ impl ClusterSlots {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn insert_node_id(&self, slot: Slot, node_id: Pubkey) {
+    // pub for tests
+    pub fn insert_node_id(&self, slot: Slot, node_id: Pubkey) {
         let balance = self
             .validator_stakes
             .read()

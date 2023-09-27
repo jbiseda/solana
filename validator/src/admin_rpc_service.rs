@@ -819,7 +819,7 @@ mod tests {
         super::*,
         serde_json::Value,
         solana_accounts_db::{accounts_index::AccountSecondaryIndexes, inline_spl_token},
-        solana_core::consensus::tower_storage::NullTowerStorage,
+        solana_consensus::tower_storage::NullTowerStorage,
         solana_gossip::cluster_info::ClusterInfo,
         solana_ledger::genesis_utils::{create_genesis_config, GenesisConfigInfo},
         solana_rpc::rpc::create_validator_exit,

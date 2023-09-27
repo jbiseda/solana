@@ -374,8 +374,8 @@ impl Tvu {
 pub mod tests {
     use {
         super::*,
-        crate::consensus::tower_storage::FileTowerStorage,
         serial_test::serial,
+        solana_consensus::tower_storage::FileTowerStorage,
         solana_gossip::cluster_info::{ClusterInfo, Node},
         solana_ledger::{
             blockstore::BlockstoreSignals,
