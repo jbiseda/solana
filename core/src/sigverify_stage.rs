@@ -93,6 +93,7 @@ struct SigVerifierStats {
     total_discard_random_time_us: usize,
     total_verify_time_us: usize,
     total_shrink_time_us: usize,
+    total_sigverify_failed: usize,
 }
 
 impl SigVerifierStats {
@@ -214,6 +215,7 @@ impl SigVerifierStats {
             ),
             ("total_verify_time_us", self.total_verify_time_us, i64),
             ("total_shrink_time_us", self.total_shrink_time_us, i64),
+            ("total_sigverify_failed", self.total_sigverify_failed, i64),
         );
     }
 }
@@ -347,6 +349,8 @@ impl SigVerifyStage {
         // Pre-shrink packet batches if many packets are discarded from dedup / discard
         let (pre_shrink_time_us, pre_shrink_total) = Self::maybe_shrink_batches(&mut batches);
 
+        let pre_sigverify_valid_count = count_valid_packets(&batches, || {});
+
         let mut verify_time = Measure::start("sigverify_batch_time");
         let mut batches = verifier.verify_batches(batches, num_packets_to_verify);
         let num_valid_packets = count_valid_packets(
@@ -354,6 +358,9 @@ impl SigVerifyStage {
             #[inline(always)]
             |valid_packet| verifier.process_passed_sigverify_packet(valid_packet),
         );
+
+        let sigvverify_failed = pre_sigverify_valid_count - num_valid_packets;
+
         verify_time.stop();
 
         // Post-shrink packet batches if many packets are discarded from sigverify
@@ -369,6 +376,8 @@ impl SigVerifyStage {
             num_packets,
             (num_packets as f32 / verify_time.as_s())
         );
+
+        stats.total_sigverify_failed += sigvverify_failed;
 
         stats
             .recv_batches_us_hist
