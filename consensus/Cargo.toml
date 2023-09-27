@@ -1,17 +1,15 @@
 [package]
-name = "solana-core"
+name = "solana-consensus"
 description = "Blockchain, Rebuilt for Scale"
-documentation = "https://docs.rs/solana-core"
+documentation = "https://docs.rs/solana-consensus"
 readme = "../README.md"
-version = { workspace = true }
+#version = { workspace = true }
+version = "0.0.1"
 authors = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
-
-[badges]
-codecov = { repository = "solana-labs/solana", branch = "master", service = "github" }
 
 [dependencies]
 base64 = { workspace = true }
@@ -44,7 +42,6 @@ serde_derive = { workspace = true }
 solana-accounts-db = { workspace = true }
 solana-bloom = { workspace = true }
 solana-client = { workspace = true }
-solana-consensus = { workspace = true }
 solana-cost-model = { workspace = true }
 solana-entry = { workspace = true }
 solana-frozen-abi = { workspace = true }
@@ -87,7 +84,7 @@ raptorq = { workspace = true }
 serde_json = { workspace = true }
 serial_test = { workspace = true }
 # See order-crates-for-publishing.py for using this unusual `path = "."`
-solana-core = { path = ".", features = ["dev-context-only-utils"] }
+#solana-core = { path = ".", features = ["dev-context-only-utils"] }
 solana-logger = { workspace = true }
 solana-program-runtime = { workspace = true }
 solana-runtime = { workspace = true, features = ["dev-context-only-utils"] }
@@ -97,23 +94,11 @@ static_assertions = { workspace = true }
 systemstat = { workspace = true }
 test-case = { workspace = true }
 
-[target."cfg(unix)".dependencies]
-sysctl = { workspace = true }
+#[build-dependencies]
+#rustc_version = { workspace = true }
 
-[build-dependencies]
-rustc_version = { workspace = true }
-
-[features]
-dev-context-only-utils = []
-
-[[bench]]
-name = "banking_stage"
-
-[[bench]]
-name = "gen_keys"
-
-[[bench]]
-name = "sigverify_stage"
+#[features]
+#dev-context-only-utils = []
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
